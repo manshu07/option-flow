@@ -3,6 +3,7 @@
  * Register a new broker here after copying ./template.mjs.
  */
 import { createDemoProvider } from './demo.mjs';
+import { createDhanProvider } from './dhan.mjs';
 import { createHttpProvider } from './http.mjs';
 import { createRecordedProvider } from './recorded.mjs';
 import { createTemplateProvider } from './template.mjs';
@@ -21,6 +22,7 @@ export const PROVIDERS = {
   }),
   http: createHttpProvider,
   upstox: createUpstoxProvider,
+  dhan: createDhanProvider,
   template: createTemplateProvider,
 };
 
