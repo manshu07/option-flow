@@ -113,3 +113,16 @@ non-null — expect 100% after the seed completes.
   reduce load (README sanctions this).
 - If builds fail mid-session: check server log for `429`, `silent`, `unhandled feed packet`;
   prev-day seed runs every 60 s pass and self-heals.
+
+## 7. Replay V1 — known limitations (verified 2026-11-13, acknowledged by implementer)
+
+| # | Limitation | Status / deadline |
+|---|---|---|
+| G1 | Post-close, chains with sparse live state fall to REST and can 429 → builds show 196–211/215 instead of 215/0. Provider-side: prefer the cached last-chain once prev-day seed is complete. | Open, cosmetic after close only |
+| G2 | Playwright E2E not runnable yet — browser install failed (registry DNS); ports 8787/5195 hardcoded (conflicts with a running live board). | **Must run before replay is "done":** `npx playwright install chromium`, stop the live board, `npm run test:e2e` |
+| G3 | No playback speed control — fixed 700 ms per minute (~86× speed) in `useReplayFlow.ts`. | Accepted V1 deviation; V1.1 candidate |
+| G4 | Client clips replay timeline at 15:30 (`SESSION_END_MINUTE`) while capture/serving reaches the date-aware derivatives close (15:40). 10 minutes captured but unreachable in replay. | Accepted per V1 guardrail; revisit in V1.1 — one-line change in `boardReplayMinutes` to use `marketSessionBounds(date).close` |
+| G5 | E2E fixture expiry hardcoded `2026-11-24` (`tests/e2e/start.mjs`) — fixture degrades after that date. | **Deadline 2026-11-24:** make fixture expiries dynamic (today + 7d) before then |
+| G6 | Futures persistence is page-driven — no page open during market hours = prices-only capture. Server-side capture cycle is a V1.1 item. | Accepted V1; operational note: keep the board open during sessions you want replayable |
+
+These are documented V1 scope decisions, not regressions. G2 and G5 are time-critical; the rest are queued for V1.1.
