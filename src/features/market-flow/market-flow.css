@@ -22,6 +22,7 @@
   --side-w: clamp(460px, 40%, 760px);
   color: var(--text);
   font-family: var(--font-sans);
+  position: relative;
   min-width: 0;
   box-sizing: border-box;
   padding: 0 max(var(--flow-pad), env(safe-area-inset-right, 0px)) calc(var(--flow-pad) + env(safe-area-inset-bottom, 0px)) max(var(--flow-pad), env(safe-area-inset-left, 0px));
@@ -32,6 +33,8 @@
 :where(.ui-flow button) { font: inherit; cursor: pointer; color: inherit; }
 .ui-flow .is-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .ui-flow-pagebar .ui-flow-window { margin-right: 4px; }
+.ui-flow-replay { min-height: 30px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 650; }
+.ui-flow-replay:hover, .ui-flow-replay.is-active { border-color: var(--text); color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
 .ui-flow :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
 
 .mf-tone.is-bullish, .mf-tone.is-up { color: var(--flow-up-ink); }
@@ -394,11 +397,39 @@
 .ui-flow[data-layout='phone'] { --flow-pad: 12px; }
 .mf-switch { margin: 0; }
 
+/* ── Optional replay controls: outside the board so the live board stays unchanged ── */
+.mf-replay {
+  position: absolute; z-index: 20; width: min(330px, calc(100vw - 24px)); padding: 14px;
+  border: 1px solid var(--flow-hair); border-radius: 12px; background: var(--surface-raised);
+  box-shadow: 0 16px 42px color-mix(in srgb, #000 24%, transparent); color: var(--text);
+}
+.mf-replay.is-popover { top: 58px; right: max(12px, env(safe-area-inset-right, 0px)); }
+.mf-replay__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.mf-replay__head > div { display: grid; gap: 3px; }
+.mf-replay__head b { font-size: 13px; }
+.mf-replay__head span, .mf-replay__range, .mf-replay__message { font-size: 11px; color: var(--text-muted); }
+.mf-replay__close { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 18px; line-height: 1; }
+.mf-replay__close:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.mf-replay__range { margin-top: 14px; }
+.mf-replay__time { margin-top: 4px; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.mf-replay__slider { display: block; width: 100%; margin: 14px 0 12px; accent-color: var(--accent); }
+.mf-replay__controls { display: flex; gap: 8px; }
+.mf-replay__controls button { min-height: 30px; padding: 0 12px; border: 1px solid var(--flow-hair); border-radius: 7px; background: var(--surface); color: var(--text); font-size: 12px; font-weight: 600; }
+.mf-replay__controls button:first-child { background: var(--text); color: var(--surface-raised); }
+.mf-replay__controls button:hover { border-color: var(--text-muted); }
+.mf-replay__message { margin-top: 14px; line-height: 1.45; }
+.mf-replay__message.is-error { color: var(--warn-text, var(--text)); }
+.mf-replay__message p { margin: 0; }
+.mf-replay__message button { min-height: 30px; margin-top: 8px; padding: 0 10px; border: 1px solid var(--flow-hair); border-radius: 7px; background: var(--surface); font-size: 12px; font-weight: 600; }
+
 .mf-popup.is-sheet {
   position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 60; max-height: 82dvh; overflow-y: auto;
   max-width: 560px; margin: 0 auto; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   border-radius: 14px 14px 0 0; pointer-events: auto;
 }
+.mf-replay.is-sheet { position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: min(560px, 100vw); margin: 0 auto; border-radius: 14px 14px 0 0; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+.mf-replay.is-sheet .mf-replay__close, .mf-replay.is-sheet .mf-replay__controls button, .mf-replay.is-sheet .mf-replay__message button { min-width: 44px; min-height: 44px; }
+.mf-replay.is-sheet .mf-replay__slider { min-height: 44px; padding-block: 10px; touch-action: pan-x; }
 .mf-popup.is-sheet .mf-mini { flex: none; height: 170px; }
 .mf-popup.is-sheet .mf-popup__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
@@ -426,6 +457,7 @@
 :root[data-theme='dark'] .ui-flow { --flow-faint: 0.16; }
 /* The status takes its two lines from the start on narrow screens, so the board below it does not move when the counts arrive. */
 .mf-board[data-layout='phone'] .mf-status { min-height: 34px; align-content: flex-start; }
+@media (max-width: 768px) { .ui-flow-replay { min-height: 44px; } }
 
 /* ── The wide desktop: one continuous diagram ───────────────────────── */
 .mf-board[data-layout='diagram'] { position: relative; flex: 1 1 auto; min-height: 0; border: 1px solid var(--flow-hair); border-radius: 12px; background: var(--surface-raised); overflow: hidden; }

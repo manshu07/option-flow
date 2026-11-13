@@ -10,7 +10,15 @@ vi.mock('@/hooks/useMediaQuery', () => ({
 }));
 const hook = vi.hoisted(() => ({ flow: null as MarketFlow | null, universe: [] as string[] }));
 vi.mock('./useMarketFlow', () => ({
-  useMarketFlow: (universe: Array<{ symbol: string }>) => (hook.universe = universe.map(item => item.symbol), { flow: hook.flow, market: hook.flow ? { at: Date.parse('2026-10-09T10:15:00+05:30') } : null, loading: !hook.flow, error: null, provider: null, futuresRead: 0, futuresTotal: 0, session: null, rescan: () => undefined }),
+  useMarketFlow: (universe: Array<{ symbol: string }>) => (hook.universe = universe.map(item => item.symbol), { flow: hook.flow, market: hook.flow ? { at: Date.parse(`${hook.flow.date}T10:15:00+05:30`), date: hook.flow.date } : null, loading: !hook.flow, error: null, provider: null, futuresRead: 0, futuresTotal: 0, session: null, rescan: () => undefined }),
+}));
+const replay = vi.hoisted(() => ({ date: '', requested: false }));
+vi.mock('./useReplayFlow', () => ({
+  useReplayFlow: (_universe: unknown, _settings: unknown, options: { requested: boolean; date: string }) => {
+    replay.date = options.date;
+    replay.requested = options.requested;
+    return { active: options.requested, flow: options.requested ? hook.flow : null, market: null, loading: false, error: null, provider: null, futuresRead: 0, futuresTotal: 0, notice: null, cursorLabel: '09:15', manifest: null, mode: { mode: options.requested ? 'replay' : 'live', playing: false, cursorIndex: 0 }, togglePlay: () => undefined, seek: () => undefined, goLive: () => undefined, retry: () => undefined };
+  },
 }));
 
 import { MarketFlowPage } from './MarketFlowPage';
@@ -58,6 +66,17 @@ describe('MarketFlowPage', () => {
     // NIFTY stays: it is the chart's reference line.
     expect(hook.universe).toEqual(['NIFTY', 'RELIANCE']);
     expect(localStorage.getItem('orderFlow:universe:v1')).toBe('nifty50');
+  });
+
+  it('keeps an open replay pinned to the session where it was opened', () => {
+    hook.flow = { ...empty, date: '2026-10-09' };
+    const view = page([nifty]);
+    fireEvent.click(screen.getByTestId('flow-replay-open'));
+    expect(replay).toMatchObject({ date: '2026-10-09', requested: true });
+
+    hook.flow = { ...empty, date: '2026-10-12' };
+    view.rerender(<MemoryRouter><MarketFlowPage universe={[nifty]} /></MemoryRouter>);
+    expect(replay).toMatchObject({ date: '2026-10-09', requested: true });
   });
 
   it('draws the empty board as a skeleton with the progress in words while nothing is read', () => {

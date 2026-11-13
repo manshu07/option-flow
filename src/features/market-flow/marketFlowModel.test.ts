@@ -254,6 +254,19 @@ describe('data fixes', () => {
     expect(flow.stocks.find(stock => stock.symbol === 'AAA')!.fut!.price).toBe(109);
   });
 
+  it('uses the replay cursor as the expiry clock', () => {
+    const day = '2026-10-20';
+    const midday = Date.parse(`${day}T11:00:00+05:30`);
+    const afterClose = Date.parse(`${day}T15:40:00+05:30`);
+    const expiring = { ...series('AAA', 100, 99, quotes, 'stock', day), at: midday };
+    const next = { ...series('AAA', 100, 99, quotes, 'stock', '2026-10-27'), at: midday };
+    const file = { ...market([expiring, next]), date: day, at: midday };
+    const before = buildMarketFlow(file, new Map(), universe, SECTORS, DEFAULT_FLOW_SETTINGS, { now: midday });
+    const after = buildMarketFlow(file, new Map(), universe, SECTORS, DEFAULT_FLOW_SETTINGS, { now: afterClose });
+    expect(before.stocks.find(stock => stock.symbol === 'AAA')?.expiry).toBe(day);
+    expect(after.stocks.find(stock => stock.symbol === 'AAA')?.expiry).toBe('2026-10-27');
+  });
+
   it('writes open interest in lakh and crore without trailing zeros', () => {
     expect(compactUnits(2_500_000)).toBe('25 L');
     expect(compactUnits(12_340_000)).toBe('1.23 Cr');

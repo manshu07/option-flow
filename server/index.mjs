@@ -5,6 +5,8 @@
  *   GET /api/market                  the market file: every underlying's nearest-expiry chain
  *   GET /api/market/<date>/<HHMM>    an earlier minute of today (the 15m / 1h windows)
  *   GET /api/futures/<SYMBOL>?session=YYYY-MM-DD   its futures months and 1-minute candles
+ *   GET /api/replay/<date>/manifest  captured market minutes and futures coverage
+ *   GET /api/replay/<date>/futures/<SYMBOL>?asOf=HHMM  persisted futures at a cursor
  *   GET /*                           the built page from dist/ (npm run build)
  *
  * Where the numbers come from is a provider (server/providers): the built-in
@@ -31,7 +33,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { encodeSeries, marketFile } from './marketFile.mjs';
 import { createProvider } from './providers/index.mjs';
-import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, marketParts } from '../src/lib/marketSession.ts';
+import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, ReplayDataError, REPLAY_DATE, REPLAY_SYMBOL, truncateFutures } from './replayStorage.mjs';
+import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts } from '../src/lib/marketSession.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT) || 8787;
@@ -163,7 +166,12 @@ async function futuresFor(symbol, session) {
   const held = futuresCache.get(key);
   const live = provider.alwaysLive || isMarketSessionTime(Date.now());
   if (held && (!live || Date.now() - held.at < FUTURES_KEEP_MS)) return held.value;
-  const value = provider.futures(bySymbol.get(symbol), session).then(months => ({ symbol, session, months }));
+  const value = provider.futures(bySymbol.get(symbol), session).then(months => {
+    const result = { symbol, session, months };
+    try { persistFutures(SCAN_DIR, session, symbol, result); }
+    catch (error) { log(`futures ${symbol} persistence failed:`, error?.message || error); }
+    return result;
+  });
   futuresCache.set(key, { at: Date.now(), value });
   value.catch(() => futuresCache.delete(key));
   if (futuresCache.size > 4000) futuresCache.delete(futuresCache.keys().next().value);
@@ -214,6 +222,57 @@ function inside(base, rel) {
   return full.startsWith(base + path.sep) || full === base ? full : null;
 }
 
+function validReplayDate(date) {
+  if (!REPLAY_DATE.test(date)) return false;
+  const midnight = Date.parse(`${date}T00:00:00+05:30`);
+  return Number.isFinite(midnight) && marketParts(midnight).dateKey === date && isTradingDay(midnight);
+}
+
+function replayCursor(date, asOf) {
+  if (!/^\d{4}$/.test(asOf)) return null;
+  const hour = Number(asOf.slice(0, 2));
+  const minute = Number(asOf.slice(2));
+  const minuteOfDay = hour * 60 + minute;
+  const close = marketCloseMinuteFor(Date.parse(`${date}T00:00:00+05:30`));
+  if (hour > 23 || minute > 59 || minuteOfDay < 9 * 60 + 15 || minuteOfDay > close) return null;
+  return Date.parse(`${date}T${asOf.slice(0, 2)}:${asOf.slice(2)}:00+05:30`);
+}
+
+function replayManifest(date) {
+  let minutes;
+  try {
+    minutes = readReplayMinutes(SCAN_DIR, date, (session, minute, at) => marketParts(at).dateKey === session && hhmmOf(at) === minute);
+  } catch (error) {
+    if (error?.code === 'REPLAY_DATA_INVALID') return { invalid: true };
+    throw error;
+  }
+  if (minutes == null) return null;
+  const futures = {};
+  const dir = path.join(SCAN_DIR, date, 'futures');
+  if (fs.existsSync(dir)) {
+    for (const entry of fs.readdirSync(dir)) {
+      if (!entry.endsWith('.json')) continue;
+      const symbol = entry.slice(0, -5);
+      if (!REPLAY_SYMBOL.test(symbol) || !bySymbol.has(symbol)) continue;
+      try {
+        const result = readFutures(SCAN_DIR, date, symbol);
+        if (result) futures[symbol] = futuresCoverage(result);
+      } catch (error) {
+        if (error?.code !== 'REPLAY_DATA_INVALID') throw error;
+        futures[symbol] = { available: false, months: [], firstAt: null, lastAt: null, start: null, end: null, invalid: true };
+      }
+    }
+  }
+  return {
+    provider: { id: provider.id, label: provider.label },
+    date,
+    minutes,
+    start: minutes[0]?.[1] ?? null,
+    end: minutes.at(-1)?.[1] ?? null,
+    futures,
+  };
+}
+
 const server = http.createServer((req, res) => {
   // A bad request never takes the server down: anything thrown is answered, and logged here.
   handle(req, res).catch(error => {
@@ -255,6 +314,37 @@ async function handle(req, res) {
     if (!state.latestJson) return send(res, 503, { error: state.lastError?.message ?? 'The first market file is still being built.' }, 'application/json', { 'Retry-After': '5' });
     return send(res, 200, state.latestJson);
   }
+
+  const replayManifestPath = p.match(/^\/api\/replay\/([^/]+)\/manifest$/);
+  if (replayManifestPath) {
+    const date = replayManifestPath[1];
+    if (!validReplayDate(date)) return send(res, 400, { error: 'Invalid replay session date.' });
+    const manifest = replayManifest(date);
+    if (manifest?.invalid) return send(res, 503, { error: 'Stored replay manifest is invalid.', code: 'REPLAY_MANIFEST_INVALID' });
+    return manifest ? send(res, 200, manifest) : send(res, 404, { error: 'No replay session for that date.' });
+  }
+
+  const replayFuturesPath = p.match(/^\/api\/replay\/([^/]+)\/futures\/([^/]+)$/);
+  if (replayFuturesPath) {
+    const date = replayFuturesPath[1];
+    const symbol = replayFuturesPath[2].toUpperCase();
+    if (!validReplayDate(date)) return send(res, 400, { error: 'Invalid replay session date.' });
+    if (!REPLAY_SYMBOL.test(symbol) || !bySymbol.has(symbol)) return send(res, 400, { error: 'Invalid replay underlying.' });
+    const asOf = url.searchParams.get('asOf');
+    const cursor = asOf && replayCursor(date, asOf);
+    if (!cursor) return send(res, 400, { error: 'asOf must be a market-session time in HHMM.' });
+    let result;
+    try { result = readFutures(SCAN_DIR, date, symbol); }
+    catch (error) {
+      if (error instanceof ReplayDataError) return send(res, 503, { error: 'Stored replay futures are invalid.', code: 'REPLAY_FUTURES_INVALID' });
+      throw error;
+    }
+    if (!result) return send(res, 404, { error: `No persisted futures for ${symbol} on ${date}.` });
+    return send(res, 200, truncateFutures(result, cursor));
+  }
+
+  if (p.startsWith('/api/replay/')) return send(res, 400, { error: 'Invalid replay request.' });
+
   const minute = p.match(/^\/api\/market\/(\d{4}-\d{2}-\d{2})\/(\d{4})$/);
   if (minute) {
     const file = path.join(SCAN_DIR, minute[1], `${minute[2]}.json`);

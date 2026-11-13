@@ -5,12 +5,15 @@ import { applyTheme } from '@/lib/applyTheme';
 import { CapsuleSegmented } from '@/components/common/CapsuleSegmented';
 import { useFitScrollerHeight } from '@/hooks/useFitScrollerHeight';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { getLatestTradingSessionDate } from '@/lib/marketSession';
 import type { Underlying } from '@/lib/underlyings';
 import { FlowBoard, type FlowLayout } from './FlowBoard';
+import { ReplayControls } from './ReplayControls';
 import { FlowStatus } from './FlowStatus';
 import { DEFAULT_FLOW_SETTINGS, type FlowSettings } from './marketFlowModel';
 import { inUniverse, loadUniverse, saveUniverse, type FlowUniverse } from './nifty50';
 import { useMarketFlow } from './useMarketFlow';
+import { useReplayFlow } from './useReplayFlow';
 
 /*
  * The workspace stylesheet chain, in the order the other pages import it:
@@ -59,6 +62,8 @@ const BRAND = (
 
 export function MarketFlowPage({ universe }: MarketFlowPageProps) {
   const [scope, setScope] = useState<FlowUniverse>(loadUniverse);
+  const [replayRequested, setReplayRequested] = useState(false);
+  const [replayDate, setReplayDate] = useState<string | null>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const wider = useMediaQuery('(min-width: 1280px)');
   const wide = useMediaQuery('(min-width: 1100px)');
@@ -70,11 +75,36 @@ export function MarketFlowPage({ universe }: MarketFlowPageProps) {
   useEffect(() => { saveUniverse(scope); }, [scope]);
 
   const shown = useMemo(() => universe.filter(item => inUniverse(item.symbol, scope)), [universe, scope]);
-  const { flow, market, loading, error, provider, futuresRead, futuresTotal, rescan } = useMarketFlow(shown, SETTINGS);
+  const live = useMarketFlow(shown, SETTINGS);
+  const replay = useReplayFlow(shown, SETTINGS, { requested: replayRequested, date: replayDate ?? live.market?.date ?? getLatestTradingSessionDate(new Date()) });
+  const isReplay = replayRequested;
+  const flow = isReplay ? replay.flow : live.flow;
+  const market = isReplay ? replay.market : live.market;
+  const loading = isReplay ? replay.loading : live.loading;
+  const error = isReplay ? replay.error : live.error;
+  const provider = isReplay ? replay.provider : live.provider;
+  const futuresRead = isReplay ? replay.futuresRead : live.futuresRead;
+  const futuresTotal = isReplay ? replay.futuresTotal : live.futuresTotal;
+  const rescan = isReplay ? replay.retry : live.rescan;
+  const closeReplay = () => {
+    replay.goLive();
+    setReplayRequested(false);
+    setReplayDate(null);
+  };
+  const toggleReplay = () => {
+    if (replayRequested) closeReplay();
+    else {
+      setReplayDate(live.market?.date ?? getLatestTradingSessionDate(new Date()));
+      setReplayRequested(true);
+    }
+  };
 
   const pageActions = (
     <>
       <CapsuleSegmented options={UNIVERSES} value={scope} onChange={setScope} ariaLabel="Underlyings" groupId="flow-universe" size="page" className="ui-flow-universe" />
+      <button className={`ui-flow-replay${replayRequested ? ' is-active' : ''}`} type="button" data-testid="flow-replay-open" aria-label={replayRequested ? 'Close market replay' : 'Open market replay'} onClick={toggleReplay}>
+        Replay
+      </button>
       <ThemeToggle onChange={theme => applyTheme(theme)} size="md" className="ui-flow-theme" />
     </>
   );
@@ -83,6 +113,7 @@ export function MarketFlowPage({ universe }: MarketFlowPageProps) {
     <div className="ui-flow oi-design" data-window="day" data-universe={scope} data-layout={layout} data-fit={fits ? 'true' : undefined} ref={pageRef}>
       <h1 className="is-visually-hidden">Order Flow</h1>
       <PageBar current="Order Flow" crumbs={false} className="oi-design ui-flow-pagebar" brand={BRAND}>{pageActions}</PageBar>
+      {replayRequested && <ReplayControls manifest={replay.manifest} mode={replay.mode} loading={replay.loading} error={replay.error} notice={replay.notice} retryableFutures={replay.retryableFutures} retryingFutures={replay.retryingFutures} cursorLabel={replay.cursorLabel} onPlay={replay.togglePlay} onSeek={replay.seek} onRetry={replay.retry} onLive={closeReplay} phone={phone} />}
       <FlowBoard key={scope} flow={flow} settings={CHART} layout={layout}
         status={<FlowStatus flow={flow} at={market?.at ?? null} loading={loading} error={error} provider={provider} futuresRead={futuresRead} futuresTotal={futuresTotal} onRescan={rescan} />} />
     </div>

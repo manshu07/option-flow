@@ -43,9 +43,31 @@ export async function fetchMarket(signal?: AbortSignal): Promise<ContractMarket 
   return parseMarketFile(await res.json());
 }
 
-export async function fetchMarketMinute(date: string, minute: string): Promise<ContractMarket | null> {
-  const res = await fetch(`${API}/api/market/${date}/${minute}`);
+export async function fetchMarketMinute(date: string, minute: string, signal?: AbortSignal): Promise<ContractMarket | null> {
+  const res = await fetch(`${API}/api/market/${date}/${minute}`, { signal });
   return res.ok ? parseMarketFile(await res.json()) : null;
+}
+
+export interface ReplayManifest {
+  provider: { id: string; label: string };
+  date: string;
+  minutes: Array<[string, number]>;
+  start: number | null;
+  end: number | null;
+  futures: Record<string, { available: boolean; months: string[]; firstAt: number | null; lastAt: number | null }>;
+}
+
+export async function fetchReplayManifest(date: string, signal?: AbortSignal): Promise<ReplayManifest | null> {
+  const res = await fetch(`${API}/api/replay/${encodeURIComponent(date)}/manifest`, { cache: 'no-store', signal });
+  if (!res.ok) return null;
+  return await res.json() as ReplayManifest;
+}
+
+export async function fetchReplayFutures(symbol: string, date: string, asOf: string, signal?: AbortSignal): Promise<FuturesSeries | null> {
+  const res = await fetch(`${API}/api/replay/${encodeURIComponent(date)}/futures/${encodeURIComponent(symbol)}?asOf=${encodeURIComponent(asOf)}`, { cache: 'no-store', signal });
+  if (!res.ok) return null;
+  const body = await res.json() as { symbol?: string; months?: FuturesMonth[] };
+  return combineMonths(body.symbol ?? symbol, body.months ?? []);
 }
 
 export async function fetchFutures(symbol: string, session: string): Promise<FuturesSeries | null> {
