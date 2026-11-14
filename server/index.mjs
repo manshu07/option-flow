@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { encodeSeries, marketFile } from './marketFile.mjs';
 import { createProvider } from './providers/index.mjs';
 import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, ReplayDataError, REPLAY_DATE, REPLAY_SYMBOL, truncateFutures } from './replayStorage.mjs';
-import { createCapture } from './capture.mjs';
+import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
 import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts } from '../src/lib/marketSession.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -298,9 +298,11 @@ server.keepAliveTimeout = 5_000;
 async function handle(req, res) {
   if (!authorised(req)) return send(res, 401, { error: 'Sign in.' }, 'application/json', { 'WWW-Authenticate': 'Basic realm="Order Flow", charset="UTF-8"' });
   if (req.method === 'OPTIONS' && CORS_ORIGIN) return send(res, 204, '', 'text/plain', { 'Access-Control-Allow-Methods': 'GET, HEAD, POST', 'Access-Control-Max-Age': '600' });
-  const capturePath = /^\/api\/capture\/now(?:\?|$)/.test(req.url ?? '');
-  const capturePost = req.method === 'POST' && capturePath;
-  if (req.method !== 'GET' && req.method !== 'HEAD' && !capturePost) return send(res, 405, { error: 'Method not allowed.' }, 'application/json', { Allow: capturePath ? 'GET, HEAD, POST' : 'GET, HEAD' });
+  const captureAction = captureRequest(req.method, req.url ?? '', capture, (...args) => log(...args));
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !captureAction) {
+    const capturePath = /^\/api\/capture\/now(?:\?|$)/.test(req.url ?? '');
+    return send(res, 405, { error: 'Method not allowed.' }, 'application/json', { Allow: capturePath ? 'GET, HEAD, POST' : 'GET, HEAD' });
+  }
   let url;
   let p;
   try {
@@ -311,20 +313,16 @@ async function handle(req, res) {
   }
   if (p.includes('\0')) return send(res, 400, { error: 'Bad request.' });
 
-  if (req.method === 'POST' && p === '/api/capture/now') {
-    capture.runNow().catch(error => log('capture trigger failed:', error?.message || error));
-    return send(res, 202, { capture: capture.status() });
-  }
+  if (captureAction && p === '/api/capture/now') return send(res, captureAction.status, captureAction.body);
 
   if (p === '/api/status') {
-    return send(res, 200, {
+    return send(res, 200, withCaptureStatus({
       provider: { id: provider.id, label: provider.label, alwaysLive: Boolean(provider.alwaysLive) },
       ready: state.ready, clock: now(), session: getLatestTradingSessionDate(new Date(now())),
       market: state.latest ? { at: state.latest.t, date: state.latest.date, series: state.latest.series.length } : null,
       lastBuild: state.lastBuild && { at: state.lastBuild.at, series: state.lastBuild.series, failed: state.lastBuild.failed },
       lastError: state.lastError && { at: state.lastError.at, message: state.lastError.message }, universe: universe.length,
-      capture: capture.status(),
-    });
+    }, capture));
   }
 
   if (p === '/api/market') {

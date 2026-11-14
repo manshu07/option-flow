@@ -13,6 +13,20 @@ function report(logger, ...args) {
   else if (logger?.error) logger.error(...args);
 }
 
+export function captureRequest(method, requestUrl, capture, logger = console) {
+  if (method !== 'POST' || !/^\/api\/capture\/now(?:\?|$)/.test(requestUrl ?? '')) return null;
+  try {
+    Promise.resolve(capture.runNow()).catch(error => report(logger, 'capture trigger failed:', error?.message || error));
+  } catch (error) {
+    report(logger, 'capture trigger failed:', error?.message || error);
+  }
+  return { status: 202, body: { capture: capture.status() } };
+}
+
+export function withCaptureStatus(status, capture) {
+  return { ...status, capture: capture.status() };
+}
+
 /**
  * Capture futures for the mapped universe without coupling the loop to HTTP.
  * The injected clock and timers make the scheduling deterministic in tests.

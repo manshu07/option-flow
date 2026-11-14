@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { configuredIntervalMs, createCapture } from './capture.mjs';
+import { captureRequest, configuredIntervalMs, createCapture, withCaptureStatus } from './capture.mjs';
 import { persistFutures, readFutures } from './replayStorage.mjs';
 
 const SESSION = '2026-11-13';
@@ -193,6 +193,54 @@ describe('server futures capture', () => {
     await capture.stop();
     expect(peak).toBe(3);
     expect(clock.entries[0]).toBeUndefined();
+  });
+
+  it('returns 202 immediately and coalesces concurrent capture POST triggers', async () => {
+    const scanDir = tempDir();
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const capture = createCapture({
+      provider: { id: 'dhan', alwaysLive: false },
+      universe,
+      now: () => AT,
+      isMarketSessionTime: () => true,
+      sessionFor: () => SESSION,
+      futuresFor: async (symbol, session) => {
+        started.push(symbol);
+        await gate;
+        return persistFutures(scanDir, session, symbol, fixture(symbol));
+      },
+      logger: () => {},
+    });
+
+    const first = captureRequest('POST', '/api/capture/now', capture, () => {});
+    const second = captureRequest('POST', '/api/capture/now?source=test', capture, () => {});
+    expect(first).toMatchObject({ status: 202, body: { capture: { done: 0, total: 4, lastPassAt: null } } });
+    expect(second?.status).toBe(202);
+    expect(started).toEqual(['ALPHA', 'BETA', 'GAMMA']);
+
+    release();
+    await capture.stop();
+    expect(started).toEqual(['ALPHA', 'BETA', 'GAMMA', 'DELTA']);
+    expect(capture.status().done).toBe(4);
+    expect(captureRequest('POST', '/api/capture/now/other', capture, () => {})).toBeNull();
+    expect(captureRequest('GET', '/api/capture/now', capture, () => {})).toBeNull();
+  });
+
+  it('swallows a failed manual trigger and preserves existing status fields', async () => {
+    const errors: unknown[][] = [];
+    const capture = {
+      runNow: () => Promise.reject(new Error('capture unavailable')),
+      status: () => ({ done: 0, total: universe.length, lastPassAt: null }),
+    };
+    const base = { provider: { id: 'dhan' }, ready: true, universe: universe.length };
+    const result = captureRequest('POST', '/api/capture/now', capture, (...args: unknown[]) => errors.push(args));
+    expect(result).toEqual({ status: 202, body: { capture: { done: 0, total: universe.length, lastPassAt: null } } });
+    expect(withCaptureStatus(base, capture)).toEqual({ ...base, capture: capture.status() });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toEqual(['capture trigger failed:', 'capture unavailable']);
   });
 
   it('stops starting symbols when the session ends and keeps completed futures', async () => {
