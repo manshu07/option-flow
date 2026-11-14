@@ -43,28 +43,70 @@ export async function fetchMarket(signal?: AbortSignal): Promise<ContractMarket 
   return parseMarketFile(await res.json());
 }
 
-export async function fetchMarketMinute(date: string, minute: string, signal?: AbortSignal): Promise<ContractMarket | null> {
-  const res = await fetch(`${API}/api/market/${date}/${minute}`, { signal });
+export async function fetchMarketMinute(date: string, minute: string, signal: AbortSignal | undefined, source: ReplaySource): Promise<ContractMarket | null> {
+  const checkedSource = validateReplaySource(source);
+  const root = checkedSource === 'archive' ? '/api/archive' : '/api/market';
+  const path = checkedSource === 'archive' ? `${root}/${date}/minute/${minute}` : `${root}/${date}/${minute}`;
+  const res = await fetch(`${API}${path}`, { signal });
   return res.ok ? parseMarketFile(await res.json()) : null;
 }
 
 export interface ReplayManifest {
   provider: { id: string; label: string };
   date: string;
-  minutes: Array<[string, number]>;
+  source: ReplaySource;
+  minutes?: Array<[string, number]>;
+  minutesIndex?: Array<[string, number]>;
   start: number | null;
   end: number | null;
+  firstAt?: number | null;
+  lastAt?: number | null;
   futures: Record<string, { available: boolean; months: string[]; firstAt: number | null; lastAt: number | null }>;
+  futuresSymbols?: string[];
 }
 
-export async function fetchReplayManifest(date: string, signal?: AbortSignal): Promise<ReplayManifest | null> {
-  const res = await fetch(`${API}/api/replay/${encodeURIComponent(date)}/manifest`, { cache: 'no-store', signal });
+export type ReplaySource = 'live' | 'archive';
+
+function validateReplaySource(source: unknown): ReplaySource {
+  if (source === 'live' || source === 'archive') return source;
+  throw new Error('Invalid replay source.');
+}
+
+export interface ReplayDay {
+  date: string;
+  source?: string;
+  minutes: number;
+  firstAt: number | null;
+  lastAt: number | null;
+  futuresSymbols: string[];
+}
+
+/** Runtime validation for catalog data. Unknown or missing sources are never live. */
+export function sourceForDay(day: Pick<ReplayDay, 'source'> | null | undefined): ReplaySource | null {
+  return day?.source === 'archive' || day?.source === 'live' ? day.source : null;
+}
+
+export async function fetchReplayDays(signal?: AbortSignal): Promise<ReplayDay[]> {
+  const res = await fetch(`${API}/api/replay/days`, { cache: 'no-store', signal });
+  if (!res.ok) throw new Error(`Replay catalog ${res.status}`);
+  const body = await res.json() as ReplayDay[];
+  return Array.isArray(body) ? body.filter(day => day && typeof day.date === 'string') : [];
+}
+
+export async function fetchReplayManifest(date: string, signal: AbortSignal | undefined, source: ReplaySource): Promise<ReplayManifest | null> {
+  const checkedSource = validateReplaySource(source);
+  const root = checkedSource === 'archive' ? '/api/archive' : '/api/replay';
+  const res = await fetch(`${API}${root}/${encodeURIComponent(date)}/manifest`, { cache: 'no-store', signal });
   if (!res.ok) return null;
-  return await res.json() as ReplayManifest;
+  const body = await res.json() as ReplayManifest & { provider?: { id: string; label: string } | string };
+  const provider = typeof body.provider === 'string' ? { id: body.provider, label: body.provider } : body.provider ?? { id: checkedSource, label: checkedSource };
+  return { ...body, provider, futures: body.futures ?? {}, source: checkedSource, minutes: body.minutes ?? body.minutesIndex ?? [] };
 }
 
-export async function fetchReplayFutures(symbol: string, date: string, asOf: string, signal?: AbortSignal): Promise<FuturesSeries | null> {
-  const res = await fetch(`${API}/api/replay/${encodeURIComponent(date)}/futures/${encodeURIComponent(symbol)}?asOf=${encodeURIComponent(asOf)}`, { cache: 'no-store', signal });
+export async function fetchReplayFutures(symbol: string, date: string, asOf: string, signal: AbortSignal | undefined, source: ReplaySource): Promise<FuturesSeries | null> {
+  const checkedSource = validateReplaySource(source);
+  const root = checkedSource === 'archive' ? '/api/archive' : '/api/replay';
+  const res = await fetch(`${API}${root}/${encodeURIComponent(date)}/futures/${encodeURIComponent(symbol)}?asOf=${encodeURIComponent(asOf)}`, { cache: 'no-store', signal });
   if (!res.ok) return null;
   const body = await res.json() as { symbol?: string; months?: FuturesMonth[] };
   return combineMonths(body.symbol ?? symbol, body.months ?? []);

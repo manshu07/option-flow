@@ -113,7 +113,7 @@ export function MarketFlowPage({ universe }: MarketFlowPageProps) {
     <div className="ui-flow oi-design" data-window="day" data-universe={scope} data-layout={layout} data-fit={fits ? 'true' : undefined} ref={pageRef}>
       <h1 className="is-visually-hidden">Order Flow</h1>
       <PageBar current="Order Flow" crumbs={false} className="oi-design ui-flow-pagebar" brand={BRAND}>{pageActions}</PageBar>
-      {replayRequested && <ReplayControls manifest={replay.manifest} mode={replay.mode} loading={replay.loading} error={replay.error} notice={replay.notice} retryableFutures={replay.retryableFutures} retryingFutures={replay.retryingFutures} cursorLabel={replay.cursorLabel} onPlay={replay.togglePlay} onSeek={replay.seek} onRetry={replay.retry} onLive={closeReplay} phone={phone} />}
+      {replayRequested && <ReplayControls manifest={replay.manifest} mode={replay.mode} loading={replay.loading} error={replay.error} notice={replay.notice} retryableFutures={replay.retryableFutures} retryingFutures={replay.retryingFutures} cursorLabel={replay.cursorLabel} onPlay={replay.togglePlay} onSeek={replay.seek} onRetry={replay.retry} onLive={closeReplay} days={replay.days} selectedDate={replay.selectedDate} selectedSource={replay.selectedSource} onSelectDay={replay.selectDay} window={replay.window} customStart={replay.customStart} customEnd={replay.customEnd} onWindow={replay.setWindow} speed={replay.speed} onSpeed={replay.setSpeed} phone={phone} />}
       <FlowBoard key={scope} flow={flow} settings={CHART} layout={layout}
         status={<FlowStatus flow={flow} at={market?.at ?? null} loading={loading} error={error} provider={provider} futuresRead={futuresRead} futuresTotal={futuresTotal} onRescan={rescan} />} />
     </div>

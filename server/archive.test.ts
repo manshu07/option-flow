@@ -57,9 +57,13 @@ const { gunzipSync, gzipSync } = await import('node:zlib');
 const {
   archiveMetadata,
   archiveRequest,
+  archiveRequestAsync,
   archiveSession,
   createArchiveService,
+  listReplayDays,
   listArchives,
+  readArchiveFuturesFallback,
+  readArchiveMinuteFallback,
   verifyArchive,
 } = await import('./archive.mjs');
 
@@ -95,12 +99,12 @@ function s6Paths(root) {
 }
 
 describe('Replay V2 S6 EOD archive', () => {
-  it('round-trips a three-minute, two-symbol day and removes raw data only after verification', () => {
+  it('round-trips a three-minute, two-symbol day and removes raw data only after verification', async () => {
     const root = s6TempDir();
     try {
       const { scanDir, archiveRoot } = s6Paths(root);
       const source = s6WriteDay(scanDir, S6_DATES[0]);
-      const metadata = archiveSession(scanDir, S6_PROVIDER, S6_DATES[0], { archiveRoot, keep: 30 });
+      const metadata = await archiveSession(scanDir, S6_PROVIDER, S6_DATES[0], { archiveRoot, keep: 30 });
       const file = archivePath.join(archiveRoot, S6_PROVIDER, `${S6_DATES[0]}.json.gz`);
       const payload = JSON.parse(gunzipSync(archiveFs.readFileSync(file), { level: 9 }).toString('utf8'));
       expect(payload).toEqual({
@@ -120,12 +124,12 @@ describe('Replay V2 S6 EOD archive', () => {
     }
   });
 
-  it('keeps the newest two archives and removes older verified gzip/raw sessions', () => {
+  it('keeps the newest two archives and removes older verified gzip/raw sessions', async () => {
     const root = s6TempDir();
     try {
       const { scanDir, archiveRoot } = s6Paths(root);
       for (const date of S6_DATES) s6WriteDay(scanDir, date);
-      for (const date of S6_DATES) archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot, keep: 2 });
+      for (const date of S6_DATES) await archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot, keep: 2 });
       expect(listArchives(archiveRoot, S6_PROVIDER).map(entry => entry.date)).toEqual(['2026-11-13', '2026-11-12']);
       for (const date of S6_DATES.slice(0, 2)) {
         expect(archiveFs.existsSync(archivePath.join(archiveRoot, S6_PROVIDER, `${date}.json.gz`))).toBe(false);
@@ -139,13 +143,13 @@ describe('Replay V2 S6 EOD archive', () => {
     }
   });
 
-  it('returns structured errors for corrupt gzip, unknown schema, and malformed indexes', () => {
+  it('returns structured errors for corrupt gzip, unknown schema, and malformed indexes', async () => {
     const root = s6TempDir();
     try {
       const { scanDir, archiveRoot } = s6Paths(root);
       const date = S6_DATES[0];
       s6WriteDay(scanDir, date);
-      archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot });
+      await archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot });
       const file = archivePath.join(archiveRoot, S6_PROVIDER, `${date}.json.gz`);
       archiveFs.writeFileSync(file, Buffer.from('not gzip'));
       expect(() => verifyArchive(file)).toThrowError(expect.objectContaining({ code: 'ARCHIVE_GZIP_INVALID' }));
@@ -182,16 +186,225 @@ describe('Replay V2 S6 EOD archive', () => {
     }
   });
 
-  it('does not rearchive unchanged raw data after a verified archive exists', () => {
+  it('does not rearchive unchanged raw data after a verified archive exists', async () => {
     const root = s6TempDir();
     try {
       const { scanDir, archiveRoot } = s6Paths(root);
       const date = S6_DATES[0];
       s6WriteDay(scanDir, date);
-      const first = archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot });
+      const first = await archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot });
+      expect(archiveFs.existsSync(archivePath.join(scanDir, date))).toBe(false);
       s6WriteDay(scanDir, date);
-      const second = archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot });
+      const second = await archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot });
       expect(second).toEqual(first);
+      expect(archiveFs.existsSync(archivePath.join(scanDir, date))).toBe(false);
+      expect(await archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot })).toEqual(first);
+    } finally {
+      archiveFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Replay V2 S7 archive read contracts', () => {
+  it('serves an archived minute, completed futures candles, and manifest coverage', async () => {
+    const root = s6TempDir();
+    try {
+      const { scanDir, archiveRoot } = s6Paths(root);
+      const date = S6_DATES[1];
+      const source = s6WriteDay(scanDir, date);
+      const service = createArchiveService({ scanDir, providerId: S6_PROVIDER, archiveRoot, keep: 30, logger: () => {} });
+      await service.archive(date);
+
+      const minute = await archiveRequest('GET', `/api/archive/${date}/minute/0916`, service);
+      expect(minute).toMatchObject({ status: 200, body: source.minuteSnapshots['0916'], headers: { 'Cache-Control': 'public, max-age=86400' } });
+
+      const atBoundary = await archiveRequest('GET', `/api/archive/${date}/futures/ALPHA?asOf=0916`, service);
+      expect(atBoundary).toMatchObject({ status: 200, body: { symbol: 'ALPHA', session: date }, headers: { 'Cache-Control': 'public, max-age=86400' } });
+      expect(atBoundary.body.months[0].candles.map(candle => candle.at)).toEqual([source.minutes[0][1]]);
+
+      const manifest = await archiveRequest('GET', `/api/archive/${date}/manifest`, service);
+      expect(manifest).toMatchObject({
+        status: 200,
+        body: {
+          providerId: S6_PROVIDER,
+          date,
+          minutesIndex: source.minutes,
+          firstAt: source.minutes[0][1],
+          lastAt: source.minutes.at(-1)[1],
+          futures: { ALPHA: { available: true, firstAt: source.minutes[0][1], lastAt: source.minutes[2][1] } },
+        },
+      });
+      expect((await archiveRequest('GET', '/api/archive', service)).body.archives[0]).toMatchObject({ firstAt: source.minutes[0][1], lastAt: source.minutes[2][1], futuresCoverage: expect.any(Object) });
+      expect(archiveRequest('GET', `/api/archive/${date}/unknown`, service)).toMatchObject({ status: 404, body: { code: 'ARCHIVE_REQUEST_NOT_FOUND' } });
+    } finally {
+      archiveFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns structured missing, corrupt-gzip, and unknown-schema responses without provider access', async () => {
+    const root = s6TempDir();
+    try {
+      const { scanDir, archiveRoot } = s6Paths(root);
+      const date = S6_DATES[1];
+      s6WriteDay(scanDir, date);
+      const service = createArchiveService({ scanDir, providerId: S6_PROVIDER, archiveRoot, keep: 30, logger: () => {} });
+      await service.archive(date);
+      const listed = archivePath.join(archiveRoot, S6_PROVIDER, `${date}.json.gz`);
+      const validArchive = archiveFs.readFileSync(listed);
+      archiveFs.writeFileSync(listed, Buffer.from('corrupt'));
+      expect(archiveRequest('GET', '/api/archive', service)).toMatchObject({ status: 200, body: { archives: expect.any(Array) } });
+      archiveFs.writeFileSync(listed, validArchive);
+      expect(await archiveRequest('GET', `/api/archive/${date}/minute/0920`, service)).toMatchObject({ status: 404, body: { code: 'ARCHIVE_MISSING' } });
+      expect(await archiveRequest('GET', `/api/archive/${date}/futures/ALPHA?asOf=0916`, service)).toMatchObject({ status: 200 });
+
+      const file = archivePath.join(archiveRoot, S6_PROVIDER, `${date}.json.gz`);
+      archiveFs.writeFileSync(file, Buffer.from('corrupt'));
+      expect(await archiveRequest('GET', `/api/archive/${date}/minute/0915`, service)).toMatchObject({ status: 503, body: { code: 'ARCHIVE_GZIP_INVALID' } });
+      archiveFs.writeFileSync(file, gzipSync(JSON.stringify({ schemaVersion: 99 })));
+      expect(await archiveRequest('GET', `/api/archive/${date}/manifest`, service)).toMatchObject({ status: 503, body: { code: 'ARCHIVE_SCHEMA_UNKNOWN' } });
+      expect(await archiveRequest('GET', `/api/archive/${date}/futures/ALPHA?asOf=not-time`, service)).toMatchObject({ status: 400, body: { code: 'ARCHIVE_TIME_INVALID' } });
+    } finally {
+      archiveFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('merges raw and archived days, lets archives win, and isolates providers', async () => {
+    const root = s6TempDir();
+    try {
+      const current = s6Paths(root);
+      const otherScan = archivePath.join(root, 'other-provider');
+      const archivedDate = S6_DATES[1];
+      const rawDate = S6_DATES[2];
+      s6WriteDay(current.scanDir, archivedDate);
+      await archiveSession(current.scanDir, S6_PROVIDER, archivedDate, { archiveRoot: current.archiveRoot, keep: 30 });
+      s6WriteDay(current.scanDir, archivedDate); // same date must still resolve to archive
+      s6WriteDay(current.scanDir, rawDate);
+      s6WriteDay(otherScan, S6_DATES[3]);
+      await archiveSession(otherScan, 'other', S6_DATES[3], { archiveRoot: current.archiveRoot, keep: 30 });
+
+      const days = await listReplayDays(current.scanDir, current.archiveRoot, S6_PROVIDER);
+      expect(days).toEqual([
+        expect.objectContaining({ date: rawDate, source: 'live', minutes: 3, futuresSymbols: ['ALPHA', 'BETA'] }),
+        expect.objectContaining({ date: archivedDate, source: 'archive', minutes: 3, futuresSymbols: ['ALPHA', 'BETA'] }),
+      ]);
+      expect(days.some(day => day.date === S6_DATES[3])).toBe(false);
+    } finally {
+      archiveFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('holds archive completion behind a capture-settlement gate', async () => {
+    const root = s6TempDir();
+    try {
+      const { scanDir, archiveRoot } = s6Paths(root);
+      const date = S6_DATES[1];
+      const source = s6WriteDay(scanDir, date);
+      let releaseCapture;
+      const captureSettled = new Promise(resolve => { releaseCapture = resolve; });
+      const service = createArchiveService({
+        scanDir,
+        providerId: S6_PROVIDER,
+        archiveRoot,
+        beforeArchive: () => captureSettled.then(() => () => {}),
+        logger: () => {},
+      });
+      const work = service.archive(date);
+      await Promise.resolve();
+      expect(archiveFs.existsSync(source.day)).toBe(true);
+      releaseCapture();
+      await work;
+      expect(archiveFs.existsSync(source.day)).toBe(false);
+    } finally {
+      archiveFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses retention deletion when a structurally valid gzip changes', async () => {
+    const root = s6TempDir();
+    try {
+      const { scanDir, archiveRoot } = s6Paths(root);
+      for (const date of S6_DATES.slice(0, 2)) s6WriteDay(scanDir, date);
+      await archiveSession(scanDir, S6_PROVIDER, S6_DATES[0], { archiveRoot, keep: 2 });
+      await archiveSession(scanDir, S6_PROVIDER, S6_DATES[1], { archiveRoot, keep: 2 });
+      const oldFile = archivePath.join(archiveRoot, S6_PROVIDER, `${S6_DATES[0]}.json.gz`);
+      const payload = JSON.parse(gunzipSync(archiveFs.readFileSync(oldFile)).toString('utf8'));
+      payload.minutes['0915'] = { ...payload.minutes['0915'], tampered: true };
+      archiveFs.writeFileSync(oldFile, gzipSync(JSON.stringify(payload)));
+      const third = s6WriteDay(scanDir, S6_DATES[2]);
+      await expect(archiveSession(scanDir, S6_PROVIDER, S6_DATES[2], { archiveRoot, keep: 2 })).rejects.toMatchObject({ code: 'ARCHIVE_VERIFY_FAILED' });
+      expect(archiveFs.existsSync(oldFile)).toBe(true);
+      expect(archiveFs.existsSync(third.day)).toBe(true);
+      expect(JSON.parse(archiveFs.readFileSync(archivePath.join(archiveRoot, 'index.json'), 'utf8')).map(entry => entry.date)).toEqual(S6_DATES.slice(0, 3));
+    } finally {
+      archiveFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects archive reads whose payload identity differs from the requested provider/date', async () => {
+    const root = s6TempDir();
+    try {
+      const { scanDir, archiveRoot } = s6Paths(root);
+      const date = S6_DATES[1];
+      s6WriteDay(scanDir, date);
+      const service = createArchiveService({ scanDir, providerId: S6_PROVIDER, archiveRoot, logger: () => {} });
+      await service.archive(date);
+      const file = archivePath.join(archiveRoot, S6_PROVIDER, `${date}.json.gz`);
+      const payload = JSON.parse(gunzipSync(archiveFs.readFileSync(file)).toString('utf8'));
+      payload.providerId = 'other-provider';
+      archiveFs.writeFileSync(file, gzipSync(JSON.stringify(payload)));
+      expect(await archiveRequestAsync('GET', `/api/archive/${date}/manifest`, service)).toMatchObject({ status: 503, body: { code: 'ARCHIVE_VERIFY_FAILED' } });
+      payload.providerId = S6_PROVIDER;
+      payload.date = S6_DATES[2];
+      for (const future of Object.values(payload.futures)) future.session = S6_DATES[2];
+      archiveFs.writeFileSync(file, gzipSync(JSON.stringify(payload)));
+      expect(await archiveRequestAsync('GET', `/api/archive/${date}/minute/0915`, service)).toMatchObject({ status: 503, body: { code: 'ARCHIVE_VERIFY_FAILED' } });
+    } finally {
+      archiveFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects valid tampering of a non-first minute and futures record by fingerprint', async () => {
+    const root = s6TempDir();
+    try {
+      const { scanDir, archiveRoot } = s6Paths(root);
+      const date = S6_DATES[1];
+      s6WriteDay(scanDir, date);
+      const service = createArchiveService({ scanDir, providerId: S6_PROVIDER, archiveRoot, logger: () => {} });
+      await service.archive(date);
+      const file = archivePath.join(archiveRoot, S6_PROVIDER, `${date}.json.gz`);
+      const original = JSON.parse(gunzipSync(archiveFs.readFileSync(file)).toString('utf8'));
+      const tamperedMinute = structuredClone(original);
+      tamperedMinute.minutes['0916'] = { ...tamperedMinute.minutes['0916'], tampered: true };
+      archiveFs.writeFileSync(file, gzipSync(JSON.stringify(tamperedMinute)));
+      expect(await archiveRequestAsync('GET', `/api/archive/${date}/minute/0916`, service)).toMatchObject({ status: 503, body: { code: 'ARCHIVE_VERIFY_FAILED' } });
+
+      archiveFs.writeFileSync(file, gzipSync(JSON.stringify(original)));
+      const tamperedFutures = structuredClone(original);
+      tamperedFutures.futures.ALPHA.months[0].candles[1].close = 999;
+      archiveFs.writeFileSync(file, gzipSync(JSON.stringify(tamperedFutures)));
+      expect(await archiveRequestAsync('GET', `/api/archive/${date}/futures/ALPHA?asOf=0918`, service)).toMatchObject({ status: 503, body: { code: 'ARCHIVE_VERIFY_FAILED' } });
+    } finally {
+      archiveFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to archived market and futures snapshots only when raw days are absent', async () => {
+    const root = s6TempDir();
+    try {
+      const { scanDir, archiveRoot } = s6Paths(root);
+      const date = S6_DATES[1];
+      const source = s6WriteDay(scanDir, date);
+      const service = createArchiveService({ scanDir, providerId: S6_PROVIDER, archiveRoot, logger: () => {} });
+      await archiveSession(scanDir, S6_PROVIDER, date, { archiveRoot });
+
+      const minute = await readArchiveMinuteFallback(scanDir, service, date, '0916');
+      expect(minute).toEqual(source.minuteSnapshots['0916']);
+      const futures = await readArchiveFuturesFallback(scanDir, service, date, 'ALPHA');
+      expect(futures).toMatchObject({ symbol: 'ALPHA', session: date, months: source.futures.ALPHA.months });
+
+      s6WriteDay(scanDir, date);
+      expect(await readArchiveMinuteFallback(scanDir, service, date, '0916')).toBeNull();
+      expect(await readArchiveFuturesFallback(scanDir, service, date, 'ALPHA')).toBeNull();
     } finally {
       archiveFs.rmSync(root, { recursive: true, force: true });
     }

@@ -32,13 +32,14 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { encodeSeries, marketFile } from './marketFile.mjs';
 import { createProvider } from './providers/index.mjs';
 import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, ReplayDataError, REPLAY_DATE, REPLAY_SYMBOL, truncateFutures } from './replayStorage.mjs';
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
-import { archiveRequest, createArchiveService } from './archive.mjs';
+import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
 import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -159,17 +160,37 @@ function schedule() {
 // ── Futures, on demand ──────────────────────────────────────────────────────
 
 const futuresCache = new Map();
+let futuresActive = 0;
+let archiveLock = 'open';
+const yieldToLoop = () => new Promise(resolve => setTimeout(resolve, 10));
+
+export async function loadFuturesWithArchiveLock(lock, load, persist, logger = () => {}) {
+  const result = await load();
+  if (lock !== 'sealed') {
+    try { await persist(result); }
+    catch (error) { logger(error); }
+  }
+  return result;
+}
+
 async function futuresFor(symbol, session) {
   const key = `${symbol}|${session}`;
   const held = futuresCache.get(key);
   const live = provider.alwaysLive || isMarketSessionTime(Date.now());
   if (held && (!live || Date.now() - held.at < FUTURES_KEEP_MS)) return held.value;
-  const value = provider.futures(bySymbol.get(symbol), session).then(months => {
-    const result = { symbol, session, months };
-    try { persistFutures(SCAN_DIR, session, symbol, result); }
-    catch (error) { log(`futures ${symbol} persistence failed:`, error?.message || error); }
-    return result;
-  });
+  futuresActive += 1;
+  const value = (async () => {
+    try {
+      return await loadFuturesWithArchiveLock(
+        archiveLock,
+        () => Promise.resolve(provider.futures(bySymbol.get(symbol), session)).then(months => ({ symbol, session, months })),
+        result => Promise.resolve().then(() => persistFutures(SCAN_DIR, session, symbol, result)),
+        error => log(`futures ${symbol} persistence failed:`, error?.message || error),
+      );
+    } finally {
+      futuresActive -= 1;
+    }
+  })();
   futuresCache.set(key, { at: Date.now(), value });
   value.catch(() => futuresCache.delete(key));
   if (futuresCache.size > 4000) futuresCache.delete(futuresCache.keys().next().value);
@@ -188,21 +209,54 @@ const archive = createArchiveService({
   providerId: provider.id,
   archiveRoot: ARCHIVE_ROOT,
   logger: (...args) => log(...args),
+  beforeArchive: async () => {
+    archiveLock = 'settling';
+    while (state.building || futuresActive > 0) await yieldToLoop();
+    // Let a capture continuation after its previous futures call enter the
+    // counter before sealing new work for the archive read/delete window.
+    while (true) {
+      await yieldToLoop();
+      if (state.building || futuresActive > 0) continue;
+      archiveLock = 'sealed';
+      return () => { archiveLock = 'open'; };
+    }
+  },
 });
 let archivePass = null;
 
 /** Archive only after the date-aware market session close; archive.mjs verifies before removal. */
+async function closedRawDates(session, at) {
+  let entries;
+  try { entries = await fsp.readdir(SCAN_DIR, { withFileTypes: true }); }
+  catch (error) { if (error?.code === 'ENOENT') return []; throw error; }
+  return entries
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .filter(entry => /^\d{4}-\d{2}-\d{2}$/.test(entry) && entry <= session)
+    .filter(date => {
+      const dateAt = Date.parse(`${date}T12:00:00+05:30`);
+      return Number.isFinite(dateAt) && at > marketSessionBounds(dateAt).close;
+    })
+    .sort();
+}
+
 function queueClosedSessionArchives(session, at) {
   if (provider.alwaysLive || provider.id === 'demo') return;
-  const bounds = marketSessionBounds(at);
-  if (!Number.isFinite(bounds.close) || at <= bounds.close || !fs.existsSync(SCAN_DIR)) return;
   if (archivePass) return;
-  const dates = fs.readdirSync(SCAN_DIR)
-    .filter(entry => /^\d{4}-\d{2}-\d{2}$/.test(entry) && entry <= session)
-    .sort();
-  if (!dates.length) return;
   archivePass = (async () => {
-    for (const date of dates) await archive.archive(date);
+    // Re-scan after each settled pass: a capture finishing just after close
+    // may create the raw futures directory after the first scan.
+    while (true) {
+      while (state.building || futuresActive > 0) await yieldToLoop();
+      const dates = await closedRawDates(session, at);
+      if (!dates.length) {
+        await yieldToLoop();
+        if (!state.building && futuresActive === 0 && !(await closedRawDates(session, at)).length) return;
+        continue;
+      }
+      for (const date of dates) await archive.archive(date);
+      await yieldToLoop();
+    }
   })().catch(error => log('archive pass failed:', error?.message || error)).finally(() => { archivePass = null; });
 }
 
@@ -225,6 +279,12 @@ const SECURITY_HEADERS = {
 function send(res, status, body, type = 'application/json', extra = {}) {
   res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': type, 'Cache-Control': 'no-store', ...extra });
   res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
+}
+
+function sendArchiveReadError(res, error) {
+  const code = error?.code || 'ARCHIVE_FAILED';
+  const status = code === 'ARCHIVE_MISSING' ? 404 : 503;
+  return send(res, status, { error: error?.message || 'Stored archive is unavailable.', code });
 }
 
 function serveFile(res, file, cache = 'no-cache') {
@@ -335,8 +395,16 @@ async function handle(req, res) {
 
   if (captureAction && p === '/api/capture/now') return send(res, captureAction.status, captureAction.body);
 
-  const archiveAction = archiveRequest(req.method, req.url ?? '', archive, (...args) => log(...args));
-  if (archiveAction) return send(res, archiveAction.status, archiveAction.body);
+  const archiveAction = await archiveRequestAsync(req.method, req.url ?? '', archive, (...args) => log(...args));
+  if (archiveAction) return send(res, archiveAction.status, archiveAction.body, 'application/json', archiveAction.headers || {});
+
+  if (p === '/api/replay/days') {
+    try { return send(res, 200, await listReplayDays(SCAN_DIR, ARCHIVE_ROOT, provider.id)); }
+    catch (error) {
+      log('replay days failed:', error?.message || error);
+      return send(res, 503, { error: 'Stored replay catalog is invalid.', code: error?.code || 'REPLAY_DAYS_INVALID' });
+    }
+  }
 
   if (p === '/api/status') {
     return send(res, 200, withCaptureStatus({
@@ -385,7 +453,13 @@ async function handle(req, res) {
 
   const minute = p.match(/^\/api\/market\/(\d{4}-\d{2}-\d{2})\/(\d{4})$/);
   if (minute) {
-    const file = path.join(SCAN_DIR, minute[1], `${minute[2]}.json`);
+    const day = path.join(SCAN_DIR, minute[1]);
+    const file = path.join(day, `${minute[2]}.json`);
+    try {
+      const archivedMinute = await readArchiveMinuteFallback(SCAN_DIR, archive, minute[1], minute[2]);
+      if (archivedMinute !== null) return send(res, 200, archivedMinute, 'application/json', { 'Cache-Control': 'public, max-age=86400' });
+    }
+    catch (error) { return sendArchiveReadError(res, error); }
     return fs.existsSync(file) ? serveFile(res, file, 'public, max-age=86400') : send(res, 404, { error: 'No such minute.' });
   }
 
@@ -396,6 +470,14 @@ async function handle(req, res) {
     const current = getLatestTradingSessionDate(new Date(now()));
     const session = url.searchParams.get('session') ?? current;
     if (!bySymbol.has(symbol)) return send(res, 404, { error: 'Unknown underlying.' });
+    try {
+      const archivedFutures = await readArchiveFuturesFallback(SCAN_DIR, archive, session, symbol);
+      if (archivedFutures !== null) return send(res, 200, archivedFutures);
+    } catch (error) {
+      if (error?.code === 'ARCHIVE_MISSING' && session === current) {
+        // Preserve the normal current-session provider path when no raw/archive data exists yet.
+      } else return sendArchiveReadError(res, error);
+    }
     if (session !== current) return send(res, 400, { error: `Only the current session (${current}) is served.` });
     try {
       return send(res, 200, await futuresFor(symbol, session));

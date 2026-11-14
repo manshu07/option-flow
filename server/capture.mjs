@@ -44,7 +44,9 @@ export function createCapture({
   clearInterval: clearIntervalFn = globalThis.clearInterval,
 } = {}) {
   const symbols = universe.map(underlying => typeof underlying === 'string' ? underlying : underlying?.symbol).filter(Boolean);
-  const state = { done: 0, total: symbols.length, lastPassAt: null };
+  const state = { done: 0, total: symbols.length, lastPassAt: null, backfill: { done: 0, total: symbols.length, failed: 0 } };
+  const outcomes = new Map();
+  let outcomeSession = null;
   let timer = null;
   let inFlight = null;
   let startIndex = 0;
@@ -63,13 +65,23 @@ export function createCapture({
       let cursor = 0;
       let done = 0;
       const session = sessionFor(now());
+      if (outcomeSession !== session) {
+        outcomeSession = session;
+        outcomes.clear();
+        state.backfill = { done: 0, total: symbols.length, failed: 0 };
+      }
       const worker = async () => {
         while (cursor < order.length && eligible()) {
           const symbol = order[cursor++];
           try {
-            await futuresFor(symbol, session);
+            const result = await futuresFor(symbol, session);
             done += 1;
+            const months = result?.months;
+            if (!Array.isArray(months) || months.length === 0) outcomes.set(symbol, 'unsupported');
+            else if (months.every(month => Number.isFinite(month?.prevOi))) outcomes.set(symbol, 'done');
+            else outcomes.set(symbol, 'failed');
           } catch (error) {
+            outcomes.set(symbol, 'failed');
             report(logger, `capture futures ${symbol} failed:`, error?.message || error);
           }
         }
@@ -78,6 +90,11 @@ export function createCapture({
       await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT, order.length) }, worker));
       state.done = done;
       state.total = symbols.length;
+      state.backfill = {
+        done: [...outcomes.values()].filter(outcome => outcome === 'done').length,
+        total: symbols.length,
+        failed: [...outcomes.values()].filter(outcome => outcome === 'failed').length,
+      };
       state.lastPassAt = now();
     })();
 
@@ -103,7 +120,7 @@ export function createCapture({
     },
     runNow: pass,
     status() {
-      return { ...state };
+      return { ...state, backfill: { ...state.backfill } };
     },
     async stop() {
       if (timer !== null) {

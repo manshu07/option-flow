@@ -94,7 +94,7 @@ describe('server futures capture', () => {
     await capture.runNow();
 
     for (const { symbol } of universe) expect(readFutures(scanDir, SESSION, symbol)).toMatchObject({ symbol, session: SESSION });
-    expect(capture.status()).toEqual({ done: universe.length, total: universe.length, lastPassAt: AT });
+    expect(capture.status()).toEqual({ done: universe.length, total: universe.length, lastPassAt: AT, backfill: { done: universe.length, total: universe.length, failed: 0 } });
   });
 
   it('logs a failed symbol, completes the pass, and retries it on the next rotation', async () => {
@@ -121,12 +121,14 @@ describe('server futures capture', () => {
 
     await capture.runNow();
     expect(capture.status().done).toBe(3);
+    expect(capture.status().backfill).toEqual({ done: 3, total: universe.length, failed: 1 });
     expect(errors).toHaveLength(1);
     await capture.runNow();
 
     expect(calls.slice(0, 4)).toEqual(['ALPHA', 'BETA', 'GAMMA', 'DELTA']);
     expect(calls.slice(4)).toContain('ALPHA');
     expect(capture.status().done).toBe(4);
+    expect(capture.status().backfill).toEqual({ done: 4, total: universe.length, failed: 0 });
     expect(readFutures(scanDir, SESSION, 'ALPHA')).not.toBeNull();
   });
 
@@ -154,7 +156,7 @@ describe('server futures capture', () => {
     const alwaysLive = createCapture({ ...options, provider: { alwaysLive: true }, setInterval: clock.setInterval, clearInterval: clock.clearInterval });
     alwaysLive.start();
     expect(clock.entries).toHaveLength(0);
-    expect(alwaysLive.status()).toEqual({ done: 0, total: universe.length, lastPassAt: null });
+    expect(alwaysLive.status()).toEqual({ done: 0, total: universe.length, lastPassAt: null, backfill: { done: 0, total: universe.length, failed: 0 } });
 
     const demoClock = timers();
     const demo = createCapture({ ...inSession, provider: { id: 'demo', alwaysLive: false }, setInterval: demoClock.setInterval, clearInterval: demoClock.clearInterval });
@@ -221,7 +223,7 @@ describe('server futures capture', () => {
 
     const first = captureRequest('POST', '/api/capture/now', capture, () => {});
     const second = captureRequest('POST', '/api/capture/now?source=test', capture, () => {});
-    expect(first).toMatchObject({ status: 202, body: { capture: { done: 0, total: 4, lastPassAt: null } } });
+    expect(first).toMatchObject({ status: 202, body: { capture: { done: 0, total: 4, lastPassAt: null, backfill: { done: 0, total: 4, failed: 0 } } } });
     expect(second?.status).toBe(202);
     expect(started).toEqual(['ALPHA', 'BETA', 'GAMMA']);
 
@@ -274,8 +276,50 @@ describe('server futures capture', () => {
     await pass;
 
     expect(started).toEqual(['ALPHA', 'BETA', 'GAMMA']);
-    expect(capture.status()).toEqual({ done: 3, total: universe.length, lastPassAt: AT });
+    expect(capture.status()).toEqual({ done: 3, total: universe.length, lastPassAt: AT, backfill: { done: 3, total: universe.length, failed: 0 } });
     for (const symbol of started) expect(readFutures(scanDir, SESSION, symbol)).not.toBeNull();
     expect(readFutures(scanDir, SESSION, 'DELTA')).toBeNull();
+  });
+
+  it('does not count empty futures as a backfill failure', async () => {
+    const capture = createCapture({
+      provider: { alwaysLive: false },
+      universe: [{ symbol: 'ALPHA' }, { symbol: 'BETA' }],
+      now: () => AT,
+      isMarketSessionTime: () => true,
+      sessionFor: () => SESSION,
+      futuresFor: async symbol => symbol === 'ALPHA' ? fixture(symbol) : { symbol, session: SESSION, months: [] },
+      logger: () => {},
+    });
+
+    await capture.runNow();
+    expect(capture.status().backfill).toEqual({ done: 1, total: 2, failed: 0 });
+  });
+
+  it('resets backfill outcomes when a new session begins', async () => {
+    let session = SESSION;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const capture = createCapture({
+      provider: { alwaysLive: false },
+      universe: [{ symbol: 'ALPHA' }, { symbol: 'BETA' }],
+      now: () => AT,
+      isMarketSessionTime: () => true,
+      sessionFor: () => session,
+      futuresFor: async symbol => {
+        if (session !== SESSION) await gate;
+        return fixture(symbol);
+      },
+      logger: () => {},
+    });
+
+    await capture.runNow();
+    session = '2026-11-16';
+    const next = capture.runNow();
+    await Promise.resolve();
+    expect(capture.status().backfill).toEqual({ done: 0, total: 2, failed: 0 });
+    release();
+    await next;
+    expect(capture.status().backfill).toEqual({ done: 2, total: 2, failed: 0 });
   });
 });

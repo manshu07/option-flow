@@ -411,7 +411,18 @@
 .mf-replay__close { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 18px; line-height: 1; }
 .mf-replay__close:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
 .mf-replay__range { margin-top: 14px; }
+.mf-replay__days { display: grid; gap: 7px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--flow-hair); }
+.mf-replay__label { font-size: 10.5px; font-weight: 700; color: var(--text-muted); }
+.mf-replay__chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.mf-replay__chips button, .mf-replay__days select, .mf-replay__selectors select, .mf-replay__selectors input { min-height: 30px; border: 1px solid var(--flow-hair); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 11px; }
+.mf-replay__chips button { padding: 0 7px; }
+.mf-replay__chips button:hover, .mf-replay__chips button.is-selected { border-color: var(--accent); color: var(--text); }
+.mf-replay__days select { width: 100%; padding: 0 7px; }
+.mf-replay__coverage { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .mf-replay__time { margin-top: 4px; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.mf-replay__selectors { display: flex; align-items: end; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.mf-replay__selectors label { display: grid; gap: 3px; font-size: 10.5px; color: var(--text-muted); }
+.mf-replay__selectors select, .mf-replay__selectors input { padding: 0 6px; }
 .mf-replay__slider { display: block; width: 100%; margin: 14px 0 12px; accent-color: var(--accent); }
 .mf-replay__controls { display: flex; gap: 8px; }
 .mf-replay__controls button { min-height: 30px; padding: 0 12px; border: 1px solid var(--flow-hair); border-radius: 7px; background: var(--surface); color: var(--text); font-size: 12px; font-weight: 600; }
