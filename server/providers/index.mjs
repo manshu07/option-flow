@@ -29,5 +29,11 @@ export const PROVIDERS = {
 export function createProvider(universe, id = process.env.MF_PROVIDER || 'demo') {
   const create = PROVIDERS[id];
   if (!create) throw new Error(`Unknown MF_PROVIDER "${id}". Known: ${Object.keys(PROVIDERS).join(', ')}.`);
+  // Guard: Dhan credentials present but the board is on a synthetic/replay provider — a stale
+  // .env editor buffer re-saving MF_PROVIDER=demo looks exactly like this and silently replaces
+  // live prices with demo data.
+  if ((id === 'demo' || id === 'recorded') && process.env.DHAN_ACCESS_TOKEN && !process.env.DHAN_ACCESS_TOKEN.includes(' ')) {
+    console.warn(`⚠️  MF_PROVIDER=${id} but DHAN_ACCESS_TOKEN is set — the board will show SYNTHETIC prices, not live Dhan data. Set MF_PROVIDER=dhan for the live feed.`);
+  }
   return create(universe);
 }
