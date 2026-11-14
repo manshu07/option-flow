@@ -145,6 +145,11 @@ describe('server futures capture', () => {
     await createCapture({ ...options, provider: { id: 'demo', alwaysLive: false } }).runNow();
     expect(calls).toBe(0);
 
+    const inSession = { ...options, isMarketSessionTime: () => true };
+    await createCapture({ ...inSession, provider: { alwaysLive: true } }).runNow();
+    await createCapture({ ...inSession, provider: { id: 'demo', alwaysLive: false } }).runNow();
+    expect(calls).toBe(0);
+
     const clock = timers();
     const alwaysLive = createCapture({ ...options, provider: { alwaysLive: true }, setInterval: clock.setInterval, clearInterval: clock.clearInterval });
     alwaysLive.start();
@@ -152,7 +157,7 @@ describe('server futures capture', () => {
     expect(alwaysLive.status()).toEqual({ done: 0, total: universe.length, lastPassAt: null });
 
     const demoClock = timers();
-    const demo = createCapture({ ...options, provider: { id: 'demo', alwaysLive: false }, setInterval: demoClock.setInterval, clearInterval: demoClock.clearInterval });
+    const demo = createCapture({ ...inSession, provider: { id: 'demo', alwaysLive: false }, setInterval: demoClock.setInterval, clearInterval: demoClock.clearInterval });
     demo.start();
     expect(demoClock.entries).toHaveLength(0);
   });
