@@ -8,6 +8,8 @@
  *   GET /api/replay/<date>/manifest  captured market minutes and futures coverage
  *   GET /api/replay/<date>/futures/<SYMBOL>?asOf=HHMM  persisted futures at a cursor
  *   POST /api/capture/now            request a non-blocking futures capture pass
+ *   GET /api/archive                 verified EOD archive metadata
+ *   POST /api/archive/<date>         request a non-blocking EOD archive
  *   GET /*                           the built page from dist/ (npm run build)
  *
  * Where the numbers come from is a provider (server/providers): the built-in
@@ -36,7 +38,8 @@ import { encodeSeries, marketFile } from './marketFile.mjs';
 import { createProvider } from './providers/index.mjs';
 import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, ReplayDataError, REPLAY_DATE, REPLAY_SYMBOL, truncateFutures } from './replayStorage.mjs';
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
-import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts } from '../src/lib/marketSession.ts';
+import { archiveRequest, createArchiveService } from './archive.mjs';
+import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT) || 8787;
@@ -60,6 +63,7 @@ const flagged = ['recorded', 'archive'].find(id => process.argv.includes(`--${id
 const provider = createProvider(universe, flagged);
 const now = () => (provider.now ? provider.now() : Date.now());
 const SCAN_DIR = path.join(DATA_DIR, provider.id);
+const ARCHIVE_ROOT = path.join(DATA_DIR, 'archives');
 
 // ── Collector ─────────────────────────────────────────────────────────────
 
@@ -132,7 +136,7 @@ async function build() {
     state.latestJson = JSON.stringify(file);
     fs.mkdirSync(SCAN_DIR, { recursive: true });
     fs.writeFileSync(path.join(SCAN_DIR, 'latest.json'), state.latestJson);
-    pruneOldDays(session);
+    queueClosedSessionArchives(session, at);
     state.lastBuild = { at, ms: Date.now() - started, series: series.length, failed: failed.length, failedSymbols: failed.slice(0, 20), firstError };
     state.lastError = null;
     log(`market file: ${series.length} series, ${failed.length} failed, ${Date.now() - started} ms${firstError ? ` (first error: ${firstError})` : ''}`);
@@ -142,14 +146,6 @@ async function build() {
     state.lastError = { at: Date.now(), message: 'The data provider did not answer. The server log has the detail.' };
   } finally {
     state.building = false;
-  }
-}
-
-/** Earlier sessions' minutes are never read again: keep today only. */
-function pruneOldDays(today) {
-  if (!fs.existsSync(SCAN_DIR)) return;
-  for (const entry of fs.readdirSync(SCAN_DIR)) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(entry) && entry < today) fs.rmSync(path.join(SCAN_DIR, entry), { recursive: true, force: true });
   }
 }
 
@@ -186,6 +182,29 @@ const capture = createCapture({
   futuresFor,
   logger: (...args) => log(...args),
 });
+
+const archive = createArchiveService({
+  scanDir: SCAN_DIR,
+  providerId: provider.id,
+  archiveRoot: ARCHIVE_ROOT,
+  logger: (...args) => log(...args),
+});
+let archivePass = null;
+
+/** Archive only after the date-aware market session close; archive.mjs verifies before removal. */
+function queueClosedSessionArchives(session, at) {
+  if (provider.alwaysLive || provider.id === 'demo') return;
+  const bounds = marketSessionBounds(at);
+  if (!Number.isFinite(bounds.close) || at <= bounds.close || !fs.existsSync(SCAN_DIR)) return;
+  if (archivePass) return;
+  const dates = fs.readdirSync(SCAN_DIR)
+    .filter(entry => /^\d{4}-\d{2}-\d{2}$/.test(entry) && entry <= session)
+    .sort();
+  if (!dates.length) return;
+  archivePass = (async () => {
+    for (const date of dates) await archive.archive(date);
+  })().catch(error => log('archive pass failed:', error?.message || error)).finally(() => { archivePass = null; });
+}
 
 // ── HTTP ──────────────────────────────────────────────────────────────────
 
@@ -301,7 +320,8 @@ async function handle(req, res) {
   const captureAction = captureRequest(req.method, req.url ?? '', capture, (...args) => log(...args));
   if (req.method !== 'GET' && req.method !== 'HEAD' && !captureAction) {
     const capturePath = /^\/api\/capture\/now(?:\?|$)/.test(req.url ?? '');
-    return send(res, 405, { error: 'Method not allowed.' }, 'application/json', { Allow: capturePath ? 'GET, HEAD, POST' : 'GET, HEAD' });
+    const archivePath = /^\/api\/archive(?:\/|\?|$)/.test(req.url ?? '');
+    return send(res, 405, { error: 'Method not allowed.' }, 'application/json', { Allow: capturePath || archivePath ? 'GET, HEAD, POST' : 'GET, HEAD' });
   }
   let url;
   let p;
@@ -314,6 +334,9 @@ async function handle(req, res) {
   if (p.includes('\0')) return send(res, 400, { error: 'Bad request.' });
 
   if (captureAction && p === '/api/capture/now') return send(res, captureAction.status, captureAction.body);
+
+  const archiveAction = archiveRequest(req.method, req.url ?? '', archive, (...args) => log(...args));
+  if (archiveAction) return send(res, archiveAction.status, archiveAction.body);
 
   if (p === '/api/status') {
     return send(res, 200, withCaptureStatus({
