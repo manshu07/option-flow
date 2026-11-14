@@ -90,12 +90,44 @@ function storeMinute(date, at, json) {
   return minutes;
 }
 
+/** The newest stored minute snapshot for a session, or null when nothing was captured. */
+function lastStoredMinuteFile(session) {
+  const dir = path.join(SCAN_DIR, session);
+  let index;
+  try { index = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')); }
+  catch { return null; }
+  if (!Array.isArray(index) || !index.length) return null;
+  const [hhmm, at] = index[index.length - 1];
+  try {
+    const json = fs.readFileSync(path.join(dir, `${hhmm}.json`), 'utf8');
+    const file = JSON.parse(json);
+    return { file, json, at, count: Array.isArray(file.series) ? file.series.length : 0 };
+  } catch { return null; }
+}
+
 async function build() {
   if (state.building) return;
   state.building = true;
   const started = Date.now();
   const clock = now();
   const session = getLatestTradingSessionDate(new Date(clock));
+  // Post-close fast path: the market is shut and nothing is moving — serve the
+  // session's last captured snapshot (the real closing state) instead of crawling
+  // 215 chains through the paced REST fallback. A fresh session day starts empty.
+  if (!provider.alwaysLive && !isMarketSessionTime(clock)) {
+    const stored = lastStoredMinuteFile(session);
+    if (stored) {
+      state.latest = stored.file;
+      state.latestJson = stored.json;
+      fs.mkdirSync(SCAN_DIR, { recursive: true });
+      fs.writeFileSync(path.join(SCAN_DIR, 'latest.json'), state.latestJson);
+      state.lastBuild = { at: stored.at, ms: Date.now() - started, series: stored.count, failed: 0, failedSymbols: [], firstError: null };
+      state.lastError = null;
+      log(`market file: ${stored.count} series (stored session snapshot — market closed), 0 failed, ${Date.now() - started} ms`);
+      state.building = false;
+      return;
+    }
+  }
   if (ladderCache.session !== session) { ladderCache.session = session; ladderCache.bySymbol.clear(); }
   const series = [];
   const ladders = {};
@@ -178,6 +210,18 @@ async function futuresFor(symbol, session) {
   const held = futuresCache.get(key);
   const live = provider.alwaysLive || isMarketSessionTime(Date.now());
   if (held && (!live || Date.now() - held.at < FUTURES_KEEP_MS)) return held.value;
+  // Closed-market fast path: the persisted session file IS the final state —
+  // serve it from disk instantly instead of pacing REST calls per symbol.
+  if (!live) {
+    try {
+      const stored = readFutures(SCAN_DIR, session, symbol);
+      if (stored && Array.isArray(stored.months) && stored.months.length) {
+        const result = { symbol: stored.symbol, session: stored.session, months: stored.months };
+        futuresCache.set(key, { at: Date.now(), value: Promise.resolve(result) });
+        return result;
+      }
+    } catch { /* corrupt or missing → fall through to the provider */ }
+  }
   futuresActive += 1;
   const value = (async () => {
     try {
@@ -203,6 +247,24 @@ const capture = createCapture({
   futuresFor,
   logger: (...args) => log(...args),
 });
+
+// Boot warm pass: pre-fill the futures cache so the page opens fully populated
+// (no "Updating · futures 0 of N" phase while backfills trickle in). Fired AFTER
+// provider.init() — the instrument map must exist first. The provider's own
+// throttle paces the calls; failures retry on demand.
+async function futuresWarmPass() {
+  try {
+    const session = getLatestTradingSessionDate(new Date(now()));
+    let warmed = 0;
+    for (const u of universe) {
+      try { await futuresFor(u.symbol, session); warmed += 1; }
+      catch (error) { log(`warm pass ${u.symbol} failed:`, String(error?.message || error).slice(0, 120)); }
+    }
+    log(`futures warm pass: ${warmed}/${universe.length} symbols cached`);
+  } catch (error) {
+    log('futures warm pass failed:', String(error?.message || error));
+  }
+}
 
 const archive = createArchiveService({
   scanDir: SCAN_DIR,
@@ -516,6 +578,7 @@ server.listen(PORT, HOST, async () => {
     log(state.lastError.message);
     return;
   }
+  void futuresWarmPass();
   await build();
   schedule();
   capture.start();
