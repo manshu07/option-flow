@@ -126,3 +126,4 @@ non-null — expect 100% after the seed completes.
 | G6 | Futures persistence is page-driven — no page open during market hours = prices-only capture. Server-side capture cycle is a V1.1 item. | Accepted V1; operational note: keep the board open during sessions you want replayable |
 
 These are documented V1 scope decisions, not regressions. G2 and G5 are time-critical; the rest are queued for V1.1.
+- Observed 2026-11-14: token expiry (24h validity in practice, even on a paid plan) makes the quote-refresh loop spam 401 warnings every few seconds all night. Backlog (ops hardening): after N consecutive 401s, back off retries to once per 5 minutes and surface a "token expired" state on /api/status instead of retry-spamming. Also corrects the earlier assumption — treat the web-generated token as a daily credential and regenerate before each session.
