@@ -153,3 +153,21 @@ re-baselining `docs/DHAN_PROVIDER_HANDOFF.md` §7 (G1/G4 entries close via S1/S2
 ## Story order (dependency-driven)
 S5 (capture — foundation) → S6 (archive) → S7 (archive reads) → S8 (multi-day) → S9 (picker);
 Sprint A items are independent and can interleave anytime.
+
+## V2 ADDENDUM — Playback smoothness + speed (folded into S7/S8)
+
+Discovered 2026-11-14: replay playback flickers/blanks on every minute advance. Root cause in
+`useReplayFlow.ts`: cursor advances before the next snapshot is cached (marketCache LRU = 3),
+`flow` becomes null mid-playback, and there is no prefetching. Fix folded into S7/S8 (same files):
+
+1. NEVER blank the board between minutes: stale-while-revalidate — keep rendering the previous
+   frame while the next snapshot loads. `flow` must not become null during playback.
+2. PREFETCH: keep the next 5 minutes fetched ahead of the cursor during playback.
+3. marketCache LRU: raise from 3 to ≥40 minutes; seeks must hit cache.
+4. SPEED CONTROL (closes G3): 0.5× / 1× / 2× / 5× selector in ReplayControls,
+   interval = 700ms / speed, persisted in localStorage; expose pure `playbackIntervalMs(speed)`
+   and unit-test it.
+
+Acceptance (Vitest, fake timers): playback over N minutes never produces a null `flow`;
+prefetch fires ahead of the cursor; speed changes alter the step interval; seeks hit cache.
+Live mode behavior unchanged.
