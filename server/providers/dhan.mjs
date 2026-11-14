@@ -130,6 +130,10 @@ export function createDhanProvider(universe) {
   let slots = [];
   /** Option-Chain gate: at most CHAIN_PER_8S requests in any 8-second window. */
   let chainStamps = [];
+  /** Auth-failure handling: 401s back off for 5 minutes (one warning per episode) instead
+   *  of spamming every retry — an expired token used to flood the log all night. */
+  let authFailUntil = 0;
+  let authWarned = false;
   /** The feed: one connection for underlyings + futures, the rest for option strikes. */
   const conns = [];
   let feedHealthyAt = 0, feedStartedAt = 0, feedWant = new Set(), rebalanceTimer = null, watchdogTimer = null;
@@ -162,6 +166,7 @@ export function createDhanProvider(universe) {
   }
 
   async function post(path, payload, { retry = true, timeoutMs = 20_000 } = {}) {
+    if (Date.now() < authFailUntil) throw new Error('Dhan credentials rejected earlier — cooling down before retrying.');
     await throttle();
     let res;
     try {
@@ -176,7 +181,12 @@ export function createDhanProvider(universe) {
       throw error;
     }
     if (res.status === 401 || res.status === 807) {
-      throw new Error(`Dhan rejected the credentials (HTTP ${res.status}). Generate a fresh access token on web.dhan.co → My Profile → DhanHQ Trading Access.`);
+      authFailUntil = Date.now() + 5 * 60_000;
+      if (!authWarned) {
+        authWarned = true;
+        console.warn('⚠️ Dhan rejected the credentials (401) — generate a fresh access token on web.dhan.co → My Profile → DhanHQ Trading Access, update .env, and restart. API calls paused for 5 minutes.');
+      }
+      throw new Error('Dhan rejected the credentials (HTTP 401). Generate a fresh access token on web.dhan.co → My Profile → DhanHQ Trading Access.');
     }
     if (res.status === 429 && retry) { await sleep(3000); return post(path, payload, { retry: false, timeoutMs }); }
     if (!res.ok) throw new Error(`Dhan ${res.status} ${path}: ${(await res.text()).slice(0, 200)}`);
