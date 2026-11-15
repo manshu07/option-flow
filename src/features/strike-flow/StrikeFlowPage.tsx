@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CapsuleSegmented, type CapsuleOption } from '@/components/common/CapsuleSegmented';
 import { PageBar } from '@/components/chrome/PageBar';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
-import { FlowDiagram } from '../market-flow/FlowDiagram';
+import { FlowBoard, type FlowLayout } from '../market-flow/FlowBoard';
 import { useFitScrollerHeight } from '@/hooks/useFitScrollerHeight';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { applyTheme } from '@/lib/applyTheme';
@@ -59,8 +59,11 @@ function StatusLine({ board }: { board: ReturnType<typeof optionBoardFlow> }) {
 
 export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
   const pageRef = useRef<HTMLDivElement>(null);
-  const fits = useMediaQuery('(min-width: 1100px)');
+  const wider = useMediaQuery('(min-width: 1280px)');
+  const wide = useMediaQuery('(min-width: 1100px)');
   const phone = useMediaQuery('(max-width: 768px)');
+  const layout: FlowLayout = wider ? 'diagram' : wide ? 'desktop' : phone ? 'phone' : 'tablet';
+  const fits = layout === 'desktop' || layout === 'diagram';
   const [scope, setScope] = useState('all-indices');
   const [stock, setStock] = useState('');
   // The board reads the day window, exactly like Order Flow's own board.
@@ -163,10 +166,8 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
           <div><h2>No captured chain for {symbols.join(' + ')} on {date}</h2><p>No chain is available yet, or the archive could not be read. Retry to check the local archive again.</p><button className="ui-flow-replay" type="button" onClick={() => setRetry(value => value + 1)}>Retry archive</button></div>
         </section>
       ) : viewed ? (
-        <>
-          <StatusLine board={viewed} />
-          <FlowDiagram flow={viewed} settings={{ named: null, lines: 'all' }} status={<StatusLine board={viewed} />} />
-        </>
+        <FlowBoard flow={viewed} settings={{ named: null, lines: 'all' }} layout={layout}
+          status={<StatusLine board={viewed} />} />
       ) : null}
     </div>
   );

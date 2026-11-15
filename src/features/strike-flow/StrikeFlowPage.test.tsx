@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,9 +7,9 @@ import type { StrikeFlowContract, StrikeFlowPayload, StrikeSeriesPoint, StrikeSi
 
 const feed = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock('./feed', () => ({ fetchStrikeFlow: feed.fetch }));
-vi.mock('../market-flow/FlowDiagram', () => ({
-  FlowDiagram: ({ flow }: { flow: { stocks: Array<{ symbol: string }> } }) => (
-    <div data-testid="flow-diagram">{flow.stocks.map(stock => <span key={stock.symbol}>{stock.symbol}</span>)}</div>
+vi.mock('../market-flow/FlowBoard', () => ({
+  FlowBoard: ({ flow, status }: { flow: { stocks: Array<{ symbol: string }> }; status?: ReactNode }) => (
+    <div data-testid="flow-board">{status}{flow.stocks.map(stock => <span key={stock.symbol}>{stock.symbol}</span>)}</div>
   ),
 }));
 vi.mock('@/hooks/useMediaQuery', () => ({ useMediaQuery: () => false }));
@@ -82,7 +83,7 @@ describe('StrikeFlowPage (Option Board)', () => {
     expect(feed.fetch).toHaveBeenCalledWith('NIFTY', expect.objectContaining({ date: '2026-11-13' }));
     expect(feed.fetch).toHaveBeenCalledWith('BANKNIFTY', expect.anything());
     expect(feed.fetch).toHaveBeenCalledWith('SENSEX', expect.anything());
-    const diagram = await screen.findByTestId('flow-diagram');
+    const diagram = await screen.findByTestId('flow-board');
     expect(diagram).toHaveTextContent('NIFTY25150CE');
     expect(diagram).toHaveTextContent('NIFTY25000PE');
   });
@@ -90,7 +91,7 @@ describe('StrikeFlowPage (Option Board)', () => {
   it('fetches a single chain for a single-index scope', async () => {
     page();
 
-    await waitFor(() => expect(screen.getByTestId('flow-diagram')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('flow-board')).toBeInTheDocument());
     const before = feed.fetch.mock.calls.length;
     fireEvent.click(screen.getByRole('radio', { name: 'Nifty' }));
 
@@ -101,23 +102,23 @@ describe('StrikeFlowPage (Option Board)', () => {
   it('filters the board by mode: Momentum Flow shows both sides, Calls and Puts one', async () => {
     page();
 
-    const diagram = await screen.findByTestId('flow-diagram');
+    const diagram = await screen.findByTestId('flow-board');
     expect(diagram).toHaveTextContent('NIFTY25150CE');
     expect(diagram).toHaveTextContent('NIFTY25000PE');
 
     fireEvent.click(screen.getByRole('radio', { name: 'Calls (Top)' }));
-    expect(screen.getByTestId('flow-diagram')).toHaveTextContent('NIFTY25150CE');
-    expect(screen.queryByTestId('flow-diagram')).not.toHaveTextContent('NIFTY25000PE');
+    expect(screen.getByTestId('flow-board')).toHaveTextContent('NIFTY25150CE');
+    expect(screen.queryByTestId('flow-board')).not.toHaveTextContent('NIFTY25000PE');
 
     fireEvent.click(screen.getByRole('radio', { name: 'Put (Top)' }));
-    expect(screen.getByTestId('flow-diagram')).toHaveTextContent('NIFTY25000PE');
-    expect(screen.queryByTestId('flow-diagram')).not.toHaveTextContent('NIFTY25150CE');
+    expect(screen.getByTestId('flow-board')).toHaveTextContent('NIFTY25000PE');
+    expect(screen.queryByTestId('flow-board')).not.toHaveTextContent('NIFTY25150CE');
   });
 
   it('shows the stock dropdown only on the F&O Stock Options chip and fetches the chosen stock', async () => {
     page();
 
-    await screen.findByTestId('flow-diagram');
+    await screen.findByTestId('flow-board');
     expect(screen.queryByLabelText('F&O stocks')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: 'F&O Stock Options' }));
@@ -126,8 +127,8 @@ describe('StrikeFlowPage (Option Board)', () => {
 
     fireEvent.change(select, { target: { value: 'RELIANCE' } });
     await waitFor(() => expect(feed.fetch).toHaveBeenLastCalledWith('RELIANCE', expect.anything()));
-    await screen.findByTestId('flow-diagram');
-    expect(screen.getByTestId('flow-diagram')).toBeInTheDocument();
+    await screen.findByTestId('flow-board');
+    expect(screen.getByTestId('flow-board')).toBeInTheDocument();
   });
 
   it('shows an honest empty state and retries the archive read', async () => {
@@ -142,14 +143,14 @@ describe('StrikeFlowPage (Option Board)', () => {
   it('opens the Contracts Screener tab as an honest coming-soon view', async () => {
     page();
 
-    await screen.findByTestId('flow-diagram');
+    await screen.findByTestId('flow-board');
     fireEvent.click(screen.getByRole('radio', { name: 'Contracts Screener' }));
 
     expect(screen.getByRole('heading', { name: 'Contracts Screener' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Back to Option Board' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Back to Option Board' }));
-    expect(screen.getByTestId('flow-diagram')).toBeInTheDocument();
+    expect(screen.getByTestId('flow-board')).toBeInTheDocument();
   });
 
   it('renders a request failure separately from an empty archive', async () => {
