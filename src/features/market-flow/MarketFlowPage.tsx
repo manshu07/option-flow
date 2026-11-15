@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState , type ReactNode} from 'react';
 import { PageBar } from '@/components/chrome/PageBar';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { applyTheme } from '@/lib/applyTheme';
@@ -44,6 +44,8 @@ const CHART = { named: SETTINGS.named, lines: SETTINGS.lines };
 
 interface MarketFlowPageProps {
   universe: Underlying[];
+  /** The app's Order Flow / Strike Flow capsule, rendered first in this page's bar (additive; optional keeps existing callers unchanged). */
+  tabs?: ReactNode;
 }
 
 const UNIVERSES: Array<{ value: FlowUniverse; label: string; title: string }> = [
@@ -60,7 +62,7 @@ const BRAND = (
   </a>
 );
 
-export function MarketFlowPage({ universe }: MarketFlowPageProps) {
+export function MarketFlowPage({ universe, tabs }: MarketFlowPageProps) {
   const [scope, setScope] = useState<FlowUniverse>(loadUniverse);
   const [replayRequested, setReplayRequested] = useState(false);
   const [replayDate, setReplayDate] = useState<string | null>(null);
@@ -101,6 +103,7 @@ export function MarketFlowPage({ universe }: MarketFlowPageProps) {
 
   const pageActions = (
     <>
+      {tabs}
       <CapsuleSegmented options={UNIVERSES} value={scope} onChange={setScope} ariaLabel="Underlyings" groupId="flow-universe" size="page" className="ui-flow-universe" />
       <button className={`ui-flow-replay${replayRequested ? ' is-active' : ''}`} type="button" data-testid="flow-replay-open" aria-label={replayRequested ? 'Close market replay' : 'Open market replay'} onClick={toggleReplay}>
         Replay

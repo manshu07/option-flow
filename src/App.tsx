@@ -17,13 +17,11 @@ export default function App() {
   const tabs = (
     <CapsuleSegmented options={FLOW_PAGES} value={page} onChange={setPage} ariaLabel="Flow boards" groupId="app-flow-tabs" role="tablist" size="page" fill />
   );
-  // Strike Flow carries the tabs inside its own PageBar row (reference header);
-  // Order Flow keeps the accepted strip above it, untouched.
+  // Both pages carry the tabs inside their own bar row (reference header) — no strip above.
   return (
     <div className="app-flow-shell">
-      {page === 'order-flow' && <nav className="app-flow-tabs" aria-label="Flow boards">{tabs}</nav>}
       <div className="app-flow-panel" role="tabpanel" aria-label={page === 'order-flow' ? 'Order Flow board' : 'Strike Flow board'} tabIndex={0}>
-        {page === 'order-flow' ? <MarketFlowPage universe={universe} /> : <StrikeFlowPage universe={universe} tabs={tabs} />}
+        {page === 'order-flow' ? <MarketFlowPage universe={universe} tabs={tabs} /> : <StrikeFlowPage universe={universe} tabs={tabs} />}
       </div>
     </div>
   );

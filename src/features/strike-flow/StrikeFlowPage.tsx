@@ -9,7 +9,7 @@ import { getLatestTradingSessionDate } from '@/lib/marketSession';
 import { HEADER_MARKET_SYMBOLS, type Underlying } from '@/lib/underlyings';
 import { clockOf } from '../market-flow/marketFlowModel';
 import { fetchStrikeFlow, type StrikeFlowPayload } from './feed';
-import { StrikeFlowCard, StrikeFlowPopup, type StrikeChartTimeframe } from './StrikeFlowCards';
+import { StrikeFlowPopup, type StrikeChartTimeframe } from './StrikeFlowCards';
 import { StrikeFlowDiagram } from './StrikeFlowDiagram';
 import { spotChangeForWindow, strikeWalls } from './strikeCardModel';
 import { filterStrikeReadings, strikeReadings, type StrikeFlowWindow, type StrikeReading, type StrikeSideFilter } from './strikeFlowModel';
@@ -44,52 +44,6 @@ const BRAND = (
     <span className="mf-brand__by">by Mr. Chartist</span>
   </a>
 );
-
-function StrikeDistribution({ readings }: { readings: StrikeReading[] }) {
-  const measured = readings.filter(reading => reading.premiumChangePct !== null);
-  const maxMove = Math.max(0, ...measured.map(reading => Math.abs(reading.premiumChangePct ?? 0)));
-  const reach = Math.max(0.5, Math.ceil(maxMove * 2) / 2);
-  const midpoint = 450;
-  const half = 410;
-  const bins = new Map<string, number>();
-  const counts = {
-    up: readings.filter(reading => reading.direction === 'up').length,
-    flat: readings.filter(reading => reading.direction === 'flat').length,
-    down: readings.filter(reading => reading.direction === 'down').length,
-  };
-
-  const dots = measured.map(reading => {
-    const value = reading.premiumChangePct ?? 0;
-    const tone = reading.direction === 'up' || reading.direction === 'down' ? reading.direction : 'flat';
-    const x = midpoint + (value / reach) * half;
-    const bin = Math.round(x / 7);
-    const key = `${bin}:${tone}`;
-    const row = bins.get(key) ?? 0;
-    bins.set(key, row + 1);
-    const y = tone === 'up' ? 31 - Math.min(5, row) * 4 : tone === 'down' ? 39 + Math.min(5, row) * 4 : 35 + (row % 2 ? 3 : -3);
-    return { reading, x, y, tone };
-  });
-
-  return (
-    <figure className="strike-flow__distribution" aria-label="Premium change distribution">
-      <figcaption>
-        <span className="strike-flow__distribution-title">Premium change distribution</span>
-        <span>{measured.length} of {readings.length} contracts measured</span>
-      </figcaption>
-      <svg viewBox="0 0 900 62" role="img" aria-label={`Premium changes from minus ${reach}% to plus ${reach}%`}>
-        <line className="strike-flow__distribution-axis" x1="32" x2="868" y1="35" y2="35" />
-        <line className="strike-flow__distribution-zero" x1={midpoint} x2={midpoint} y1="8" y2="55" />
-        <text className="strike-flow__distribution-tick" x="32" y="60">{`−${reach}%`}</text>
-        <text className="strike-flow__distribution-tick" x={midpoint} y="60" textAnchor="middle">0%</text>
-        <text className="strike-flow__distribution-tick" x="868" y="60" textAnchor="end">+{reach}%</text>
-        {dots.map(({ reading, x, y, tone }) => <circle key={reading.key} className={`strike-flow__distribution-dot is-${tone}`} cx={x} cy={y} r="2.7"><title>{`${reading.symbol} ${reading.strike}${reading.side === 'CE' ? 'C' : 'PE'} ${reading.premiumChangePct?.toFixed(2)}%`}</title></circle>)}
-      </svg>
-      <div className="strike-flow__distribution-summary" aria-hidden="true">
-        <span><b>{counts.up}</b> up</span><span><b>{counts.flat}</b> flat</span><span><b>{counts.down}</b> down</span>
-      </div>
-    </figure>
-  );
-}
 
 function latestAt(flow: StrikeFlowPayload): number | null {
   const times = [flow.spot.at(-1)?.[0] ?? null, ...Object.values(flow.strikes).map(contract => contract.series.at(-1)?.[0] ?? null)]
@@ -219,36 +173,16 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
         </section>
       ) : flow ? (
         <>
-          <StrikeDistribution readings={readings} />
-          <StrikeFlowDiagram flow={flow} readings={readings} window={window} />
-          <section className="strike-flow__cards" aria-label="Top strike movers">
-            <header className="strike-flow__cards-heading">
-              <h2>Strike leaders</h2>
-              <span>Top three per premium direction · {flow.expiry ?? 'expiry unavailable'}</span>
-            </header>
-            <div className="strike-flow__cards-columns">
-              <section aria-label="Premium rising contracts">
-                <h3 className="strike-flow__cards-subhead is-up">Premium rising · {upCards.length}</h3>
-                <div className="strike-flow__card-grid">
-                  {upCards.map(reading => {
-                    const id = `${flow.symbol}:${reading.key}`;
-                    return <StrikeFlowCard key={id} flow={flow} reading={reading} window={window} walls={walls} spotDayChangePct={spotDayChangePct} timeframe={cardTimeframes[id] ?? 'auto'} onTimeframeChange={timeframe => setCardTimeframes(current => ({ ...current, [id]: timeframe }))} onOpen={() => setSelectedCard({ symbol: flow.symbol, key: reading.key })} />;
-                  })}
-                  {!upCards.length && <p className="strike-flow__cards-empty">No measured premium rises above the noise floor.</p>}
-                </div>
-              </section>
-              <section aria-label="Premium falling contracts">
-                <h3 className="strike-flow__cards-subhead is-down">Premium falling · {downCards.length}</h3>
-                <div className="strike-flow__card-grid">
-                  {downCards.map(reading => {
-                    const id = `${flow.symbol}:${reading.key}`;
-                    return <StrikeFlowCard key={id} flow={flow} reading={reading} window={window} walls={walls} spotDayChangePct={spotDayChangePct} timeframe={cardTimeframes[id] ?? 'auto'} onTimeframeChange={timeframe => setCardTimeframes(current => ({ ...current, [id]: timeframe }))} onOpen={() => setSelectedCard({ symbol: flow.symbol, key: reading.key })} />;
-                  })}
-                  {!downCards.length && <p className="strike-flow__cards-empty">No measured premium falls below the noise floor.</p>}
-                </div>
-              </section>
-            </div>
-          </section>
+          <StrikeFlowDiagram
+            flow={flow}
+            readings={readings}
+            window={window}
+            upCards={upCards}
+            downCards={downCards}
+            cardTimeframes={cardTimeframes}
+            onCardTimeframeChange={(id, timeframe) => setCardTimeframes(current => ({ ...current, [id]: timeframe }))}
+            onOpenCard={reading => setSelectedCard({ symbol: flow.symbol, key: reading.key })}
+          />
           {popupReading && <StrikeFlowPopup flow={flow} reading={popupReading} window={window} walls={walls} spotDayChangePct={spotDayChangePct} timeframe={cardTimeframes[`${flow.symbol}:${popupReading.key}`] ?? 'auto'} onTimeframeChange={timeframe => setCardTimeframes(current => ({ ...current, [`${flow.symbol}:${popupReading.key}`]: timeframe }))} onClose={() => setSelectedCard(null)} />}
         </>
       ) : null}

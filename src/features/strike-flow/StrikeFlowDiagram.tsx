@@ -2,18 +2,26 @@ import type { CSSProperties } from 'react';
 import { BUILD_UP_NOISE_FLOOR, type BuildUpWindow } from '@/lib/buildUp';
 import { marketSessionBounds } from '@/lib/marketSession';
 import { axisReach } from '../market-flow/flowLayout';
-import { ChangeText, buildUpText, heatStyle, pctText, signedText } from '../market-flow/FlowParts';
+import { buildUpText, heatStyle, pctText, signedText } from '../market-flow/FlowParts';
 import { MINUTE, pathOf, timeTicks, type FlowLine } from '../market-flow/flowChartModel';
 import { compressedScale, compressedTicks, drawnValues, gateRows, sCurve, sCurveOn } from '../market-flow/diagramModel';
 import { clockOf } from '../market-flow/marketFlowModel';
-import { SCAN_WINDOW_TOLERANCE_MS, type IntradayWindow } from '../options-scanner/contractScanModel';
+import { SCAN_WINDOW_MINUTES, SCAN_WINDOW_TOLERANCE_MS, type IntradayWindow } from '../options-scanner/contractScanModel';
 import type { StrikeFlowPayload, StrikeSeriesPoint } from './feed';
+import { StrikeFlowCard, type StrikeChartTimeframe } from './StrikeFlowCards';
 import type { StrikeFlowWindow, StrikeReading } from './strikeFlowModel';
+import { spotChangeForWindow, strikeWalls, type StrikeWalls } from './strikeCardModel';
 
 interface StrikeFlowDiagramProps {
   flow: StrikeFlowPayload;
   readings: StrikeReading[];
   window: StrikeFlowWindow;
+  /** The reference layout keeps the leaders inline with the flow, right of the tiles. */
+  upCards: StrikeReading[];
+  downCards: StrikeReading[];
+  cardTimeframes: Record<string, StrikeChartTimeframe>;
+  onCardTimeframeChange: (id: string, timeframe: StrikeChartTimeframe) => void;
+  onOpenCard: (reading: StrikeReading) => void;
 }
 
 interface CurveData {
@@ -25,7 +33,7 @@ interface CurveData {
 interface Box { x: number; y: number; width: number; height: number }
 interface DrawableCurve { reading: StrikeReading; curve: CurveData & { line: FlowLine } }
 
-const WIDTH = 1_200;
+const WIDTH = 1_180;
 const PLOT_LEFT = 74;
 const PLOT_RIGHT = 626;
 const GATE_LEFT = 646;
@@ -35,7 +43,7 @@ const TILE_GAP = 7;
 const TILE_HEIGHT = 32;
 const TILE_PITCH = 38;
 const TILE_COLUMNS = 3;
-const TOP = 26;
+const TOP = 64;
 const MIN_HALF = 4 * TILE_PITCH;
 const TICK_WINDOW: Record<StrikeFlowWindow, 'day' | '1h' | '15m'> = { day: 'day', '1h': '1h', '15m': '15m', '5m': '15m' };
 const BUILD_UP_TIMEFRAME: Record<StrikeFlowWindow, BuildUpWindow> = { day: '1d', '1h': '1h', '15m': '15m', '5m': '5m' };
@@ -86,38 +94,39 @@ function curveFor(reading: StrikeReading, window: StrikeFlowWindow, start: numbe
   };
 }
 
-function spotLine(flow: StrikeFlowPayload, start: number, end: number, window: StrikeFlowWindow): { line: FlowLine | null; baselineAt: number | null; changePct: number | null; label: string } {
-  let baselineValue = flow.spotPrevClose;
-  let baselineAt: number | null = null;
-  let label = 'vs previous close';
-  let points = flow.spot.filter(point => point[0] + MINUTE >= start && point[0] + MINUTE <= end);
-  if (window !== 'day') {
+function spotLine(flow: StrikeFlowPayload, start: number, end: number, window: StrikeFlowWindow): { line: FlowLine | null; baselineAt: number | null; changePct: number | null } {
+  const first = flow.spot[0];
+  if (!first || first[1] <= 0) return { line: null, baselineAt: null, changePct: null };
+  // Day reads against the underlying's previous close; intraday against the
+  // captured minute nearest the window's start, inside its tolerance.
+  let baseline: { at: number; price: number } | null = null;
+  if (window === 'day') {
+    baseline = flow.spotPrevClose != null && flow.spotPrevClose > 0
+      ? { at: first[0] - MINUTE, price: flow.spotPrevClose }
+      : { at: first[0], price: first[1] };
+  } else {
+    const intradayWindow: IntradayWindow = window;
+    const target = end - SCAN_WINDOW_MINUTES[intradayWindow] * MINUTE;
     let gap = Infinity;
-    let closest: (typeof flow.spot)[number] | null = null;
     for (const point of flow.spot) {
       const at = point[0] + MINUTE;
       if (at >= end) continue;
-      const delta = Math.abs(at - start);
-      if (delta < gap) { closest = point; gap = delta; }
+      const distance = Math.abs(at - target);
+      if (distance < gap) { baseline = { at: point[0], price: point[1] }; gap = distance; }
     }
-    const intradayWindow: IntradayWindow = window;
-    if (!closest || gap > SCAN_WINDOW_TOLERANCE_MS[intradayWindow]) return { line: null, baselineAt: null, changePct: null, label: 'spot baseline unavailable' };
-    baselineValue = closest[1];
-    const intradayBaselineAt = closest[0] + MINUTE;
-    baselineAt = intradayBaselineAt;
-    label = `from ${clockOf(intradayBaselineAt)} window baseline`;
-    points = flow.spot.filter(point => point[0] + MINUTE >= intradayBaselineAt && point[0] + MINUTE <= end);
+    if (!baseline || gap > SCAN_WINDOW_TOLERANCE_MS[intradayWindow] || baseline.price <= 0) return { line: null, baselineAt: null, changePct: null };
   }
-  if (baselineValue === null || baselineValue <= 0) return { line: null, baselineAt, changePct: null, label: 'spot previous close unavailable' };
+  if (!baseline || baseline.price <= 0) return { line: null, baselineAt: null, changePct: null };
+  const baselineAt = baseline.at + MINUTE;
+  const points = flow.spot.filter(point => point[0] + MINUTE >= baselineAt && point[0] + MINUTE <= end);
   const last = points.at(-1);
-  const changePct = last ? (last[1] / baselineValue - 1) * 100 : null;
-  if (points.length < 2) return { line: null, baselineAt, changePct, label };
-  const values = points.map(point => (point[1] / baselineValue - 1) * 100);
+  const changePct = last ? (last[1] / baseline.price - 1) * 100 : null;
+  if (points.length < 2) return { line: null, baselineAt, changePct };
+  const values = points.map(point => (point[1] / baseline.price - 1) * 100);
   return {
     line: { symbol: flow.symbol, t: points.map(point => point[0] + MINUTE), v: drawnValues(values) },
     baselineAt,
     changePct,
-    label,
   };
 }
 
@@ -141,6 +150,10 @@ function displayStrike(reading: StrikeReading): string {
 
 function fullStrike(reading: StrikeReading): string {
   return `${reading.symbol} ${reading.strike}${reading.side === 'CE' ? 'C' : 'PE'}`;
+}
+
+function markCode(symbol: string): string {
+  return symbol.replace(/[^A-Z]/g, '').slice(0, 2).toUpperCase();
 }
 
 function tileBuildUp(reading: StrikeReading): string {
@@ -184,13 +197,15 @@ function StrikeTile({ reading, box, curve }: { reading: StrikeReading; box: Box;
     <g className={`strike-tile is-${tone}`} transform={`translate(${box.x} ${box.y})`} role="listitem" aria-label={description} style={heatStyle(reading.premiumChangePct)}>
       <title>{description}</title>
       <rect className="strike-tile__body" width={box.width} height={box.height} rx="6" />
-      <text className="strike-tile__name" x="7" y="12">{clipped}</text>
+      <rect className="strike-tile__mark" x="7" y="7" width="16" height="16" rx="4" />
+      <text className="strike-tile__mark-code" x="15" y="18" textAnchor="middle">{markCode(reading.symbol)}</text>
+      <text className="strike-tile__name" x="27" y="12">{clipped}</text>
       <text className="strike-tile__pct" x={box.width - 7} y="12" textAnchor="end">{pctText(reading.premiumChangePct)}</text>
       {curve.reason ? (
-        <text className="strike-tile__note" x="7" y="25">{tileCurveLabel(curve)}</text>
+        <text className="strike-tile__note" x="27" y="25">{tileCurveLabel(curve)}</text>
       ) : (
         <>
-          <text className="strike-tile__bu" x="7" y="25">{buildUp}</text>
+          <text className="strike-tile__bu" x="27" y="25">{buildUp}</text>
           {spark && <path className="strike-tile__spark" d={spark} transform={`translate(${box.width - 40} 18)`} />}
         </>
       )}
@@ -198,11 +213,10 @@ function StrikeTile({ reading, box, curve }: { reading: StrikeReading; box: Box;
   );
 }
 
-export function StrikeFlowDiagram({ flow, readings, window }: StrikeFlowDiagramProps) {
+export function StrikeFlowDiagram({ flow, readings, window, upCards, downCards, cardTimeframes, onCardTimeframeChange, onOpenCard }: StrikeFlowDiagramProps) {
   const up = readings.filter(reading => reading.direction === 'up');
   const flat = readings.filter(reading => reading.direction === 'flat');
   const down = readings.filter(reading => reading.direction === 'down');
-  const unknown = readings.filter(reading => reading.direction === 'unknown');
   const rowCount = (count: number) => Math.ceil(count / TILE_COLUMNS);
   const halfHeight = Math.max(MIN_HALF, Math.max(rowCount(up.length), rowCount(down.length)) * TILE_PITCH);
   const neutralHeight = flat.length ? Math.max(TILE_PITCH, rowCount(flat.length) * TILE_PITCH) : 18;
@@ -218,9 +232,10 @@ export function StrikeFlowDiagram({ flow, readings, window }: StrikeFlowDiagramP
   const xOf = (at: number) => PLOT_LEFT + ((at - start) / span) * plotWidth;
   const half = Math.min(zeroY - plotTop, plotBottom - zeroY);
   const curves = readings.map(reading => ({ reading, curve: curveFor(reading, window, start, end) }));
-  const curveByKey = new Map(curves.map(entry => [entry.reading.key, entry.curve]));
   const drawable = curves.filter((entry): entry is DrawableCurve => entry.curve.line !== null);
   const reference = spotLine(flow, start, end, window);
+  const walls: StrikeWalls = strikeWalls(flow);
+  const spotDayChangePct = spotChangeForWindow(flow, 'day');
   const plottedValues = [
     ...drawable.flatMap(entry => entry.curve.line.v),
     ...(reference.line?.v ?? []),
@@ -242,94 +257,133 @@ export function StrikeFlowDiagram({ flow, readings, window }: StrikeFlowDiagramP
   const tickWindow = TICK_WINDOW[window];
   const timeMarks = [...new Set([start, ...timeTicks(start, end, plotWidth, tickWindow), end])].sort((a, b) => a - b);
   const spotPct = reference.changePct;
+  const measured = readings.filter(reading => reading.premiumChangePct !== null);
+  const dotReach = Math.max(0.5, Math.ceil((Math.max(0, ...measured.map(reading => Math.abs(reading.premiumChangePct ?? 0)))) * 2) / 2);
+
+  const card = (reading: StrikeReading) => {
+    const id = `${flow.symbol}:${reading.key}`;
+    return (
+      <StrikeFlowCard
+        key={id}
+        flow={flow}
+        reading={reading}
+        window={window}
+        walls={walls}
+        spotDayChangePct={spotDayChangePct}
+        timeframe={cardTimeframes[id] ?? 'auto'}
+        onTimeframeChange={timeframe => onCardTimeframeChange(id, timeframe)}
+        onOpen={() => onOpenCard(reading)}
+      />
+    );
+  };
 
   return (
     <div className="strike-flow__diagram" aria-label="Strike momentum diagram">
       <div className="strike-flow__diagram-scroll">
-        <svg className="strike-diagram" viewBox={`0 0 ${WIDTH} ${height}`} role="img" aria-label={`${flow.symbol} strike premium changes for ${flow.date}, ${window} window`}>
-          <defs>
-            <linearGradient id="strike-axis-gradient" x1="0" y1="0" x2="0" y2="1">
-              <stop className="strike-axis__up" offset="0%" />
-              <stop className="strike-axis__mid" offset="50%" />
-              <stop className="strike-axis__down" offset="100%" />
-            </linearGradient>
-          </defs>
+        <div className="strike-flow__board">
+          <svg className="strike-diagram" width={WIDTH} height={height} viewBox={`0 0 ${WIDTH} ${height}`} role="img" aria-label={`${flow.symbol} strike premium changes for ${flow.date}, ${window} window`}>
+            <defs>
+              <linearGradient id="strike-axis-gradient" x1="0" y1="0" x2="0" y2="1">
+                <stop className="strike-axis__up" offset="0%" />
+                <stop className="strike-axis__mid" offset="50%" />
+                <stop className="strike-axis__down" offset="100%" />
+              </linearGradient>
+            </defs>
 
-          <rect className="strike-diagram__upper" x={PLOT_LEFT} y={plotTop} width={WIDTH - PLOT_LEFT - 12} height={zeroY - plotTop} />
-          <rect className="strike-diagram__lower" x={PLOT_LEFT} y={zeroY} width={WIDTH - PLOT_LEFT - 12} height={plotBottom - zeroY} />
-          <rect className="mf-dg__floor" x={PLOT_LEFT} y={floorY} width={WIDTH - PLOT_LEFT - 12} height={floorBottom - floorY} />
-
-          {ticks.map(tick => (
-            <g key={tick}>
-              <line className="mf-dg__grid" x1={PLOT_LEFT} x2={WIDTH - 12} y1={yOf(tick)} y2={yOf(tick)} />
-              <line className="mf-dg__grid" x1={PLOT_LEFT} x2={WIDTH - 12} y1={yOf(-tick)} y2={yOf(-tick)} />
-              <text className="mf-dg__tick" x={PLOT_LEFT - 9} y={yOf(tick) + 3} textAnchor="end">{pctText(tick, 1)}</text>
-              <text className="mf-dg__tick" x={PLOT_LEFT - 9} y={yOf(-tick) + 3} textAnchor="end">{pctText(-tick, 1)}</text>
+            {/* Distribution strip, inside the plot's top band like the reference. */}
+            <g aria-hidden="true">
+              <line className="strike-diagram__dist-axis" x1={PLOT_LEFT} x2={PLOT_LEFT + 430} y1="26" y2="26" />
+              <line className="strike-diagram__dist-zero" x1={PLOT_LEFT + 215} x2={PLOT_LEFT + 215} y1="10" y2="40" />
+              <text className="strike-diagram__dist-tick" x={PLOT_LEFT} y="54">{`−${dotReach}%`}</text>
+              <text className="strike-diagram__dist-tick" x={PLOT_LEFT + 215} y="54" textAnchor="middle">0</text>
+              <text className="strike-diagram__dist-tick" x={PLOT_LEFT + 430} y="54" textAnchor="end">{`+${dotReach}%`}</text>
+              {measured.map(reading => {
+                const value = reading.premiumChangePct ?? 0;
+                const tone = reading.direction === 'up' || reading.direction === 'down' ? reading.direction : 'flat';
+                const x = PLOT_LEFT + 215 + (value / dotReach) * 215;
+                return <circle key={`dot-${reading.key}`} className={`strike-diagram__dist-dot is-${tone}`} cx={x} cy={tone === 'up' ? 20 - (reading.key.length % 3) * 3 : tone === 'down' ? 30 + (reading.key.length % 3) * 3 : 25} r="2.4"><title>{`${fullStrike(reading)} ${pctText(reading.premiumChangePct)}`}</title></circle>;
+              })}
             </g>
-          ))}
-          <line className="mf-dg__zero" x1={PLOT_LEFT} x2={WIDTH - 12} y1={zeroY} y2={zeroY} />
-          <text className="mf-dg__tick is-zero" x={PLOT_LEFT - 9} y={zeroY + 4} textAnchor="end">0%</text>
-          <rect x="17" y={plotTop} width="5" height={plotBottom - plotTop} rx="2.5" fill="url(#strike-axis-gradient)" />
-          <text className="mf-dg__tick" x="28" y={plotTop + 4}>{pctText(reach, 1)}</text>
-          <text className="mf-dg__tick" x="28" y={plotBottom + 4}>{pctText(-reach, 1)}</text>
 
-          {timeMarks.map(at => (
-            <g key={at}>
-              <line className="mf-dg__grid is-time" x1={xOf(at)} x2={xOf(at)} y1={plotTop} y2={plotBottom} />
-              <text className="mf-dg__tick" x={xOf(at)} y={plotBottom + 22} textAnchor={at === start ? 'start' : at === end ? 'end' : 'middle'}>{clockOf(at)}</text>
-            </g>
-          ))}
-          {close >= start && close <= end && <line className="strike-diagram__close" x1={xOf(close)} x2={xOf(close)} y1={plotTop} y2={plotBottom} />}
+            <rect className="strike-diagram__upper" x={PLOT_LEFT} y={plotTop} width={WIDTH - PLOT_LEFT - 12} height={zeroY - plotTop} />
+            <rect className="strike-diagram__lower" x={PLOT_LEFT} y={zeroY} width={WIDTH - PLOT_LEFT - 12} height={plotBottom - zeroY} />
+            <rect className="mf-dg__floor" x={PLOT_LEFT} y={floorY} width={WIDTH - PLOT_LEFT - 12} height={floorBottom - floorY} />
 
-          <g className="mf-dg__gate is-up"><rect x={GATE_LEFT} y={plotTop} width={GATE_RIGHT - GATE_LEFT} height={Math.max(1, gate.upEnd - plotTop)} rx="12" /><path d={`M${GATE_LEFT + 3},${plotTop}V${gate.upEnd}`} /></g>
-          <g className="mf-dg__gate"><rect x={GATE_LEFT} y={gate.flatTop} width={GATE_RIGHT - GATE_LEFT} height={Math.max(1, gate.flatBottom - gate.flatTop)} rx="10" /></g>
-          <g className="mf-dg__gate is-down"><rect x={GATE_LEFT} y={gate.downStart} width={GATE_RIGHT - GATE_LEFT} height={Math.max(1, plotBottom - gate.downStart)} rx="12" /><path d={`M${GATE_RIGHT - 3},${gate.downStart}V${plotBottom}`} /></g>
-
-          {reference.line && <path className={`strike-diagram__spot ${spotPct != null && spotPct > 0 ? 'is-up' : spotPct != null && spotPct < 0 ? 'is-down' : 'is-flat'}`} d={pathOf(reference.line, xOf, yOf)} />}
-          {drawable.map(({ reading, curve }, index) => {
-            const line = curve.line;
-            const last = line.t.length - 1;
-            const endX = xOf(line.t[last]);
-            const endY = yOf(line.v[last]);
-            const gateY = gate.rows.get(reading.key) ?? endY;
-            const box = boxes.get(reading.key);
-            const targetY = box ? box.y + box.height / 2 : gateY;
-            const path = `${pathOf(line, xOf, yOf)}${sCurveOn(endX, endY, GATE_LEFT, gateY, 0.38)}L${GATE_RIGHT},${gateY.toFixed(1)}`;
-            const connector = box ? sCurve(GATE_RIGHT, gateY, box.x, targetY, 0.55) : '';
-            return (
-              <g key={reading.key}>
-                <path className={`mf-dg__faint is-${reading.direction}`} d={path} style={{ '--i': index } as CSSProperties} />
-                <path className={`mf-dg__conn is-${reading.direction}`} d={connector} />
-                <circle className="mf-dg__node" cx={endX} cy={endY} r="2.3" />
+            {ticks.map(tick => (
+              <g key={tick}>
+                <line className="mf-dg__grid" x1={PLOT_LEFT} x2={WIDTH - 12} y1={yOf(tick)} y2={yOf(tick)} />
+                <line className="mf-dg__grid" x1={PLOT_LEFT} x2={WIDTH - 12} y1={yOf(-tick)} y2={yOf(-tick)} />
+                <text className="mf-dg__tick" x={PLOT_LEFT - 9} y={yOf(tick) + 3} textAnchor="end">{pctText(tick, 1)}</text>
+                <text className="mf-dg__tick" x={PLOT_LEFT - 9} y={yOf(-tick) + 3} textAnchor="end">{pctText(-tick, 1)}</text>
               </g>
-            );
-          })}
-          {readings.filter(reading => reading.direction !== 'unknown').map(reading => {
-            const box = boxes.get(reading.key);
-            const curve = curveByKey.get(reading.key);
-            return box && curve ? <StrikeTile key={reading.key} reading={reading} box={box} curve={curve} /> : null;
-          })}
-          <text className="strike-diagram__group strike-diagram__group--up" x={TILES_X} y={plotTop - 9}>UP · {up.length}</text>
-          {flat.length > 0 && <text className="strike-diagram__group" x={TILES_X} y={zeroY - neutralHeight / 2 - 7}>FLAT · {flat.length}</text>}
-          <text className="strike-diagram__group strike-diagram__group--down" x={TILES_X} y={plotBottom + 12}>DOWN · {down.length}</text>
-          {!drawable.length && <text className="strike-diagram__empty" x={(PLOT_LEFT + PLOT_RIGHT) / 2} y={zeroY - 8} textAnchor="middle">No contract has enough baseline data to draw a line yet.</text>}
-          {spotPct !== null && <text className="strike-diagram__spot-label" x={PLOT_RIGHT} y={plotTop - 8} textAnchor="end">{flow.symbol} {pctText(spotPct)}{window === 'day' ? '' : ` ${reference.label}`}</text>}
-        </svg>
-      </div>
-      {unknown.length > 0 && (
-        <div className="strike-flow__unmeasured" aria-label="Awaiting premium baseline">
-          <span className="strike-flow__unmeasured-title">Awaiting baseline · {unknown.length}</span>
-          {unknown.map(reading => <span className="strike-flow__unmeasured-item" key={reading.key} title={fullStrike(reading)}>{fullStrike(reading)} · —</span>)}
+            ))}
+            <line className="mf-dg__zero" x1={PLOT_LEFT} x2={WIDTH - 12} y1={zeroY} y2={zeroY} />
+            <text className="mf-dg__tick is-zero" x={PLOT_LEFT - 9} y={zeroY + 4} textAnchor="end">0%</text>
+            <rect x="17" y={plotTop} width="5" height={plotBottom - plotTop} rx="2.5" fill="url(#strike-axis-gradient)" />
+            <text className="mf-dg__tick" x="28" y={plotTop + 4}>{pctText(reach, 1)}</text>
+            <text className="mf-dg__tick" x="28" y={plotBottom + 4}>{pctText(-reach, 1)}</text>
+
+            {timeMarks.map(at => (
+              <g key={at}>
+                <line className="mf-dg__grid is-time" x1={xOf(at)} x2={xOf(at)} y1={plotTop} y2={plotBottom} />
+                <text className="mf-dg__tick" x={xOf(at)} y={plotBottom + 22} textAnchor={at === start ? 'start' : at === end ? 'end' : 'middle'}>{clockOf(at)}</text>
+              </g>
+            ))}
+            {close >= start && close <= end && <line className="strike-diagram__close" x1={xOf(close)} x2={xOf(close)} y1={plotTop} y2={plotBottom} />}
+
+            <g className="mf-dg__gate is-up"><rect x={GATE_LEFT} y={plotTop} width={GATE_RIGHT - GATE_LEFT} height={Math.max(1, gate.upEnd - plotTop)} rx="12" /><path d={`M${GATE_LEFT + 3},${plotTop}V${gate.upEnd}`} /></g>
+            <g className="mf-dg__gate"><rect x={GATE_LEFT} y={gate.flatTop} width={GATE_RIGHT - GATE_LEFT} height={Math.max(1, gate.flatBottom - gate.flatTop)} rx="10" /></g>
+            <g className="mf-dg__gate is-down"><rect x={GATE_LEFT} y={gate.downStart} width={GATE_RIGHT - GATE_LEFT} height={Math.max(1, plotBottom - gate.downStart)} rx="12" /><path d={`M${GATE_RIGHT - 3},${gate.downStart}V${plotBottom}`} /></g>
+
+            {reference.line && <path className={`strike-diagram__spot ${spotPct != null && spotPct > 0 ? 'is-up' : spotPct != null && spotPct < 0 ? 'is-down' : 'is-flat'}`} d={pathOf(reference.line, xOf, yOf)} />}
+            {drawable.map(({ reading, curve }, index) => {
+              const line = curve.line;
+              const last = line.t.length - 1;
+              const endX = xOf(line.t[last]);
+              const endY = yOf(line.v[last]);
+              const gateY = gate.rows.get(reading.key) ?? endY;
+              const box = boxes.get(reading.key);
+              const targetY = box ? box.y + box.height / 2 : gateY;
+              const path = `${pathOf(line, xOf, yOf)}${sCurveOn(endX, endY, GATE_LEFT, gateY, 0.38)}L${GATE_RIGHT},${gateY.toFixed(1)}`;
+              const connector = box ? sCurve(GATE_RIGHT, gateY, box.x, targetY, 0.55) : '';
+              return (
+                <g key={reading.key}>
+                  <path className={`mf-dg__faint is-${reading.direction}`} d={path} style={{ '--i': index } as CSSProperties} />
+                  <path className={`mf-dg__conn is-${reading.direction}`} d={connector} />
+                  <circle className="mf-dg__node" cx={endX} cy={endY} r="2.3" />
+                </g>
+              );
+            })}
+            {readings.filter(reading => reading.direction !== 'unknown').map(reading => {
+              const box = boxes.get(reading.key);
+              const curve = curves.find(entry => entry.reading.key === reading.key)?.curve;
+              return box && curve ? <StrikeTile key={reading.key} reading={reading} box={box} curve={curve} /> : null;
+            })}
+            <text className="strike-diagram__group strike-diagram__group--up" x={TILES_X} y={plotTop - 9}>UP · {up.length}</text>
+            {flat.length > 0 && <text className="strike-diagram__group" x={TILES_X} y={zeroY - neutralHeight / 2 - 7}>FLAT · {flat.length}</text>}
+            <text className="strike-diagram__group strike-diagram__group--down" x={TILES_X} y={plotBottom + 12}>DOWN · {down.length}</text>
+            {!drawable.length && <text className="strike-diagram__empty" x={(PLOT_LEFT + PLOT_RIGHT) / 2} y={zeroY - 8} textAnchor="middle">No contract has enough baseline data to draw a line yet.</text>}
+
+            {/* The underlying's own reference, labelled inside the plot like the reference's NIFTY chip. */}
+            <g transform={`translate(${PLOT_LEFT + 8} ${plotBottom - 28})`}>
+              <rect className="strike-diagram__spot-chip" width="250" height="22" rx="6" />
+              <line className={`strike-diagram__spot-swatch ${spotPct != null && spotPct > 0 ? 'is-up' : spotPct != null && spotPct < 0 ? 'is-down' : 'is-flat'}`} x1="7" x2="31" y1="11" y2="11" />
+              <text className="strike-diagram__spot-chip-text" x="38" y="15">{flow.symbol} {pctText(spotPct)} · close {clockOf(close)}</text>
+            </g>
+          </svg>
+          <aside className="strike-flow__board-cards" aria-label="Top strike movers">
+            <div className="strike-flow__board-cards-group is-up">
+              {upCards.map(card)}
+              {!upCards.length && <p className="strike-flow__cards-empty">No measured premium rises above the noise floor.</p>}
+            </div>
+            <div className="strike-flow__board-cards-group is-down">
+              {downCards.map(card)}
+              {!downCards.length && <p className="strike-flow__cards-empty">No measured premium falls below the noise floor.</p>}
+            </div>
+          </aside>
         </div>
-      )}
-      <div className="strike-flow__spot-key">
-        <span className="strike-flow__spot-swatch" />
-        <span>{flow.symbol}</span>
-        {spotPct === null ? <small>spot change unavailable</small> : <ChangeText value={spotPct} className="strike-flow__spot-change" />}
-        <small>{reference.label}</small>
-        <span className="strike-flow__close-key"><i /> Session close · {clockOf(close)}</span>
       </div>
-      <span className="sr-only">Chart session opens {clockOf(open)}. {window === 'day' ? 'Spot movement is measured from the underlying previous close.' : `Spot movement is measured ${reference.label}.`}</span>
+      <span className="sr-only">Chart session opens {clockOf(open)} and uses the underlying previous close as its day reference.</span>
     </div>
   );
 }
