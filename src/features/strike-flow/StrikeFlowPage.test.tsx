@@ -114,6 +114,22 @@ describe('StrikeFlowPage (Option Board)', () => {
     expect(screen.queryByTestId('flow-diagram')).not.toHaveTextContent('NIFTY25150CE');
   });
 
+  it('shows the stock dropdown only on the F&O Stock Options chip and fetches the chosen stock', async () => {
+    page();
+
+    const diagram = await screen.findByTestId('flow-diagram');
+    expect(screen.queryByLabelText('F&O stocks')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'F&O Stock Options' }));
+    const select = screen.getByLabelText('F&O stocks');
+    expect(select).toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: 'RELIANCE' } });
+    await waitFor(() => expect(feed.fetch).toHaveBeenLastCalledWith('RELIANCE', expect.anything()));
+    await screen.findByTestId('flow-diagram');
+    expect(screen.getByTestId('flow-diagram')).toBeInTheDocument();
+  });
+
   it('shows an honest empty state and retries the archive read', async () => {
     feed.fetch.mockResolvedValue(null);
     page();
@@ -121,6 +137,19 @@ describe('StrikeFlowPage (Option Board)', () => {
     expect(await screen.findByRole('heading', { name: 'No captured chain for NIFTY + BANKNIFTY + SENSEX on 2026-11-13' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry archive' }));
     await waitFor(() => expect(feed.fetch).toHaveBeenCalledTimes(6));
+  });
+
+  it('opens the Contracts Screener tab as an honest coming-soon view', async () => {
+    page();
+
+    await screen.findByTestId('flow-diagram');
+    fireEvent.click(screen.getByRole('radio', { name: 'Contracts Screener' }));
+
+    expect(screen.getByRole('heading', { name: 'Contracts Screener' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to Option Board' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Option Board' }));
+    expect(screen.getByTestId('flow-diagram')).toBeInTheDocument();
   });
 
   it('renders a request failure separately from an empty archive', async () => {

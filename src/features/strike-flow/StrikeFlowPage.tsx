@@ -25,6 +25,11 @@ const INDEX_SYMBOLS = ['NIFTY', 'BANKNIFTY', 'SENSEX'] as const;
 const SCOPES: CapsuleOption<string>[] = [
   { value: 'all-indices', label: 'All 3 Indices' },
   ...INDEX_SYMBOLS.map(symbol => ({ value: symbol, label: symbol === 'NIFTY' ? 'Nifty' : symbol === 'BANKNIFTY' ? 'BankNifty' : 'Sensex' })),
+  { value: 'fno-stocks', label: 'F&O Stock Options' },
+];
+const SUB_TABS: CapsuleOption<'option-board' | 'contracts-screener'>[] = [
+  { value: 'option-board', label: 'Option Board' },
+  { value: 'contracts-screener', label: 'Contracts Screener' },
 ];
 const MODES: CapsuleOption<'all' | 'CE' | 'PE'>[] = [
   { value: 'all', label: 'Momentum Flow' },
@@ -64,17 +69,25 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
   const fits = useMediaQuery('(min-width: 1100px)');
   const phone = useMediaQuery('(max-width: 768px)');
   const [scope, setScope] = useState('all-indices');
+  const [stock, setStock] = useState('');
   // The board reads the day window, exactly like Order Flow's own board.
   const window: FlowWindow = 'day';
   const [side, setSide] = useState<'all' | 'CE' | 'PE'>('all');
+  const [subTab, setSubTab] = useState<'option-board' | 'contracts-screener'>('option-board');
   const [date] = useState(() => getLatestTradingSessionDate());
+  const stocks = universe.filter(item => item.kind === 'stock').slice().sort((a, b) => a.symbol.localeCompare(b.symbol));
   const [payloads, setPayloads] = useState<StrikeFlowPayload[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
 
   // Stable identity: a fresh array here would re-trigger the fetch loop every render.
-  const symbols = useMemo(() => symbolsFor(scope, universe), [scope, universe]);
+  const activeStock = stock || stocks[0]?.symbol || '';
+  const symbols = useMemo(() => {
+    if (scope === 'all-indices') return [...INDEX_SYMBOLS];
+    if (scope === 'fno-stocks') return activeStock ? [activeStock] : [];
+    return symbolsFor(scope, universe);
+  }, [scope, activeStock, universe]);
   useFitScrollerHeight(pageRef, fits);
 
   useEffect(() => {
@@ -97,8 +110,6 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
     return () => controller.abort();
   }, [scope, date, retry, symbols]);
 
-  const stocks = universe.filter(item => item.kind === 'stock').slice().sort((a, b) => a.symbol.localeCompare(b.symbol));
-  const selectedStock = stocks.some(item => item.symbol === scope) ? scope : '';
   const board = useMemo(
     () => (payloads && payloads.length ? optionBoardFlow({ payloads, window, now: Date.now() }) : null),
     [payloads, window],
@@ -123,16 +134,16 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
     <div className="strike-flow__bar">
       {BRAND}
       {tabs}
-      <span className="strike-flow__subtabs" role="tablist" aria-label="Option Board views">
-        <span className="strike-flow__subtab is-active">Option Board</span>
-        <span className="strike-flow__subtab is-soon" title="Contracts Screener is coming soon">Contracts Screener</span>
-      </span>
+      <CapsuleSegmented options={SUB_TABS} value={subTab} onChange={setSubTab} ariaLabel="Option Board views" groupId="option-views" size="page" fill />
       <CapsuleSegmented options={SCOPES} value={scope} onChange={setScope} ariaLabel="Option Board scope" groupId="option-scope" size="page" className="strike-flow__symbols" />
-      <label className="is-visually-hidden" htmlFor="strike-flow-stock">F&O stocks</label>
-      <select id="strike-flow-stock" className="strike-flow__stocks" value={selectedStock} onChange={event => { if (event.currentTarget.value) setScope(event.currentTarget.value); }}>
-        <option value="">F&O stocks</option>
-        {stocks.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}
-      </select>
+      {scope === 'fno-stocks' && (
+        <>
+          <label className="is-visually-hidden" htmlFor="strike-flow-stock">F&O stocks</label>
+          <select id="strike-flow-stock" className="strike-flow__stocks" value={activeStock} onChange={event => { if (event.currentTarget.value) setStock(event.currentTarget.value); }}>
+            {stocks.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}
+          </select>
+        </>
+      )}
       <span className="strike-flow__spacer" />
       <CapsuleSegmented options={MODES} value={side} onChange={setSide} ariaLabel="Option Board mode" groupId="option-mode" size="page" className="strike-flow__sides" />
       <button className="ui-flow-replay" type="button" aria-disabled="true" title="Replay is coming to Option Board soon">Replay</button>
@@ -145,7 +156,11 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
       <h1 className="is-visually-hidden">Option Board · Momentum Flow</h1>
       <header className="strike-flow__bar-holder">{bar}</header>
 
-      {failed ? (
+      {subTab === 'contracts-screener' ? (
+        <section className="strike-flow__empty" role="status">
+          <div><h2>Contracts Screener</h2><p>This view is coming soon. The Option Board above has every captured contract for now.</p><button className="ui-flow-replay" type="button" onClick={() => setSubTab('option-board')}>Back to Option Board</button></div>
+        </section>
+      ) : failed ? (
         <section className="strike-flow__empty" role="alert">
           <div><h2>Option chain could not be loaded</h2><p>The request failed. No premium or open-interest values are being shown.</p><button className="ui-flow-replay" type="button" onClick={() => setRetry(value => value + 1)}>Retry</button></div>
         </section>
