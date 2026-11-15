@@ -337,6 +337,9 @@
 .mf-mini { flex: 1 1 auto; min-height: 90px; position: relative; }
 .mf-mini > svg { position: absolute; inset: 0; display: block; }
 .mf-mini__note { display: grid; place-items: center; height: 100%; font-size: 12px; color: var(--text-muted); border: 1px dashed var(--flow-hair); border-radius: 8px; }
+.mf-mini__tf { position: absolute; top: 5px; left: 7px; z-index: 1; }
+.mf-mini__tf select { min-height: 22px; padding: 0 5px; border: 1px solid var(--flow-hair); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 10.5px; opacity: 0.85; }
+.mf-mini__tf select:hover, .mf-mini__tf select:focus-visible { opacity: 1; }
 .mf-mini__line { fill: none; stroke: var(--text); stroke-width: 1.5; stroke-linejoin: round; }
 .mf-popup.is-up .mf-mini__line { stroke: var(--flow-up-ink); }
 .mf-popup.is-down .mf-mini__line { stroke: var(--flow-down-ink); }

@@ -60,6 +60,42 @@ describe('the flow diagram', () => {
     ]);
   });
 
+  it('aligns buckets to the session clock when the first minute starts mid-bucket', () => {
+    const t = Date.parse('2026-10-09T09:17:00+05:30');
+    const closes = [10, 11, 12, 13, 14].map((close, i) => ({ at: t + i * MIN, close, oi: 1 }));
+    const bars = candlesFromCloses(closes, 5);
+    expect(bars).toEqual([
+      { at: Date.parse('2026-10-09T09:15:00+05:30'), open: 10, high: 12, low: 10, close: 12 },
+      { at: Date.parse('2026-10-09T09:20:00+05:30'), open: 13, high: 14, low: 13, close: 14 },
+    ]);
+  });
+
+  it('never merges two days into one bucket', () => {
+    const friday = Date.parse('2026-10-09T15:29:00+05:30');
+    const monday = Date.parse('2026-10-12T09:15:00+05:30');
+    const bars = candlesFromCloses([{ at: friday, close: 100, oi: 1 }, { at: monday, close: 101, oi: 1 }], 15);
+    expect(bars).toEqual([
+      { at: Date.parse('2026-10-09T15:15:00+05:30'), open: 100, high: 100, low: 100, close: 100 },
+      { at: monday, open: 101, high: 101, low: 101, close: 101 },
+    ]);
+  });
+
+  it('nests every timeframe on the same session edges', () => {
+    const t = Date.parse('2026-10-09T09:15:00+05:30');
+    const closes = Array.from({ length: 30 }, (_, i) => ({ at: t + i * MIN, close: 10 + i, oi: 1 }));
+    const five = candlesFromCloses(closes, 5);
+    const fifteen = candlesFromCloses(closes, 15);
+    expect(five.map(bar => bar.at)).toEqual([0, 5, 10, 15, 20, 25].map(m => t + m * MIN));
+    expect(five[0]).toMatchObject({ open: 10, close: 14 });
+    expect(fifteen.map(bar => bar.at)).toEqual([t, t + 15 * MIN]);
+    expect(fifteen[0]).toMatchObject({ open: 10, close: 24 });
+    // Every 5-minute bar sits inside one 15-minute bar.
+    for (const bar of five) {
+      const holder = fifteen.find(edge => bar.at >= edge.at && bar.at < edge.at + 15 * MIN);
+      expect(holder).toBeDefined();
+    }
+  });
+
 });
 
 describe('the drawn line', () => {

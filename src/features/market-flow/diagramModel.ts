@@ -76,24 +76,33 @@ export function sCurveOn(x0: number, y0: number, x1: number, y1: number, pull = 
 
 export interface Candle { at: number; open: number; high: number; low: number; close: number }
 
+/** India keeps one clock all year: the session's buckets anchor at 09:15 IST on it. */
+const IST_OFFSET_MS = (5 * 60 + 30) * MINUTE;
+const SESSION_OPEN_MINUTE = 9 * 60 + 15;
+const DAY_MINUTES = 24 * 60;
+
 /**
  * Candles of `minutes` minutes from the futures' minute closes: open is the
  * first close in the span, high and low the highest and lowest close, close
- * the last. Spans are counted from the first candle.
+ * the last. Buckets align to the session clock (09:15 IST), not to the first
+ * candle, so every timeframe nests inside the minute data, any window slice
+ * re-buckets to the same edges, and two days never share a bucket.
  */
 export function candlesFromCloses(candles: readonly FlowCandle[], minutes = 5): Candle[] {
   const out: Candle[] = [];
   if (!candles.length) return out;
-  const span = minutes * MINUTE;
-  const origin = candles[0].at;
   let current: Candle | null = null;
-  let bucket = -1;
+  let bucket = 0;
   for (const candle of candles) {
-    const b = Math.floor((candle.at - origin) / span);
-    if (b !== bucket || !current) {
-      current = { at: origin + b * span, open: candle.close, high: candle.close, low: candle.close, close: candle.close };
+    const minuteOfDay = Math.floor((candle.at + IST_OFFSET_MS) / MINUTE) % DAY_MINUTES;
+    const istDay = Math.floor((candle.at + IST_OFFSET_MS) / (DAY_MINUTES * MINUTE));
+    const index = Math.floor((minuteOfDay - SESSION_OPEN_MINUTE) / minutes);
+    const key = istDay * DAY_MINUTES + index;
+    if (!current || key !== bucket) {
+      const at = candle.at - (minuteOfDay - SESSION_OPEN_MINUTE - index * minutes) * MINUTE;
+      current = { at, open: candle.close, high: candle.close, low: candle.close, close: candle.close };
       out.push(current);
-      bucket = b;
+      bucket = key;
     } else {
       current.high = Math.max(current.high, candle.close);
       current.low = Math.min(current.low, candle.close);

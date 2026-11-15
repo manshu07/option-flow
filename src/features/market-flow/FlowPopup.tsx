@@ -9,6 +9,11 @@ import { useFlowFocus, type FocusState } from './flowFocus';
 import { buildUpText, ChangeText, DotMeter, signedText, Spark, toneOf, windowCandles } from './FlowParts';
 import { clockOf, compactUnits, levelText, type FlowLevel, type FlowStock, type MarketFlow } from './marketFlowModel';
 import { useBox } from './useBox';
+import { useRememberedChoice } from '@/lib/remembered';
+
+/** The detail chart's candle size: Auto keeps the adaptive pick, the rest are fixed session-anchored minutes. */
+type ChartTf = 'auto' | 1 | 5 | 15 | 30;
+const CHART_TFS: readonly ChartTf[] = ['auto', 1, 5, 15, 30];
 
 interface FlowPopupProps {
   flow: MarketFlow;
@@ -154,6 +159,7 @@ const levelPair = (first: FlowLevel | null, second: FlowLevel | null, letter: st
  */
 function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlow['window'] }) {
   const [ref, box] = useBox<HTMLDivElement>();
+  const [tf, setTf] = useRememberedChoice<ChartTf>('marketFlow.miniChart.tf:v1', CHART_TFS, 'auto');
   const candles = windowCandles(stock);
   const note = stock.futures === 'pending' ? 'Loading future…' : stock.futures === 'failed' ? 'Could not load future' : stock.futures === 'unavailable' ? 'No future listed for this underlying' : candles.length < 2 ? 'Too few minutes yet for a line' : null;
   const { width: w, height: h } = box;
@@ -174,14 +180,15 @@ function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlo
     for (const [, level] of levels) { low = Math.min(low, level.strike); high = Math.max(high, level.strike); }
     const margin = (high - low) * 0.06 || range * 0.06;
     low -= margin; high += margin;
-    const t0 = stock.fut?.from ?? candles[0].at;
+    // Candles from the minute closes: Auto picks 5 minutes for a day and 1 for the short windows; a chosen timeframe always applies.
+    const span = tf === 'auto' ? (candles.length > 120 ? 5 : candles.length > 30 ? 2 : 1) : tf;
+    const bars = candlesFromCloses(candles, span);
+    // A bucket starts at the session clock, which can sit before the window's first minute: the axis follows.
+    const t0 = Math.min(stock.fut?.from ?? candles[0].at, bars[0].at);
     const t1 = candles[candles.length - 1].at + MINUTE;
     const x = (t: number) => pad.left + ((t - t0) / Math.max(1, t1 - t0)) * (w - pad.left - pad.right);
     const y = (price: number) => pad.top + (1 - (price - low) / (high - low)) * (h - pad.top - pad.bottom);
     const last = candles[candles.length - 1];
-    // Candles from the minute closes: 5 minutes for a day, 1 minute for the short windows.
-    const span = candles.length > 120 ? 5 : candles.length > 30 ? 2 : 1;
-    const bars = candlesFromCloses(candles, span);
     const bw = Math.max(1.2, ((w - pad.left - pad.right) / Math.max(1, bars.length)) * 0.62);
     // Level tags are kept 12px apart at the right edge.
     const tags = [...levels.map(([name, level]) => ({ name: `${name} ${levelText(level.strike)}`, y: y(level.strike), cls: name.startsWith('S') ? 'is-put' : 'is-call' })),
@@ -212,5 +219,20 @@ function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlo
       </svg>
     );
   }
-  return <div className="mf-mini" ref={ref}>{note ? <p className="mf-mini__note">{note}</p> : body}</div>;
+  return (
+    <div className="mf-mini" ref={ref}>
+      {note ? <p className="mf-mini__note">{note}</p> : body}
+      {body != null && (
+        <label className="mf-mini__tf">
+          <select aria-label="Chart timeframe" value={String(tf)} onChange={event => setTf((event.currentTarget.value === 'auto' ? 'auto' : Number(event.currentTarget.value)) as ChartTf)}>
+            <option value="auto">Auto</option>
+            <option value="1">1m</option>
+            <option value="5">5m</option>
+            <option value="15">15m</option>
+            <option value="30">30m</option>
+          </select>
+        </label>
+      )}
+    </div>
+  );
 }
