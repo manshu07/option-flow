@@ -375,7 +375,7 @@ export function createDhanProvider(universe) {
       socket = new WebSocket(url);
     } catch (error) {
       console.warn(`dhan: feed ${index} failed to open: ${error?.message || error}`);
-      return scheduleReconnect(index, hostIdx + 1);
+      return scheduleReconnect(conn, hostIdx + 1);
     }
     socket.binaryType = 'arraybuffer';
     conn.socket = socket;
@@ -386,6 +386,7 @@ export function createDhanProvider(universe) {
     conn.queue = [];
     conn.unsubQueue = [];
     socket.onopen = async () => {
+      conn.reconnectAttempts = 0;
       if (!feedStartedAt) feedStartedAt = Date.now();
       console.log(`dhan: feed ${index} connected (${host.replace('wss://', '')})`);
       const mine = [...feedWant].filter(key => conn.holds?.has(key));
@@ -410,10 +411,14 @@ export function createDhanProvider(universe) {
 
   function scheduleReconnect(conn, hostIdx) {
     if (conn.reconnectTimer) return;
+    // Exponential backoff so a refusing endpoint is never hammered — Dhan
+    // throttling rapid reconnect loops would hurt the next market session.
+    const delay = Math.min(3_000 * 2 ** (conn.reconnectAttempts ?? 0), 60_000);
+    conn.reconnectAttempts = (conn.reconnectAttempts ?? 0) + 1;
     conn.reconnectTimer = setTimeout(async () => {
       conn.reconnectTimer = null;
       await openConn(conns.indexOf(conn), hostIdx + 1);
-    }, 3000);
+    }, delay);
   }
 
   // ── Quotes and previous closes (REST, sparingly) ──────────────────────────
