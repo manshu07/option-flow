@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CapsuleSegmented, type CapsuleOption } from '@/components/common/CapsuleSegmented';
+import { PageBar } from '@/components/chrome/PageBar';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { FlowDiagram } from '../market-flow/FlowDiagram';
 import { useFitScrollerHeight } from '@/hooks/useFitScrollerHeight';
@@ -36,14 +37,6 @@ const MODES: CapsuleOption<'all' | 'CE' | 'PE'>[] = [
   { value: 'CE', label: 'Calls (Top)' },
   { value: 'PE', label: 'Put (Top)' },
 ];
-
-const BRAND = (
-  <a className="mf-brand" href="https://mrchartist.com/open-source/order-flow" target="_blank" rel="noreferrer" aria-label="Option Board by Mr. Chartist">
-    <span className="mf-brand__dot" aria-hidden="true" />
-    <span className="mf-brand__name">Option <em>Board</em></span>
-    <span className="mf-brand__by">by Mr. Chartist</span>
-  </a>
-);
 
 function symbolsFor(scope: string, universe: Underlying[]): string[] {
   if (scope === 'all-indices') return [...INDEX_SYMBOLS];
@@ -132,7 +125,6 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
 
   const bar = (
     <div className="strike-flow__bar">
-      {BRAND}
       {tabs}
       <CapsuleSegmented options={SUB_TABS} value={subTab} onChange={setSubTab} ariaLabel="Option Board views" groupId="option-views" size="page" fill />
       <CapsuleSegmented options={SCOPES} value={scope} onChange={setScope} ariaLabel="Option Board scope" groupId="option-scope" size="page" className="strike-flow__symbols" />
@@ -154,7 +146,7 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
   return (
     <div className="ui-flow oi-design ui-strike-flow" data-window={window} data-layout={phone ? 'phone' : fits ? 'desktop' : 'tablet'} data-fit={fits ? 'true' : undefined} ref={pageRef}>
       <h1 className="is-visually-hidden">Option Board · Momentum Flow</h1>
-      <header className="strike-flow__bar-holder">{bar}</header>
+      <PageBar current="Option Board" crumbs={false} className="oi-design ui-flow-pagebar ui-strike-flow-pagebar">{bar}</PageBar>
 
       {subTab === 'contracts-screener' ? (
         <section className="strike-flow__empty" role="status">

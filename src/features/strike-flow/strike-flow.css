@@ -1,10 +1,9 @@
 .app-flow-shell { min-width: 0; min-height: 0; }
-.app-flow-tabs {
-  position: sticky; top: 0; z-index: 52; display: flex; justify-content: center;
-  padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--bg);
-}
-.app-flow-tabs .ui-capsule { min-height: 36px; }
 .app-flow-panel { min-width: 0; min-height: 0; }
+/* The flow header is ONE line on both boards, at every screen size: when it
+   overflows the width it scrolls horizontally — nothing wraps, nothing hides. */
+.app-flow-shell .ui-flow-pagebar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
+.app-flow-shell .ui-flow-pagebar > * { flex: none; }
 
 .ui-strike-flow { gap: 8px; }
 .ui-strike-flow[data-fit='true'] { height: var(--ui-page-fit-h); min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
@@ -16,8 +15,9 @@
 /* One slim bar row, Order Flow's chrome: tabs · scope chips · stocks · spacer ·
    mode pill · side filter · window · theme (PageBar carries the brand). */
 .strike-flow__bar {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0;
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; min-width: 0;
 }
+.strike-flow__bar > * { flex: none; }
 .strike-flow__symbols, .strike-flow__sides { flex: none; }
 .strike-flow__spacer { flex: 1 1 0; min-width: 12px; }
 .strike-flow__stocks {
@@ -189,8 +189,6 @@
 .strike-popup__checks { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 
 @media (max-width: 920px) {
-  .strike-flow__bar { align-items: flex-start; gap: 8px; }
-  .strike-flow__spacer { flex-basis: 100%; }
   .strike-flow__status-time { margin-left: 0; }
   .ui-strike-flow[data-fit='true'] { height: auto; min-height: 0; overflow: visible; }
   .strike-flow__diagram { flex: none; min-height: 500px; overflow: visible; }
@@ -202,9 +200,6 @@
 }
 
 @media (max-width: 560px) {
-  .app-flow-tabs { justify-content: flex-start; padding: 4px 8px; }
-  .app-flow-tabs .ui-capsule { width: 100%; }
-  .app-flow-tabs .ui-capsule__option { flex: 1 1 0; }
   .strike-flow__stocks { width: 124px; }
   .strike-flow__status { padding-inline: 10px; }
   .strike-flow__distribution { margin-inline: 5px; padding-inline: 8px; }

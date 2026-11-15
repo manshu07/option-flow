@@ -117,7 +117,7 @@ describe('StrikeFlowPage (Option Board)', () => {
   it('shows the stock dropdown only on the F&O Stock Options chip and fetches the chosen stock', async () => {
     page();
 
-    const diagram = await screen.findByTestId('flow-diagram');
+    await screen.findByTestId('flow-diagram');
     expect(screen.queryByLabelText('F&O stocks')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: 'F&O Stock Options' }));

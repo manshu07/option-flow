@@ -53,15 +53,6 @@ const UNIVERSES: Array<{ value: FlowUniverse; label: string; title: string }> = 
   { value: 'fno', label: 'All F&O', title: 'Every F&O underlying: stocks and indices' },
 ];
 
-/** The wordmark: Order Flow in the website's heading face, the Mr. Chartist dot, and who made it. */
-const BRAND = (
-  <a className="mf-brand" href="https://mrchartist.com/open-source/order-flow" target="_blank" rel="noreferrer" aria-label="Order Flow by Mr. Chartist">
-    <span className="mf-brand__dot" aria-hidden="true" />
-    <span className="mf-brand__name">Order <em>Flow</em></span>
-    <span className="mf-brand__by">by Mr. Chartist</span>
-  </a>
-);
-
 export function MarketFlowPage({ universe, tabs }: MarketFlowPageProps) {
   const [scope, setScope] = useState<FlowUniverse>(loadUniverse);
   const [replayRequested, setReplayRequested] = useState(false);
@@ -115,7 +106,7 @@ export function MarketFlowPage({ universe, tabs }: MarketFlowPageProps) {
   return (
     <div className="ui-flow oi-design" data-window="day" data-universe={scope} data-layout={layout} data-fit={fits ? 'true' : undefined} ref={pageRef}>
       <h1 className="is-visually-hidden">Order Flow</h1>
-      <PageBar current="Order Flow" crumbs={false} className="oi-design ui-flow-pagebar" brand={BRAND}>{pageActions}</PageBar>
+      <PageBar current="Order Flow" crumbs={false} className="oi-design ui-flow-pagebar">{pageActions}</PageBar>
       {replayRequested && <ReplayControls manifest={replay.manifest} mode={replay.mode} loading={replay.loading} error={replay.error} notice={replay.notice} retryableFutures={replay.retryableFutures} retryingFutures={replay.retryingFutures} cursorLabel={replay.cursorLabel} onPlay={replay.togglePlay} onSeek={replay.seek} onRetry={replay.retry} onLive={closeReplay} days={replay.days} selectedDate={replay.selectedDate} selectedSource={replay.selectedSource} onSelectDay={replay.selectDay} window={replay.window} customStart={replay.customStart} customEnd={replay.customEnd} onWindow={replay.setWindow} speed={replay.speed} onSpeed={replay.setSpeed} phone={phone} />}
       <FlowBoard key={scope} flow={flow} settings={CHART} layout={layout}
         status={<FlowStatus flow={flow} at={market?.at ?? null} loading={loading} error={error} provider={provider} futuresRead={futuresRead} futuresTotal={futuresTotal} onRescan={rescan} />} />
