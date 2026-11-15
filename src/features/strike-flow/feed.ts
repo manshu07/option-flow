@@ -21,6 +21,7 @@ export interface StrikeFlowPayload {
   symbol: string;
   date: string;
   expiry: string | null;
+  spotPrevClose: number | null;
   spot: StrikeSpotPoint[];
   strikes: Record<string, StrikeFlowContract>;
   minuteCount: number;
@@ -64,7 +65,7 @@ function isStrikeFlowContract(value: unknown): value is StrikeFlowContract {
 
 function parseStrikeFlowPayload(value: unknown): StrikeFlowPayload | null {
   if (!isRecord(value) || typeof value.symbol !== 'string' || typeof value.date !== 'string' ||
-    !(value.expiry === null || typeof value.expiry === 'string') || !Number.isInteger(value.minuteCount) ||
+    !(value.expiry === null || typeof value.expiry === 'string') || !isNullableNonNegative(value.spotPrevClose) || !Number.isInteger(value.minuteCount) ||
     (value.minuteCount as number) < 0 || !Array.isArray(value.spot) || !value.spot.every(isSpotPoint) || !isRecord(value.strikes)) {
     return null;
   }

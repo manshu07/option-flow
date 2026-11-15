@@ -766,7 +766,7 @@ const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false }
   );
 });
 
-function Ring({ held, counted }: { held: number; counted: number }) {
+export function Ring({ held, counted }: { held: number; counted: number }) {
   const r = 11;
   const c = 2 * Math.PI * r;
   const share = counted ? held / counted : 0;

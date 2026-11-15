@@ -6,6 +6,7 @@ const payload: StrikeFlowPayload = {
   symbol: 'NIFTY',
   date: '2026-11-13',
   expiry: null,
+  spotPrevClose: 24_900,
   spot: [],
   strikes: {},
   minuteCount: 0,

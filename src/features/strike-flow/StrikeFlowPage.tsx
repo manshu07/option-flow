@@ -9,7 +9,9 @@ import { getLatestTradingSessionDate } from '@/lib/marketSession';
 import { HEADER_MARKET_SYMBOLS, type Underlying } from '@/lib/underlyings';
 import { clockOf } from '../market-flow/marketFlowModel';
 import { fetchStrikeFlow, type StrikeFlowPayload } from './feed';
+import { StrikeFlowCard, StrikeFlowPopup, type StrikeChartTimeframe } from './StrikeFlowCards';
 import { StrikeFlowDiagram } from './StrikeFlowDiagram';
+import { spotChangeForWindow, strikeWalls } from './strikeCardModel';
 import { filterStrikeReadings, strikeReadings, type StrikeFlowWindow, type StrikeReading, type StrikeSideFilter } from './strikeFlowModel';
 import '@/styles/oi-design-tokens.css';
 import '../market-flow/market-flow.css';
@@ -127,11 +129,14 @@ export function StrikeFlowPage({ universe }: StrikeFlowPageProps) {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [selectedCard, setSelectedCard] = useState<{ symbol: string; key: string } | null>(null);
+  const [cardTimeframes, setCardTimeframes] = useState<Record<string, StrikeChartTimeframe>>({});
 
   useFitScrollerHeight(pageRef, fits);
 
   useEffect(() => {
     const controller = new AbortController();
+    setSelectedCard(null);
     setFlow(null);
     setLoading(true);
     setFailed(false);
@@ -151,6 +156,13 @@ export function StrikeFlowPage({ universe }: StrikeFlowPageProps) {
   const selectedStock = stocks.some(item => item.symbol === symbol) ? symbol : '';
   const allReadings = flow ? strikeReadings(flow, window) : [];
   const readings = filterStrikeReadings(allReadings, side);
+  const upCards = readings.filter(reading => reading.direction === 'up').slice(0, 3);
+  const downCards = readings.filter(reading => reading.direction === 'down').slice(0, 3);
+  const spotDayChangePct = flow ? spotChangeForWindow(flow, 'day') : null;
+  const walls = flow ? strikeWalls(flow) : { support: null, resistance: null };
+  const popupReading = flow && selectedCard?.symbol === flow.symbol
+    ? allReadings.find(reading => reading.key === selectedCard.key) ?? null
+    : null;
   const hasChain = Boolean(flow && Object.keys(flow.strikes).length > 0);
   const noChain = !loading && !failed && !hasChain;
   const noSideData = !loading && !failed && hasChain && readings.length === 0;
@@ -211,6 +223,35 @@ export function StrikeFlowPage({ universe }: StrikeFlowPageProps) {
         <>
           <StrikeDistribution readings={readings} />
           <StrikeFlowDiagram flow={flow} readings={readings} window={window} />
+          <section className="strike-flow__cards" aria-label="Top strike movers">
+            <header className="strike-flow__cards-heading">
+              <h2>Strike leaders</h2>
+              <span>Top three per premium direction · {flow.expiry ?? 'expiry unavailable'}</span>
+            </header>
+            <div className="strike-flow__cards-columns">
+              <section aria-label="Premium rising contracts">
+                <h3 className="strike-flow__cards-subhead is-up">Premium rising · {upCards.length}</h3>
+                <div className="strike-flow__card-grid">
+                  {upCards.map(reading => {
+                    const id = `${flow.symbol}:${reading.key}`;
+                    return <StrikeFlowCard key={id} flow={flow} reading={reading} window={window} walls={walls} spotDayChangePct={spotDayChangePct} timeframe={cardTimeframes[id] ?? 'auto'} onTimeframeChange={timeframe => setCardTimeframes(current => ({ ...current, [id]: timeframe }))} onOpen={() => setSelectedCard({ symbol: flow.symbol, key: reading.key })} />;
+                  })}
+                  {!upCards.length && <p className="strike-flow__cards-empty">No measured premium rises above the noise floor.</p>}
+                </div>
+              </section>
+              <section aria-label="Premium falling contracts">
+                <h3 className="strike-flow__cards-subhead is-down">Premium falling · {downCards.length}</h3>
+                <div className="strike-flow__card-grid">
+                  {downCards.map(reading => {
+                    const id = `${flow.symbol}:${reading.key}`;
+                    return <StrikeFlowCard key={id} flow={flow} reading={reading} window={window} walls={walls} spotDayChangePct={spotDayChangePct} timeframe={cardTimeframes[id] ?? 'auto'} onTimeframeChange={timeframe => setCardTimeframes(current => ({ ...current, [id]: timeframe }))} onOpen={() => setSelectedCard({ symbol: flow.symbol, key: reading.key })} />;
+                  })}
+                  {!downCards.length && <p className="strike-flow__cards-empty">No measured premium falls below the noise floor.</p>}
+                </div>
+              </section>
+            </div>
+          </section>
+          {popupReading && <StrikeFlowPopup flow={flow} reading={popupReading} window={window} walls={walls} spotDayChangePct={spotDayChangePct} timeframe={cardTimeframes[`${flow.symbol}:${popupReading.key}`] ?? 'auto'} onTimeframeChange={timeframe => setCardTimeframes(current => ({ ...current, [`${flow.symbol}:${popupReading.key}`]: timeframe }))} onClose={() => setSelectedCard(null)} />}
         </>
       ) : null}
     </div>

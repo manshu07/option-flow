@@ -86,10 +86,11 @@ function curveFor(reading: StrikeReading, window: StrikeFlowWindow, start: numbe
   };
 }
 
-function spotLine(flow: StrikeFlowPayload, start: number, end: number, window: StrikeFlowWindow): { line: FlowLine | null; baselineAt: number | null; changePct: number | null } {
-  const first = flow.spot[0];
-  if (!first || first[1] <= 0) return { line: null, baselineAt: null, changePct: null };
-  let baselinePoint = first;
+function spotLine(flow: StrikeFlowPayload, start: number, end: number, window: StrikeFlowWindow): { line: FlowLine | null; baselineAt: number | null; changePct: number | null; label: string } {
+  let baselineValue = flow.spotPrevClose;
+  let baselineAt: number | null = null;
+  let label = 'vs previous close';
+  let points = flow.spot.filter(point => point[0] + MINUTE >= start && point[0] + MINUTE <= end);
   if (window !== 'day') {
     let gap = Infinity;
     let closest: (typeof flow.spot)[number] | null = null;
@@ -100,20 +101,23 @@ function spotLine(flow: StrikeFlowPayload, start: number, end: number, window: S
       if (delta < gap) { closest = point; gap = delta; }
     }
     const intradayWindow: IntradayWindow = window;
-    if (!closest || gap > SCAN_WINDOW_TOLERANCE_MS[intradayWindow]) return { line: null, baselineAt: null, changePct: null };
-    baselinePoint = closest;
+    if (!closest || gap > SCAN_WINDOW_TOLERANCE_MS[intradayWindow]) return { line: null, baselineAt: null, changePct: null, label: 'spot baseline unavailable' };
+    baselineValue = closest[1];
+    const intradayBaselineAt = closest[0] + MINUTE;
+    baselineAt = intradayBaselineAt;
+    label = `from ${clockOf(intradayBaselineAt)} window baseline`;
+    points = flow.spot.filter(point => point[0] + MINUTE >= intradayBaselineAt && point[0] + MINUTE <= end);
   }
-  if (baselinePoint[1] <= 0) return { line: null, baselineAt: null, changePct: null };
-  const baselineAt = baselinePoint[0] + MINUTE;
-  const points = flow.spot.filter(point => point[0] + MINUTE >= baselineAt && point[0] + MINUTE <= end);
+  if (baselineValue === null || baselineValue <= 0) return { line: null, baselineAt, changePct: null, label: 'spot previous close unavailable' };
   const last = points.at(-1);
-  const changePct = last ? (last[1] / baselinePoint[1] - 1) * 100 : null;
-  if (points.length < 2) return { line: null, baselineAt, changePct };
-  const values = points.map(point => (point[1] / baselinePoint[1] - 1) * 100);
+  const changePct = last ? (last[1] / baselineValue - 1) * 100 : null;
+  if (points.length < 2) return { line: null, baselineAt, changePct, label };
+  const values = points.map(point => (point[1] / baselineValue - 1) * 100);
   return {
     line: { symbol: flow.symbol, t: points.map(point => point[0] + MINUTE), v: drawnValues(values) },
     baselineAt,
     changePct,
+    label,
   };
 }
 
@@ -238,7 +242,6 @@ export function StrikeFlowDiagram({ flow, readings, window }: StrikeFlowDiagramP
   const tickWindow = TICK_WINDOW[window];
   const timeMarks = [...new Set([start, ...timeTicks(start, end, plotWidth, tickWindow), end])].sort((a, b) => a - b);
   const spotPct = reference.changePct;
-  const spotOrigin = reference.baselineAt;
 
   return (
     <div className="strike-flow__diagram" aria-label="Strike momentum diagram">
@@ -310,7 +313,7 @@ export function StrikeFlowDiagram({ flow, readings, window }: StrikeFlowDiagramP
           {flat.length > 0 && <text className="strike-diagram__group" x={TILES_X} y={zeroY - neutralHeight / 2 - 7}>FLAT · {flat.length}</text>}
           <text className="strike-diagram__group strike-diagram__group--down" x={TILES_X} y={plotBottom + 12}>DOWN · {down.length}</text>
           {!drawable.length && <text className="strike-diagram__empty" x={(PLOT_LEFT + PLOT_RIGHT) / 2} y={zeroY - 8} textAnchor="middle">No contract has enough baseline data to draw a line yet.</text>}
-          {spotPct !== null && <text className="strike-diagram__spot-label" x={PLOT_RIGHT} y={plotTop - 8} textAnchor="end">{flow.symbol} {pctText(spotPct)}{spotOrigin !== null ? ` from ${clockOf(spotOrigin)}` : ''}</text>}
+          {spotPct !== null && <text className="strike-diagram__spot-label" x={PLOT_RIGHT} y={plotTop - 8} textAnchor="end">{flow.symbol} {pctText(spotPct)}{window === 'day' ? '' : ` ${reference.label}`}</text>}
         </svg>
       </div>
       {unknown.length > 0 && (
@@ -323,10 +326,10 @@ export function StrikeFlowDiagram({ flow, readings, window }: StrikeFlowDiagramP
         <span className="strike-flow__spot-swatch" />
         <span>{flow.symbol}</span>
         {spotPct === null ? <small>spot change unavailable</small> : <ChangeText value={spotPct} className="strike-flow__spot-change" />}
-        <small>{spotOrigin === null ? 'spot baseline unavailable' : window === 'day' ? `from first captured minute (${clockOf(spotOrigin)})` : `from ${clockOf(spotOrigin)} window baseline`}</small>
+        <small>{reference.label}</small>
         <span className="strike-flow__close-key"><i /> Session close · {clockOf(close)}</span>
       </div>
-      <span className="sr-only">Chart session opens {clockOf(open)} and uses the spot's first captured reading as its reference.</span>
+      <span className="sr-only">Chart session opens {clockOf(open)}. {window === 'day' ? 'Spot movement is measured from the underlying previous close.' : `Spot movement is measured ${reference.label}.`}</span>
     </div>
   );
 }

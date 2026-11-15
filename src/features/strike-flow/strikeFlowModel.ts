@@ -22,6 +22,8 @@ export interface StrikeReading {
   oiChange: number | null;
   oiChangePct: number | null;
   volume: number | null;
+  volumeChange: number | null;
+  volumePace: number | null;
   spotDistancePct: number | null;
   lastAt: number | null;
   series: StrikeSeriesPoint[];
@@ -33,7 +35,9 @@ export interface StrikeReading {
 interface Baseline {
   ltp: number | null;
   oi: number | null;
+  volume: number | null;
   at: number | null;
+  volumeAt: number | null;
 }
 
 const MINUTE = 60_000;
@@ -50,7 +54,14 @@ function validSeriesPoint(point: StrikeSeriesPoint): boolean {
 
 function baselineFor(contract: StrikeFlowContract, series: StrikeSeriesPoint[], window: StrikeFlowWindow): Baseline | null {
   if (window === 'day') {
-    return { ltp: finiteOrNull(contract.prevClose), oi: finiteOrNull(contract.prevOi), at: null };
+    const first = series[0];
+    return {
+      ltp: finiteOrNull(contract.prevClose),
+      oi: finiteOrNull(contract.prevOi),
+      volume: first?.[3] ?? null,
+      at: null,
+      volumeAt: first ? first[0] + MINUTE : null,
+    };
   }
 
   const last = series.at(-1);
@@ -73,7 +84,7 @@ function baselineFor(contract: StrikeFlowContract, series: StrikeSeriesPoint[], 
   }
 
   if (!closest || closestGap > SCAN_WINDOW_TOLERANCE_MS[intradayWindow]) return null;
-  return { ltp: closest[1], oi: closest[2], at: closest[0] + MINUTE };
+  return { ltp: closest[1], oi: closest[2], volume: closest[3], at: closest[0] + MINUTE, volumeAt: closest[0] + MINUTE };
 }
 
 function directionFor(changePct: number | null, floorPct: number): StrikeDirection {
@@ -97,6 +108,11 @@ function readingFor(flow: StrikeFlowPayload, contract: StrikeFlowContract, windo
   const oiChangePct = oiChange !== null && baseline?.oi !== null && baseline !== null && baseline.oi > 0
     ? oiChange / baseline.oi * 100
     : null;
+  const volumeChange = volume !== null && baseline?.volume !== null && baseline !== null ? volume - baseline.volume : null;
+  const elapsedMinutes = last && baseline?.volumeAt !== null && baseline !== null
+    ? (last[0] + MINUTE - baseline.volumeAt) / MINUTE
+    : null;
+  const volumePace = volumeChange !== null && elapsedMinutes !== null && elapsedMinutes > 0 ? volumeChange / elapsedMinutes : null;
   const timeframe = BUILD_UP_WINDOW[window];
   let buildUp: BuildUp | null = null;
 
@@ -122,6 +138,8 @@ function readingFor(flow: StrikeFlowPayload, contract: StrikeFlowContract, windo
     oiChange,
     oiChangePct,
     volume,
+    volumeChange,
+    volumePace,
     spotDistancePct: finiteOrNull(contract.spotDistancePct),
     lastAt: last?.[0] ?? null,
     series,

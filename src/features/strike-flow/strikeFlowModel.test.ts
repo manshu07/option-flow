@@ -38,6 +38,7 @@ function flow(...contracts: StrikeFlowContract[]): StrikeFlowPayload {
     symbol: 'NIFTY',
     date: DATE,
     expiry: '2026-11-19',
+    spotPrevClose: 24_950,
     spot: [[BASE_AT, 25_000]],
     strikes: Object.fromEntries(contracts.map(item => [`${item.strike}|${item.side}`, item])),
     minuteCount: 1,
@@ -89,6 +90,14 @@ describe('strikeReadings', () => {
     expect(zeroBaseline.buildUp).toBeNull();
     expect(zeroCurrent.oiChange).toBe(-1_000);
     expect(zeroCurrent.buildUp).toBeNull();
+  });
+
+  it('measures volume pace only from captured window samples', () => {
+    const item = contract(25_000, 'CE', [point(0, 100, 1_000, 100), point(5, 105, 1_100, 200)]);
+    const reading = strikeReadings(flow(item), '5m')[0];
+
+    expect(reading.volumeChange).toBe(100);
+    expect(reading.volumePace).toBe(20);
   });
 
   it.each([

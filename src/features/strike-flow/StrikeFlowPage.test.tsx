@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Underlying } from '@/lib/underlyings';
@@ -38,6 +38,7 @@ const fixture: StrikeFlowPayload = {
   symbol: 'NIFTY',
   date: '2026-11-13',
   expiry: '2026-11-19',
+  spotPrevClose: 24_900,
   spot: [[BASE, 25_000], [BASE + MINUTE, 25_010], [BASE + 2 * MINUTE, 25_020]],
   strikes: {
     '25150|CE': contract(25_150, 'CE', [100, 110, 112], [1_000, 1_100, 1_200]),
@@ -73,6 +74,27 @@ describe('StrikeFlowPage', () => {
 
     expect(screen.getByText('NIFTY 2500PE')).toBeInTheDocument();
     expect(screen.queryByText('NIFTY 2515C')).not.toBeInTheDocument();
+  });
+
+  it('renders strike cards, spot day change, TF candles, walls, and the detail popup', async () => {
+    page();
+
+    const details = (await screen.findAllByRole('button', { name: /Open details for NIFTY/ }))[0];
+    expect(screen.getAllByText(/\+0\.48%/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('SUPPORT').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('RESISTANCE').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getAllByRole('radio', { name: '30m' })[0]);
+    fireEvent.click(details);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('Underlying day move');
+    expect(dialog).toHaveTextContent('Premium window move');
+    expect(within(dialog).getByRole('img', { name: /Conviction:/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('radio', { name: '30m' }).some(option => option.getAttribute('aria-checked') === 'true')).toBe(true);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
   it('shows an honest empty state and retries the archive read', async () => {
