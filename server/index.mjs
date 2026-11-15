@@ -256,74 +256,82 @@ export function healthPayload(provider, state, capture, now = Date.now(), booted
 }
 
 /**
- * Strike-level momentum series for one underlying, read off stored minute
- * snapshots (schema-1 market files, ascending). Only strikes within
- * `windowPct` of the last spot are kept — nearest ATM first when past `cap` —
- * so the payload stays a few hundred KB, not the whole chain.
+ * Strike-level momentum series for one or more underlyings, read off stored
+ * minute snapshots (schema-1 market files, ascending). Only strikes within
+ * `windowPct` of each symbol's last spot are kept — nearest ATM first when
+ * past `cap` — so the payload stays a few hundred KB. Strike keys carry the
+ * symbol (`NIFTY|25150|CE`) and spot/prev-close are per-symbol maps, so a
+ * combined three-index board reads each index fairly.
  */
-export function strikeFlowFromFiles(files, symbol, { windowPct = 0.05, cap = 64 } = {}) {
-  const wanted = String(symbol).toUpperCase();
-  const spot = [];
+export function strikeFlowFromFiles(files, symbols, { windowPct = 0.05, cap = 64 } = {}) {
+  const wanted = (Array.isArray(symbols) ? symbols : [symbols]).map(s => String(s).toUpperCase());
+  const spot = Object.fromEntries(wanted.map(s => [s, []]));
+  const spotPrevClose = Object.fromEntries(wanted.map(s => [s, null]));
+  const expiries = {};
   const strikes = new Map();
-  let expiry = null;
   let date = null;
-  let spotPrevClose = null;
   for (const file of files) {
     if (!file || typeof file !== 'object') continue;
-    const series = (file.series ?? []).find(item => item?.s === wanted);
-    if (!series || !Array.isArray(series.r)) continue;
-    if (Number.isFinite(series.sp) && series.sp > 0) spot.push([file.t, series.sp]);
-    if (!expiry && typeof series.e === 'string') expiry = series.e;
-    if (!date && typeof file.date === 'string') date = file.date;
-    // The underlying's previous close rides on every snapshot; the day window
-    // and the spot reference line quote it instead of the first capture.
-    if (spotPrevClose == null && Number.isFinite(series.pc) && series.pc > 0) spotPrevClose = series.pc;
-    for (const row of series.r) {
-      if (!Array.isArray(row) || row.length < 7) continue;
-      // Row order is parseRow's contract: strike, side, ltp, prevClose, oi, prevOi, volume.
-      const [strike, side, ltp, prevClose, oi, prevOi, volume] = row;
-      if (!Number.isFinite(strike) || (side !== 0 && side !== 1) || !Number.isFinite(ltp)) continue;
-      const key = `${strike}|${side === 0 ? 'CE' : 'PE'}`;
-      const held = strikes.get(key) ?? { strike, side: side === 0 ? 'CE' : 'PE', series: [], prevClose: null, prevOi: null };
-      held.series.push([file.t, ltp, Number.isFinite(oi) ? oi : null, Number.isFinite(volume) ? volume : null]);
-      if (held.prevClose == null && Number.isFinite(prevClose) && prevClose > 0) held.prevClose = prevClose;
-      if (held.prevOi == null && Number.isFinite(prevOi) && prevOi >= 0) held.prevOi = prevOi;
-      strikes.set(key, held);
+    for (const symbol of wanted) {
+      const series = (file.series ?? []).find(item => item?.s === symbol);
+      if (!series || !Array.isArray(series.r)) continue;
+      if (Number.isFinite(series.sp) && series.sp > 0) spot[symbol].push([file.t, series.sp]);
+      if (!expiries[symbol] && typeof series.e === 'string') expiries[symbol] = series.e;
+      if (!date && typeof file.date === 'string') date = file.date;
+      // The underlying's previous close rides on every snapshot; the day window
+      // and the spot reference line quote it instead of the first capture.
+      if (spotPrevClose[symbol] == null && Number.isFinite(series.pc) && series.pc > 0) spotPrevClose[symbol] = series.pc;
+      for (const row of series.r) {
+        if (!Array.isArray(row) || row.length < 7) continue;
+        // Row order is parseRow's contract: strike, side, ltp, prevClose, oi, prevOi, volume.
+        const [strike, side, ltp, prevClose, oi, prevOi, volume] = row;
+        if (!Number.isFinite(strike) || (side !== 0 && side !== 1) || !Number.isFinite(ltp)) continue;
+        const sideCode = side === 0 ? 'CE' : 'PE';
+        const key = `${symbol}|${strike}|${sideCode}`;
+        const held = strikes.get(key) ?? { symbol, strike, side: sideCode, series: [], prevClose: null, prevOi: null };
+        held.series.push([file.t, ltp, Number.isFinite(oi) ? oi : null, Number.isFinite(volume) ? volume : null]);
+        if (held.prevClose == null && Number.isFinite(prevClose) && prevClose > 0) held.prevClose = prevClose;
+        if (held.prevOi == null && Number.isFinite(prevOi) && prevOi >= 0) held.prevOi = prevOi;
+        strikes.set(key, held);
+      }
     }
   }
-  const lastSpot = spot.at(-1)?.[1] ?? null;
-  let kept = [...strikes.values()];
-  if (lastSpot) {
-    kept = kept.filter(item => Math.abs(item.strike - lastSpot) / lastSpot <= windowPct);
-    kept.sort((a, b) => Math.abs(a.strike - lastSpot) - Math.abs(b.strike - lastSpot));
-    kept = kept.slice(0, cap);
-  }
   const out = {};
-  for (const item of kept) {
-    const last = item.series.at(-1);
-    out[`${item.strike}|${item.side}`] = {
-      strike: item.strike, side: item.side, expiry,
-      prevClose: item.prevClose, prevOi: item.prevOi,
-      ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null,
-      spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null,
-      series: item.series,
-    };
+  for (const symbol of wanted) {
+    const lastSpot = spot[symbol].at(-1)?.[1] ?? null;
+    let kept = [...strikes.values()].filter(item => item.symbol === symbol);
+    if (lastSpot) {
+      kept = kept.filter(item => Math.abs(item.strike - lastSpot) / lastSpot <= windowPct);
+      kept.sort((a, b) => Math.abs(a.strike - lastSpot) - Math.abs(b.strike - lastSpot));
+      kept = kept.slice(0, cap);
+    }
+    for (const item of kept) {
+      const last = item.series.at(-1);
+      out[`${item.symbol}|${item.strike}|${item.side}`] = {
+        symbol: item.symbol, strike: item.strike, side: item.side,
+        expiry: expiries[item.symbol] ?? null,
+        prevClose: item.prevClose, prevOi: item.prevOi,
+        ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null,
+        spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null,
+        series: item.series,
+      };
+    }
   }
-  return { symbol: wanted, date, expiry, spot, spotPrevClose, strikes: out, minuteCount: files.length };
+  return { symbols: wanted, symbol: wanted[0], date, expiry: expiries, spot, spotPrevClose, strikes: out, minuteCount: files.length };
 }
 
 /** The as-of cut for replay: every series stops at the cursor and the "last"
  * readings are recomputed from what survived — the payload never quotes a
  * moment it does not show. */
 export function truncateStrikeFlow(payload, cursor) {
-  const spot = payload.spot.filter(([t]) => t <= cursor);
-  const lastSpot = spot.at(-1)?.[1] ?? null;
+  const spot = Object.fromEntries(Object.entries(payload.spot).map(([symbol, points]) => [symbol, points.filter(([t]) => t <= cursor)]));
   return {
     ...payload,
     spot,
     strikes: Object.fromEntries(Object.entries(payload.strikes).map(([key, item]) => {
       const series = item.series.filter(([t]) => t <= cursor);
       const last = series.at(-1);
+      const lastSpot = spot[item.symbol]?.at(-1)?.[1] ?? null;
       return [key, { ...item, series, ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null,
         spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null }];
     })),
@@ -334,13 +342,13 @@ const strikeFlowCache = new Map();
 const STRIKE_FLOW_CACHE_LIMIT = 20;
 
 /**
- * One underlying's strike flow for a session: minutes come from the live dir,
- * falling back per minute to the archive for closed sessions. Full-day
+ * One or more underlyings' strike flow for a session: minutes come from the
+ * live dir, falling back to one archive read for closed sessions. Full-day
  * aggregates are cached (invalidated when the minute count moves); `cursor`
  * (epoch ms) truncates to an as-of instant without re-reading anything.
  */
-async function strikeFlowFor(symbol, date, cursor = null) {
-  const cacheKey = `${date}|${symbol}`;
+async function strikeFlowFor(symbols, date, cursor = null) {
+  const cacheKey = `${date}|${symbols.join('+')}`;
   const minutes = readMinutes(date);
   let payload = strikeFlowCache.get(cacheKey);
   if (!payload || payload.minuteCount !== minutes.length) {
@@ -366,7 +374,7 @@ async function strikeFlowFor(symbol, date, cursor = null) {
       }
     }
     if (!files.length) return null;
-    payload = strikeFlowFromFiles(files, symbol);
+    payload = strikeFlowFromFiles(files, symbols);
     payload.date = date;
     payload.minuteCount = files.length;
     strikeFlowCache.set(cacheKey, payload);
@@ -687,16 +695,16 @@ async function handle(req, res) {
 
   const strikesPath = p.match(/^\/api\/strikes\/([^/]+)$/);
   if (strikesPath) {
-    const symbol = strikesPath[1].toUpperCase();
-    if (!REPLAY_SYMBOL.test(symbol) || !bySymbol.has(symbol)) return send(res, 400, { error: 'Invalid underlying.' });
+    const symbols = strikesPath[1].toUpperCase().split(',').filter(part => REPLAY_SYMBOL.test(part) && bySymbol.has(part)).slice(0, 4);
+    if (!symbols.length) return send(res, 400, { error: 'Invalid underlying.' });
     const date = url.searchParams.get('date') ?? getLatestTradingSessionDate(new Date(now()));
     if (!validReplayDate(date)) return send(res, 400, { error: 'Invalid session date.' });
     const asOf = url.searchParams.get('asOf');
     const cursor = asOf ? replayCursor(date, asOf) : null;
     if (asOf && !cursor) return send(res, 400, { error: 'asOf must be a market-session time in HHMM.' });
     try {
-      const payload = await strikeFlowFor(symbol, date, cursor);
-      return payload ? send(res, 200, payload, 'application/json', { 'Cache-Control': 'public, max-age=60' }) : send(res, 404, { error: `No stored chain minutes for ${symbol} on ${date}.` });
+      const payload = await strikeFlowFor(symbols, date, cursor);
+      return payload ? send(res, 200, payload, 'application/json', { 'Cache-Control': 'public, max-age=60' }) : send(res, 404, { error: `No stored chain minutes for ${symbols.join('+')} on ${date}.` });
     }
     catch (error) { return sendArchiveReadError(res, error); }
   }

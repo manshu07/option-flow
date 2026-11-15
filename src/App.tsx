@@ -7,7 +7,7 @@ import { loadUnderlyings, type Underlying } from '@/lib/underlyings';
 type FlowPage = 'order-flow' | 'strike-flow';
 const FLOW_PAGES: CapsuleOption<FlowPage>[] = [
   { value: 'order-flow', label: 'Order Flow' },
-  { value: 'strike-flow', label: 'Strike Flow' },
+  { value: 'strike-flow', label: 'Option Board' },
 ];
 
 export default function App() {

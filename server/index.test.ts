@@ -60,43 +60,54 @@ describe('strike flow extraction', () => {
   ];
 
   it('builds ascending per-strike series with the schema row order (oi before prevOi)', () => {
-    const flow = strikeFlowFromFiles(files, 'NIFTY');
-    expect(flow.symbol).toBe('NIFTY');
+    const flow = strikeFlowFromFiles(files, ['NIFTY']);
+    expect(flow.symbols).toEqual(['NIFTY']);
     expect(flow.date).toBe('2026-11-13');
-    expect(flow.expiry).toBe('2026-11-26');
-    expect(flow.spot).toEqual([[1_000, 25_000], [2_000, 25_100], [3_000, 25_200]]);
-    expect(flow.spotPrevClose).toBe(24_900);
-    const ce = flow.strikes['24500|CE'];
+    expect(flow.expiry.NIFTY).toBe('2026-11-26');
+    expect(flow.spot.NIFTY).toEqual([[1_000, 25_000], [2_000, 25_100], [3_000, 25_200]]);
+    expect(flow.spotPrevClose.NIFTY).toBe(24_900);
+    const ce = flow.strikes['NIFTY|24500|CE'];
     expect(ce.series).toEqual([[1_000, 100, 1_000, 50], [2_000, 110, 1_100, 60], [3_000, 125, 1_300, 70]]);
     expect(ce.prevClose).toBe(90);
     expect(ce.prevOi).toBe(900);
     expect(ce.ltp).toBe(125);
     expect(ce.oi).toBe(1_300);
-    const pe = flow.strikes['25500|PE'];
+    const pe = flow.strikes['NIFTY|25500|PE'];
     expect(pe.side).toBe('PE');
     expect(pe.spotDistancePct).toBeCloseTo(((25_500 - 25_200) / 25_200) * 100, 5);
   });
 
   it('drops strikes outside the spot window and honours the cap', () => {
-    const flow = strikeFlowFromFiles(files, 'NIFTY', { windowPct: 0.05 });
-    expect(Object.keys(flow.strikes).sort()).toEqual(['24500|CE', '25500|PE']); // 30000 far strike dropped
-    const capped = strikeFlowFromFiles(files, 'NIFTY', { cap: 1 });
-    expect(Object.keys(capped.strikes)).toEqual(['25500|PE']); // nearest ATM to spot 25200 kept
+    const flow = strikeFlowFromFiles(files, ['NIFTY'], { windowPct: 0.05 });
+    expect(Object.keys(flow.strikes).sort()).toEqual(['NIFTY|24500|CE', 'NIFTY|25500|PE']); // 30000 far strike dropped
+    const capped = strikeFlowFromFiles(files, ['NIFTY'], { cap: 1 });
+    expect(Object.keys(capped.strikes)).toEqual(['NIFTY|25500|PE']); // nearest ATM to spot 25200 kept
   });
 
   it('truncates every series at the replay cursor — no lookahead', () => {
-    const flow = truncateStrikeFlow(strikeFlowFromFiles(files, 'NIFTY'), 2_000);
-    expect(flow.spot).toEqual([[1_000, 25_000], [2_000, 25_100]]);
-    expect(flow.strikes['24500|CE'].series).toEqual([[1_000, 100, 1_000, 50], [2_000, 110, 1_100, 60]]);
-    expect(flow.strikes['24500|CE'].ltp).toBe(110);
+    const flow = truncateStrikeFlow(strikeFlowFromFiles(files, ['NIFTY']), 2_000);
+    expect(flow.spot.NIFTY).toEqual([[1_000, 25_000], [2_000, 25_100]]);
+    expect(flow.strikes['NIFTY|24500|CE'].series).toEqual([[1_000, 100, 1_000, 50], [2_000, 110, 1_100, 60]]);
+    expect(flow.strikes['NIFTY|24500|CE'].ltp).toBe(110);
+  });
+
+  it('merges two underlyings into one payload with per-symbol spot', () => {
+    const bankFiles = files.map(file => ({ ...file, series: [{ s: 'BANKNIFTY', k: 'index', e: '2026-11-26', t: file.t, sp: 51_000, pc: 51_200, r: [[51_000, 1, 200, 190, 2_000, 1_900, 80]] }] }));
+    const flow = strikeFlowFromFiles([...files, ...bankFiles], ['NIFTY', 'BANKNIFTY']);
+    expect(flow.symbols).toEqual(['NIFTY', 'BANKNIFTY']);
+    expect(Object.keys(flow.spot).sort()).toEqual(['BANKNIFTY', 'NIFTY']);
+    expect(flow.spot.BANKNIFTY).toEqual([[1_000, 51_000], [2_000, 51_000], [3_000, 51_000]]);
+    expect(flow.spotPrevClose.BANKNIFTY).toBe(51_200);
+    expect(flow.strikes['BANKNIFTY|51000|PE']).toBeDefined();
+    expect(flow.strikes['NIFTY|24500|CE']).toBeDefined();
   });
 
   it('skips foreign underlyings and malformed rows without dying', () => {
     const noisy = [...files, { t: 4_000, date: '2026-11-13', series: [{ s: 'SONACOMS', k: 'stock', e: '2026-11-26', t: 4_000, sp: 919, r: [[920, 0, 5, 4, 10, 8, 1]] }] },
       minute(5_000, 25_200, [[24_500, 0, 'bad', 90, 1, 1, 1]])];
-    const flow = strikeFlowFromFiles(noisy, 'NIFTY');
-    expect(flow.strikes['24500|CE'].series).toHaveLength(3);
-    expect(flow.strikes['920|CE']).toBeUndefined();
+    const flow = strikeFlowFromFiles(noisy, ['NIFTY']);
+    expect(flow.strikes['NIFTY|24500|CE'].series).toHaveLength(3);
+    expect(flow.strikes['SONACOMS|920|CE']).toBeUndefined();
   });
 });
 

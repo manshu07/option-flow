@@ -3,11 +3,12 @@ import type { StrikeFlowPayload } from './feed';
 import { fetchStrikeFlow } from './feed';
 
 const payload: StrikeFlowPayload = {
+  symbols: ['NIFTY'],
   symbol: 'NIFTY',
   date: '2026-11-13',
-  expiry: null,
-  spotPrevClose: 24_900,
-  spot: [],
+  expiry: {},
+  spotPrevClose: { NIFTY: 24_900 },
+  spot: {},
   strikes: {},
   minuteCount: 0,
 };
@@ -49,7 +50,7 @@ describe('fetchStrikeFlow', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(500, { error: 'Internal error.' })));
     await expect(fetchStrikeFlow('NIFTY', { date: '2026-11-13' })).rejects.toThrow('Strike flow NIFTY: 500');
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, { symbol: 'NIFTY' })));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, { symbols: ['NIFTY'], symbol: 'NIFTY' })));
     await expect(fetchStrikeFlow('NIFTY', { date: '2026-11-13' })).resolves.toBeNull();
   });
 });

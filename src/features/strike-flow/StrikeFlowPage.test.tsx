@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Underlying } from '@/lib/underlyings';
@@ -6,10 +6,16 @@ import type { StrikeFlowContract, StrikeFlowPayload, StrikeSeriesPoint, StrikeSi
 
 const feed = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock('./feed', () => ({ fetchStrikeFlow: feed.fetch }));
+vi.mock('../market-flow/FlowDiagram', () => ({
+  FlowDiagram: ({ flow }: { flow: { stocks: Array<{ symbol: string }> } }) => (
+    <div data-testid="flow-diagram">{flow.stocks.map(stock => <span key={stock.symbol}>{stock.symbol}</span>)}</div>
+  ),
+}));
 vi.mock('@/hooks/useMediaQuery', () => ({ useMediaQuery: () => false }));
 vi.mock('@/lib/marketSession', () => ({
   getLatestTradingSessionDate: () => '2026-11-13',
   marketSessionBounds: () => ({ open: Date.parse('2026-11-13T03:45:00Z'), close: Date.parse('2026-11-13T10:10:00Z') }),
+  isExpirySettled: () => false,
 }));
 
 import { StrikeFlowPage } from './StrikeFlowPage';
@@ -21,6 +27,7 @@ function contract(strike: number, side: StrikeSide, prices: number[], oi: number
   const series: StrikeSeriesPoint[] = prices.map((ltp, index) => [BASE + index * MINUTE, ltp, oi[index], 10 + index]);
   const last = series.at(-1);
   return {
+    symbol: 'NIFTY',
     strike,
     side,
     expiry: '2026-11-19',
@@ -34,18 +41,23 @@ function contract(strike: number, side: StrikeSide, prices: number[], oi: number
   };
 }
 
-const fixture: StrikeFlowPayload = {
-  symbol: 'NIFTY',
-  date: '2026-11-13',
-  expiry: '2026-11-19',
-  spotPrevClose: 24_900,
-  spot: [[BASE, 25_000], [BASE + MINUTE, 25_010], [BASE + 2 * MINUTE, 25_020]],
-  strikes: {
-    '25150|CE': contract(25_150, 'CE', [100, 110, 112], [1_000, 1_100, 1_200]),
-    '25000|PE': contract(25_000, 'PE', [100, 95, 90], [1_000, 1_050, 1_100]),
-  },
-  minuteCount: 3,
-};
+function payload(strikes: StrikeFlowContract[]): StrikeFlowPayload {
+  return {
+    symbols: ['NIFTY'],
+    symbol: 'NIFTY',
+    date: '2026-11-13',
+    expiry: { NIFTY: '2026-11-19' },
+    spotPrevClose: { NIFTY: 24_900 },
+    spot: { NIFTY: [[BASE, 25_000], [BASE + MINUTE, 25_010], [BASE + 2 * MINUTE, 25_020]] },
+    strikes: Object.fromEntries(strikes.map(item => [`${item.symbol}|${item.strike}|${item.side}`, item])),
+    minuteCount: 3,
+  };
+}
+
+const fixture = payload([
+  contract(25_150, 'CE', [100, 110, 112], [1_000, 1_100, 1_200]),
+  contract(25_000, 'PE', [100, 95, 90], [1_000, 1_050, 1_100]),
+]);
 
 const universe = [
   { symbol: 'NIFTY', name: 'Nifty 50', apiKey: 'NSE:NIFTY50', lot: 65, kind: 'index', exch: 'NSE' },
@@ -62,55 +74,60 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe('StrikeFlowPage', () => {
-  it('loads the latest trading date, ranks visible contracts, and filters by option side', async () => {
+describe('StrikeFlowPage (Option Board)', () => {
+  it('fetches all three indices by default and hands the contracts to Order Flow\'s diagram', async () => {
     page();
 
-    await waitFor(() => expect(screen.getByText('NIFTY 2515C')).toBeInTheDocument());
+    await waitFor(() => expect(feed.fetch).toHaveBeenCalledTimes(3));
     expect(feed.fetch).toHaveBeenCalledWith('NIFTY', expect.objectContaining({ date: '2026-11-13' }));
-    expect(screen.getByText('NIFTY 2500PE')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('radio', { name: 'PE' }));
-
-    expect(screen.getByText('NIFTY 2500PE')).toBeInTheDocument();
-    expect(screen.queryByText('NIFTY 2515C')).not.toBeInTheDocument();
+    expect(feed.fetch).toHaveBeenCalledWith('BANKNIFTY', expect.anything());
+    expect(feed.fetch).toHaveBeenCalledWith('SENSEX', expect.anything());
+    const diagram = await screen.findByTestId('flow-diagram');
+    expect(diagram).toHaveTextContent('NIFTY25150CE');
+    expect(diagram).toHaveTextContent('NIFTY25000PE');
   });
 
-  it('renders strike cards, spot day change, TF candles, walls, and the detail popup', async () => {
+  it('fetches a single chain for a single-index scope', async () => {
     page();
 
-    const details = (await screen.findAllByRole('button', { name: /Open details for NIFTY/ }))[0];
-    expect(screen.getAllByText(/\+0\.48%/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('SUPPORT').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('RESISTANCE').length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByTestId('flow-diagram')).toBeInTheDocument());
+    const before = feed.fetch.mock.calls.length;
+    fireEvent.click(screen.getByRole('radio', { name: 'Nifty' }));
 
-    fireEvent.click(screen.getAllByRole('radio', { name: '30m' })[0]);
-    fireEvent.click(details);
+    await waitFor(() => expect(feed.fetch.mock.calls.length).toBeGreaterThan(before));
+    expect(feed.fetch).toHaveBeenLastCalledWith('NIFTY', expect.objectContaining({ date: '2026-11-13' }));
+  });
 
-    const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent('Underlying day move');
-    expect(dialog).toHaveTextContent('Premium window move');
-    expect(within(dialog).getByRole('img', { name: /Conviction:/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('radio', { name: '30m' }).some(option => option.getAttribute('aria-checked') === 'true')).toBe(true);
+  it('filters the board by mode: Momentum Flow shows both sides, Calls and Puts one', async () => {
+    page();
 
-    fireEvent.keyDown(window, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    const diagram = await screen.findByTestId('flow-diagram');
+    expect(diagram).toHaveTextContent('NIFTY25150CE');
+    expect(diagram).toHaveTextContent('NIFTY25000PE');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Calls (Top)' }));
+    expect(screen.getByTestId('flow-diagram')).toHaveTextContent('NIFTY25150CE');
+    expect(screen.queryByTestId('flow-diagram')).not.toHaveTextContent('NIFTY25000PE');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Put (Top)' }));
+    expect(screen.getByTestId('flow-diagram')).toHaveTextContent('NIFTY25000PE');
+    expect(screen.queryByTestId('flow-diagram')).not.toHaveTextContent('NIFTY25150CE');
   });
 
   it('shows an honest empty state and retries the archive read', async () => {
     feed.fetch.mockResolvedValue(null);
     page();
 
-    expect(await screen.findByRole('heading', { name: 'No captured chain for NIFTY on 2026-11-13' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'No captured chain for NIFTY + BANKNIFTY + SENSEX on 2026-11-13' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry archive' }));
-    await waitFor(() => expect(feed.fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(feed.fetch).toHaveBeenCalledTimes(6));
   });
 
   it('renders a request failure separately from an empty archive', async () => {
     feed.fetch.mockRejectedValue(new Error('transport failed'));
     page();
 
-    expect(await screen.findByRole('heading', { name: 'Strike chain could not be loaded' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Option chain could not be loaded' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 });

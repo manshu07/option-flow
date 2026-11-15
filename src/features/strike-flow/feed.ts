@@ -5,6 +5,7 @@ export type StrikeSpotPoint = readonly [at: number, spot: number];
 export type StrikeSeriesPoint = readonly [at: number, ltp: number, oi: number | null, volume: number | null];
 
 export interface StrikeFlowContract {
+  symbol: string;
   strike: number;
   side: StrikeSide;
   expiry: string | null;
@@ -18,11 +19,14 @@ export interface StrikeFlowContract {
 }
 
 export interface StrikeFlowPayload {
+  /** Every underlying the payload carries (one for a single chain, three for All 3 Indices). */
+  symbols: string[];
+  /** Back-compat alias for the first symbol. */
   symbol: string;
   date: string;
-  expiry: string | null;
-  spotPrevClose: number | null;
-  spot: StrikeSpotPoint[];
+  expiry: Record<string, string> | null;
+  spotPrevClose: Record<string, number | null>;
+  spot: Record<string, StrikeSpotPoint[]>;
   strikes: Record<string, StrikeFlowContract>;
   minuteCount: number;
 }
@@ -56,17 +60,26 @@ function isSeriesPoint(value: unknown): value is StrikeSeriesPoint {
 
 function isStrikeFlowContract(value: unknown): value is StrikeFlowContract {
   if (!isRecord(value)) return false;
-  return isFiniteNumber(value.strike) && value.strike > 0 && (value.side === 'CE' || value.side === 'PE') &&
+  return typeof value.symbol === 'string' && value.symbol.length > 0 && isFiniteNumber(value.strike) && value.strike > 0 &&
+    (value.side === 'CE' || value.side === 'PE') &&
     (value.expiry === null || typeof value.expiry === 'string') && isNullableNonNegative(value.prevClose) &&
     isNullableNonNegative(value.prevOi) && isNullableNonNegative(value.ltp) && isNullableNonNegative(value.oi) &&
     isNullableNonNegative(value.volume) && isNullableFinite(value.spotDistancePct) && Array.isArray(value.series) &&
     value.series.every(isSeriesPoint);
 }
 
+const isSpotMap = (value: unknown): value is Record<string, StrikeSpotPoint[]> =>
+  isRecord(value) && Object.values(value).every(points => Array.isArray(points) && points.every(isSpotPoint));
+
+const isPrevCloseMap = (value: unknown): value is Record<string, number | null> =>
+  isRecord(value) && Object.values(value).every(isNullableFinite);
+
 function parseStrikeFlowPayload(value: unknown): StrikeFlowPayload | null {
-  if (!isRecord(value) || typeof value.symbol !== 'string' || typeof value.date !== 'string' ||
-    !(value.expiry === null || typeof value.expiry === 'string') || !isNullableNonNegative(value.spotPrevClose) || !Number.isInteger(value.minuteCount) ||
-    (value.minuteCount as number) < 0 || !Array.isArray(value.spot) || !value.spot.every(isSpotPoint) || !isRecord(value.strikes)) {
+  if (!isRecord(value) || typeof value.symbol !== 'string' || !Array.isArray(value.symbols) ||
+    !value.symbols.every(symbol => typeof symbol === 'string') || typeof value.date !== 'string' ||
+    !(value.expiry === null || isRecord(value.expiry)) || !isPrevCloseMap(value.spotPrevClose) ||
+    !Number.isInteger(value.minuteCount) || (value.minuteCount as number) < 0 ||
+    !isSpotMap(value.spot) || !isRecord(value.strikes)) {
     return null;
   }
   if (!Object.values(value.strikes).every(isStrikeFlowContract)) return null;
