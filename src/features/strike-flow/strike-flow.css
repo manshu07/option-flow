@@ -1,0 +1,134 @@
+.app-flow-shell { min-width: 0; min-height: 0; }
+.app-flow-tabs {
+  position: sticky; top: 0; z-index: 52; display: flex; justify-content: center;
+  padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--bg);
+}
+.app-flow-tabs .ui-capsule { min-height: 36px; }
+.app-flow-panel { min-width: 0; min-height: 0; }
+
+.ui-strike-flow { gap: 8px; }
+.ui-strike-flow[data-fit='true'] { height: var(--ui-page-fit-h); min-height: 0; overflow: hidden; }
+.ui-strike-flow .ui-strike-flow-pagebar::after { content: none; }
+.ui-strike-flow .strike-flow__brand { color: var(--text); }
+.ui-strike-flow .strike-flow__brand em { color: var(--brand-wine); }
+.ui-strike-flow .strike-flow__window { flex: none; }
+.ui-strike-flow .strike-flow__window .ui-capsule { min-height: 34px; }
+
+.strike-flow__controls {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0;
+  padding: 4px 12px 2px;
+}
+.strike-flow__symbol-group, .strike-flow__heading-group { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.strike-flow__symbol-group { flex: 1 1 auto; }
+.strike-flow__heading-group { flex: none; }
+.strike-flow__symbols { flex: none; }
+.strike-flow__stocks {
+  width: 148px; min-width: 112px; height: 36px; padding: 0 30px 0 12px; border: 1px solid var(--line-strong);
+  border-radius: 999px; color: var(--text); background: var(--surface-raised); font: 600 12px/1 var(--font-sans);
+}
+.strike-flow__stocks:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.strike-flow__expiry { color: var(--text-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.strike-flow__heading { margin: 0; color: var(--text); font: 650 14px/1.15 var(--font-sans); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.strike-flow__sides { flex: none; }
+
+.strike-flow__status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; min-height: 30px; padding: 0 14px; color: var(--text-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.strike-flow__status strong { color: var(--text); font-weight: 650; }
+.strike-flow__status .is-up { color: var(--flow-up-ink); }
+.strike-flow__status .is-down { color: var(--flow-down-ink); }
+.strike-flow__status .is-flat { color: var(--text-muted); }
+.strike-flow__status-time { margin-left: auto; }
+
+.strike-flow__distribution {
+  flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px;
+  margin: 0 8px; padding: 7px 12px 5px; border: 1px solid var(--flow-hair); border-radius: 9px; background: var(--surface-raised);
+}
+.strike-flow__distribution figcaption { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: 10.5px; }
+.strike-flow__distribution-title { color: var(--text); font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.strike-flow__distribution svg { display: block; width: 100%; min-width: 180px; height: 46px; overflow: visible; }
+.strike-flow__distribution-axis { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.strike-flow__distribution-zero { stroke: color-mix(in srgb, var(--text) 50%, transparent); stroke-width: 1.2; }
+.strike-flow__distribution-tick { fill: var(--text-muted); font: 10px var(--font-sans); font-variant-numeric: tabular-nums; }
+.strike-flow__distribution-dot.is-up { fill: var(--flow-up); }
+.strike-flow__distribution-dot.is-down { fill: var(--flow-down); }
+.strike-flow__distribution-dot.is-flat { fill: color-mix(in srgb, var(--text-muted) 62%, transparent); }
+.strike-flow__distribution-summary { display: flex; gap: 8px; align-items: center; color: var(--text-muted); font-size: 10.5px; white-space: nowrap; }
+.strike-flow__distribution-summary b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.strike-flow__diagram { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 300px; margin: 0 8px 8px; overflow: hidden; border: 1px solid var(--flow-hair); border-radius: 11px; background: var(--surface-raised); }
+.strike-flow__diagram-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.strike-diagram { display: block; width: 100%; min-width: 960px; height: auto; overflow: visible; }
+.strike-axis__up { stop-color: var(--flow-up-ink); stop-opacity: .72; }
+.strike-axis__mid { stop-color: var(--text-muted); stop-opacity: .22; }
+.strike-axis__down { stop-color: var(--flow-down-ink); stop-opacity: .72; }
+.strike-diagram__upper { fill: color-mix(in srgb, var(--flow-up) 4%, transparent); }
+.strike-diagram__lower { fill: color-mix(in srgb, var(--flow-down) 4%, transparent); }
+.strike-diagram__close { stroke: color-mix(in srgb, var(--text) 38%, transparent); stroke-width: 1; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+.strike-diagram__group { fill: var(--text-muted); font: 650 9px var(--font-sans); letter-spacing: .12em; }
+.strike-diagram__group--up { fill: var(--flow-up-ink); }
+.strike-diagram__group--down { fill: var(--flow-down-ink); }
+.strike-diagram__empty { fill: var(--text-muted); font: 12px var(--font-sans); }
+.strike-diagram__spot { fill: none; stroke-width: 1.5; stroke-dasharray: 5 4; opacity: .86; vector-effect: non-scaling-stroke; }
+.strike-diagram__spot.is-up { stroke: var(--flow-up-ink); }
+.strike-diagram__spot.is-down { stroke: var(--flow-down-ink); }
+.strike-diagram__spot.is-flat { stroke: var(--text-muted); }
+.strike-diagram__spot-label { fill: var(--text); stroke: var(--surface-raised); stroke-width: 3px; paint-order: stroke; font: 650 10.5px var(--font-sans); font-variant-numeric: tabular-nums; }
+.strike-tile__body { fill: color-mix(in srgb, var(--text) 2%, var(--surface-raised)); stroke: var(--flow-hair); stroke-width: 1; }
+.strike-tile.is-up .strike-tile__body { fill: color-mix(in srgb, var(--flow-up) calc(7% + var(--heat, 0) * 8%), var(--surface-raised)); stroke: color-mix(in srgb, var(--flow-up-ink) 30%, var(--flow-hair)); }
+.strike-tile.is-down .strike-tile__body { fill: color-mix(in srgb, var(--flow-down) calc(7% + var(--heat, 0) * 8%), var(--surface-raised)); stroke: color-mix(in srgb, var(--flow-down-ink) 30%, var(--flow-hair)); }
+.strike-tile.is-flat .strike-tile__body { fill: color-mix(in srgb, var(--text-muted) 5%, var(--surface-raised)); }
+.strike-tile__name { fill: var(--text); font: 650 9.5px var(--font-sans); }
+.strike-tile__pct { fill: var(--text); font: 700 9.5px var(--font-sans); font-variant-numeric: tabular-nums; }
+.strike-tile.is-up .strike-tile__pct { fill: var(--flow-up-ink); }
+.strike-tile.is-down .strike-tile__pct { fill: var(--flow-down-ink); }
+.strike-tile__bu { fill: var(--text-muted); font: 550 8px var(--font-sans); }
+.strike-tile__note { fill: var(--text-muted); font: 550 7px var(--font-sans); }
+.strike-tile__spark { fill: none; stroke: var(--text-muted); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.strike-tile.is-up .strike-tile__spark { stroke: var(--flow-up-ink); }
+.strike-tile.is-down .strike-tile__spark { stroke: var(--flow-down-ink); }
+
+.strike-flow__spot-key { flex: none; display: flex; align-items: center; gap: 8px; min-height: 31px; padding: 0 14px; color: var(--text); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.strike-flow__spot-key small { color: var(--text-muted); font-size: 10px; }
+.strike-flow__spot-change { font-size: 11px; font-weight: 650; }
+.strike-flow__spot-swatch { width: 21px; height: 0; border-top: 1.5px dashed var(--text); }
+.strike-flow__close-key { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--text-muted); }
+.strike-flow__close-key i { width: 12px; height: 0; border-top: 1px dashed var(--text-muted); }
+.strike-flow__unmeasured { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 5px 14px 8px; color: var(--text-muted); font-size: 10.5px; }
+.strike-flow__unmeasured-title { color: var(--text); font-weight: 650; }
+.strike-flow__unmeasured-item { padding: 3px 7px; border: 1px dashed var(--flow-hair); border-radius: 5px; font-variant-numeric: tabular-nums; }
+
+.strike-flow__empty { display: grid; place-items: center; flex: 1 1 auto; min-height: 220px; margin: 0 8px 8px; padding: 24px; border: 1px solid var(--flow-hair); border-radius: 11px; background: var(--surface-raised); text-align: center; }
+.strike-flow__empty h2 { margin: 0 0 6px; color: var(--text); font: 650 15px/1.3 var(--font-sans); }
+.strike-flow__empty p { max-width: 42rem; margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.strike-flow__empty button { margin-top: 14px; }
+.strike-flow__error { color: var(--flow-down-ink); }
+
+@media (max-width: 920px) {
+  .strike-flow__controls { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .strike-flow__symbol-group { width: 100%; flex-wrap: wrap; }
+  .strike-flow__heading-group { width: 100%; justify-content: space-between; }
+  .strike-flow__status-time { margin-left: 0; }
+  .ui-strike-flow[data-fit='true'] { height: auto; min-height: 0; overflow: visible; }
+  .strike-flow__diagram { flex: none; min-height: 500px; overflow: visible; }
+  .strike-flow__diagram-scroll { overflow: auto; }
+  .strike-diagram { min-width: 980px; }
+}
+
+@media (max-width: 560px) {
+  .app-flow-tabs { justify-content: flex-start; padding: 4px 8px; }
+  .app-flow-tabs .ui-capsule { width: 100%; }
+  .app-flow-tabs .ui-capsule__option { flex: 1 1 0; }
+  .strike-flow__controls { padding-inline: 8px; }
+  .strike-flow__symbol-group { gap: 7px; }
+  .strike-flow__stocks { width: 124px; }
+  .strike-flow__heading-group { align-items: flex-start; flex-direction: column; }
+  .strike-flow__status { padding-inline: 10px; }
+  .strike-flow__distribution { margin-inline: 5px; padding-inline: 8px; }
+  .strike-flow__distribution-summary { display: none; }
+  .strike-flow__diagram { margin-inline: 5px; }
+  .strike-flow__spot-key { flex-wrap: wrap; padding-inline: 10px; }
+  .strike-flow__close-key { margin-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-flow-tabs *, .strike-flow__diagram * { scroll-behavior: auto; animation: none !important; transition: none !important; }
+}

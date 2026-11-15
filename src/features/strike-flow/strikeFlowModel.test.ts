@@ -50,6 +50,8 @@ describe('strikeReadings', () => {
 
     expect(reading.premiumChange).toBe(5);
     expect(reading.premiumChangePct).toBe(5);
+    expect(reading.premiumBaselineLtp).toBe(100);
+    expect(reading.premiumBaselineAt).toBeNull();
     expect(reading.oiChange).toBe(120);
     expect(reading.oiChangePct).toBe(12);
     expect(reading.direction).toBe('up');
@@ -98,6 +100,7 @@ describe('strikeReadings', () => {
     const reading = strikeReadings(flow(item), window satisfies StrikeFlowWindow)[0];
 
     expect(reading.premiumChangePct).toBeCloseTo(0.6);
+    expect(reading.premiumBaselineAt).toBe(BASE_AT + MINUTE);
     expect(reading.oiChangePct).toBeCloseTo(1.5);
     expect(reading.buildUp).toBe(buildUp);
   });

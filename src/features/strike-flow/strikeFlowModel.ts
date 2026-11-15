@@ -16,6 +16,8 @@ export interface StrikeReading {
   ltp: number | null;
   premiumChange: number | null;
   premiumChangePct: number | null;
+  premiumBaselineLtp: number | null;
+  premiumBaselineAt: number | null;
   oi: number | null;
   oiChange: number | null;
   oiChangePct: number | null;
@@ -114,6 +116,8 @@ function readingFor(flow: StrikeFlowPayload, contract: StrikeFlowContract, windo
     ltp,
     premiumChange,
     premiumChangePct,
+    premiumBaselineLtp: baseline?.ltp ?? null,
+    premiumBaselineAt: baseline?.at ?? null,
     oi,
     oiChange,
     oiChangePct,
