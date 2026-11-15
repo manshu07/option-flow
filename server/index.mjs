@@ -112,15 +112,21 @@ async function build() {
   const clock = now();
   const session = getLatestTradingSessionDate(new Date(clock));
   // Post-close fast path: the market is shut and nothing is moving — serve the
-  // session's last captured snapshot (the real closing state) instead of crawling
-  // 215 chains through the paced REST fallback. A fresh session day starts empty.
+  // session's last built snapshot (the real closing state, written by every
+  // successful build) instead of crawling 215 chains through the paced REST
+  // fallback. A fresh session day starts empty and builds live.
   if (!provider.alwaysLive && !isMarketSessionTime(clock)) {
-    const stored = lastStoredMinuteFile(session);
+    let stored = null;
+    try {
+      const json = fs.readFileSync(path.join(SCAN_DIR, 'latest.json'), 'utf8');
+      const file = JSON.parse(json);
+      if (file?.date === session && Array.isArray(file.series) && file.series.length) {
+        stored = { file, json, at: file.t, count: file.series.length };
+      }
+    } catch { /* unreadable → fall through to the live crawl */ }
     if (stored) {
       state.latest = stored.file;
       state.latestJson = stored.json;
-      fs.mkdirSync(SCAN_DIR, { recursive: true });
-      fs.writeFileSync(path.join(SCAN_DIR, 'latest.json'), state.latestJson);
       state.lastBuild = { at: stored.at, ms: Date.now() - started, series: stored.count, failed: 0, failedSymbols: [], firstError: null };
       state.lastError = null;
       log(`market file: ${stored.count} series (stored session snapshot — market closed), 0 failed, ${Date.now() - started} ms`);

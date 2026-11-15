@@ -9,3 +9,6 @@ server/data
 *.tsbuildinfo
 data/archive/.cache
 data/.dhan-master.csv
+
+# Kilo Code local metadata
+.kilo/
