@@ -124,7 +124,7 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
   const noChain = !loading && !failed && !hasChain;
 
   const bar = (
-    <div className="strike-flow__bar">
+    <>
       {tabs}
       <CapsuleSegmented options={SUB_TABS} value={subTab} onChange={setSubTab} ariaLabel="Option Board views" groupId="option-views" size="page" />
       <CapsuleSegmented options={SCOPES} value={scope} onChange={setScope} ariaLabel="Option Board scope" groupId="option-scope" size="page" className="strike-flow__symbols" />
@@ -140,13 +140,13 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
       <CapsuleSegmented options={MODES} value={side} onChange={setSide} ariaLabel="Option Board mode" groupId="option-mode" size="page" className="strike-flow__sides" />
       <button className="ui-flow-replay" type="button" aria-disabled="true" title="Replay is coming to Option Board soon">Replay</button>
       <ThemeToggle onChange={theme => applyTheme(theme)} size="md" className="ui-flow-theme" />
-    </div>
+    </>
   );
 
   return (
     <div className="ui-flow oi-design ui-strike-flow" data-window={window} data-layout={phone ? 'phone' : fits ? 'desktop' : 'tablet'} data-fit={fits ? 'true' : undefined} ref={pageRef}>
       <h1 className="is-visually-hidden">Option Board · Momentum Flow</h1>
-      <PageBar current="Option Board" crumbs={false} className="oi-design ui-flow-pagebar ui-strike-flow-pagebar">{bar}</PageBar>
+      <PageBar current="Option Board" crumbs={false} className="oi-design ui-flow-pagebar">{bar}</PageBar>
 
       {subTab === 'contracts-screener' ? (
         <section className="strike-flow__empty" role="status">
