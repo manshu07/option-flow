@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { StrikeFlowPayload } from './feed';
+import type { StrikeFlowContract, StrikeFlowPayload, StrikeSeriesPoint } from './feed';
 import { fetchStrikeFlow } from './feed';
 
 const payload: StrikeFlowPayload = {
   symbols: ['NIFTY'],
   symbol: 'NIFTY',
   date: '2026-11-13',
-  expiry: {},
+  expiry: { NIFTY: null },
   spotPrevClose: { NIFTY: 24_900 },
-  spot: {},
+  spot: { NIFTY: [] },
   strikes: {},
   minuteCount: 0,
 };
@@ -52,5 +52,25 @@ describe('fetchStrikeFlow', () => {
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, { symbols: ['NIFTY'], symbol: 'NIFTY' })));
     await expect(fetchStrikeFlow('NIFTY', { date: '2026-11-13' })).resolves.toBeNull();
+  });
+
+  it('keeps valid contracts when one strike row is malformed', async () => {
+    const series: StrikeSeriesPoint[] = [[1_794_543_900_000, 100, 1_000, 10], [1_794_543_960_000, 105, 1_100, 20]];
+    const valid: StrikeFlowContract = {
+      symbol: 'NIFTY', strike: 25_150, side: 'CE', expiry: '2026-11-19', prevClose: 100, prevOi: 900,
+      ltp: 105, oi: 1_100, volume: 20, spotDistancePct: 0.4, series,
+    };
+    const malformed = { ...valid, strike: Number.NaN, series: [[1_794_543_900_000, 'bad', null, null]] };
+    const fetchMock = vi.fn().mockResolvedValue(response(200, {
+      ...payload,
+      expiry: { NIFTY: '2026-11-19' },
+      spot: { NIFTY: [[1_794_543_900_000, 25_000]] },
+      strikes: { 'NIFTY|25150|CE': valid, 'NIFTY|bad|PE': malformed },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchStrikeFlow('NIFTY', { date: '2026-11-13' });
+
+    expect(result?.strikes).toEqual({ 'NIFTY|25150|CE': valid });
   });
 });

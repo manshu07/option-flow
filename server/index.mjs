@@ -338,48 +338,158 @@ export function truncateStrikeFlow(payload, cursor) {
   };
 }
 
-const strikeFlowCache = new Map();
-const STRIKE_FLOW_CACHE_LIMIT = 20;
+/**
+ * Per-symbol incremental extraction. Entry: what one symbol has consumed so
+ * far this session — appending only the minutes it has not seen makes every
+ * scope switch instant, live included (a fresh minute costs one small parse,
+ * never a re-read of the day).
+ */
+function extendSymbolEntry(entry, file) {
+  const symbol = entry.symbol;
+  const series = (file.series ?? []).find(item => item?.s === symbol);
+  if (!series || !Array.isArray(series.r)) return;
+  if (Number.isFinite(series.sp) && series.sp > 0) entry.spot.push([file.t, series.sp]);
+  if (!entry.expiry && typeof series.e === 'string') entry.expiry = series.e;
+  if (entry.spotPrevClose == null && Number.isFinite(series.pc) && series.pc > 0) entry.spotPrevClose = series.pc;
+  for (const row of series.r) {
+    if (!Array.isArray(row) || row.length < 7) continue;
+    // Row order is parseRow's contract: strike, side, ltp, prevClose, oi, prevOi, volume.
+    const [strike, side, ltp, prevClose, oi, prevOi, volume] = row;
+    if (!Number.isFinite(strike) || (side !== 0 && side !== 1) || !Number.isFinite(ltp)) continue;
+    const sideCode = side === 0 ? 'CE' : 'PE';
+    const key = `${symbol}|${strike}|${sideCode}`;
+    const held = entry.strikes.get(key) ?? { symbol, strike, side: sideCode, series: [], prevClose: null, prevOi: null };
+    held.series.push([file.t, ltp, Number.isFinite(oi) ? oi : null, Number.isFinite(volume) ? volume : null]);
+    if (held.prevClose == null && Number.isFinite(prevClose) && prevClose > 0) held.prevClose = prevClose;
+    if (held.prevOi == null && Number.isFinite(prevOi) && prevOi >= 0) held.prevOi = prevOi;
+    entry.strikes.set(key, held);
+  }
+  entry.minuteCount += 1;
+}
+
+/** Assemble the response payload from an entry: window filter + ATM cap per symbol. */
+function assembleSymbolEntry(entry, { windowPct = 0.05, cap = 64 } = {}) {
+  const lastSpot = entry.spot.at(-1)?.[1] ?? null;
+  let kept = [...entry.strikes.values()];
+  if (lastSpot) {
+    kept = kept.filter(item => Math.abs(item.strike - lastSpot) / lastSpot <= windowPct);
+    kept.sort((a, b) => Math.abs(a.strike - lastSpot) - Math.abs(b.strike - lastSpot));
+    kept = kept.slice(0, cap);
+  }
+  const out = {};
+  for (const item of kept) {
+    const last = item.series.at(-1);
+    out[`${item.symbol}|${item.strike}|${item.side}`] = {
+      symbol: item.symbol, strike: item.strike, side: item.side,
+      expiry: entry.expiry ?? null,
+      prevClose: item.prevClose, prevOi: item.prevOi,
+      ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null,
+      spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null,
+      series: item.series,
+    };
+  }
+  return out;
+}
+
+const symbolFlowCache = new Map();
+const SYMBOL_FLOW_CACHE_LIMIT = 40;
+/** Parsed archive sessions, one at a time: a closed day is read once per burst, not per minute. */
+const archiveSessionCache = new Map();
 
 /**
- * One or more underlyings' strike flow for a session: minutes come from the
- * live dir, falling back to one archive read for closed sessions. Full-day
- * aggregates are cached (invalidated when the minute count moves); `cursor`
- * (epoch ms) truncates to an as-of instant without re-reading anything.
+ * One symbol's incremental entry for a session. Live minutes are consumed as
+ * they arrive (each new minute is one small parse); a closed day comes from
+ * one archive session read. `cursor` truncates the assembled payload to an
+ * as-of instant without re-reading anything.
+ */
+async function loadSymbolEntry(date, symbol, minutes) {
+  const key = `${date}|${symbol}`;
+  let entry = symbolFlowCache.get(key) ?? null;
+  const consumed = entry ? entry.minuteCount : 0;
+  let total = minutes.length;
+  let session = null;
+  if (total === 0) {
+    // Closed and archived: the raw day dir is pruned, so the source is one
+    // archive session read (kept for the burst, then dropped).
+    session = archiveSessionCache.get(date) ?? null;
+    if (!session) {
+      try { session = await archive.readSession(date); }
+      catch (error) {
+        if (error?.code !== 'ARCHIVE_MISSING') throw error;
+        return null;
+      }
+      archiveSessionCache.set(date, session);
+      if (archiveSessionCache.size > 2) archiveSessionCache.delete(archiveSessionCache.keys().next().value);
+    }
+    total = session.minutesIndex.length;
+  }
+  if (entry && consumed >= total) return entry;
+  if (!entry) {
+    entry = { symbol, date, minuteCount: 0, spot: [], spotPrevClose: null, expiry: null, strikes: new Map() };
+    symbolFlowCache.set(key, entry);
+    if (symbolFlowCache.size > SYMBOL_FLOW_CACHE_LIMIT) symbolFlowCache.delete(symbolFlowCache.keys().next().value);
+  }
+  for (let index = consumed; index < total; index++) {
+    let file = null;
+    if (session) {
+      const [hhmm] = session.minutesIndex[index];
+      const json = session.minutes[hhmm];
+      if (json == null) continue;
+      try { file = typeof json === 'string' ? JSON.parse(json) : json; }
+      catch { continue; }
+    } else {
+      const [hhmm] = minutes[index];
+      try { file = JSON.parse(fs.readFileSync(path.join(SCAN_DIR, date, `${hhmm}.json`), 'utf8')); }
+      catch { continue; }
+    }
+    if (file) extendSymbolEntry(entry, file);
+  }
+  entry.minuteCount = total;
+  return entry;
+}
+
+/**
+ * One or more underlyings' strike flow for a session, assembled from
+ * per-symbol incremental entries. Repeat scopes are instant; live minutes
+ * append incrementally; `cursor` truncates to an as-of instant.
  */
 async function strikeFlowFor(symbols, date, cursor = null) {
-  const cacheKey = `${date}|${symbols.join('+')}`;
   const minutes = readMinutes(date);
-  let payload = strikeFlowCache.get(cacheKey);
-  if (!payload || payload.minuteCount !== minutes.length) {
-    const files = [];
-    if (minutes.length) {
-      for (const [hhmm] of minutes) {
-        try { files.push(JSON.parse(fs.readFileSync(path.join(SCAN_DIR, date, `${hhmm}.json`), 'utf8'))); }
-        catch { /* a corrupt or vanished minute is skipped, not fatal */ }
-      }
-    } else {
-      // Closed and archived: the raw day dir is pruned, so the whole session
-      // comes from one archive read — never one read per minute.
-      try {
-        const session = await archive.readSession(date);
-        for (const [hhmm] of session.minutesIndex) {
-          const json = session.minutes[hhmm];
-          if (json == null) continue;
-          try { files.push(typeof json === 'string' ? JSON.parse(json) : json); }
-          catch { /* a corrupt minute is skipped, not fatal */ }
-        }
-      } catch (error) {
-        if (error?.code !== 'ARCHIVE_MISSING') throw error;
-      }
+  const strikes = {};
+  const spot = {};
+  const spotPrevClose = {};
+  const expiry = {};
+  let minuteCount = Infinity;
+  let any = false;
+  for (const symbol of symbols) {
+    const entry = await loadSymbolEntry(date, symbol, minutes);
+    if (!entry || entry.strikes.size === 0) continue;
+    any = true;
+    const lastSpot = entry.spot.at(-1)?.[1] ?? null;
+    let kept = [...entry.strikes.values()];
+    if (lastSpot) {
+      kept = kept.filter(item => Math.abs(item.strike - lastSpot) / lastSpot <= 0.05);
+      kept.sort((a, b) => Math.abs(a.strike - lastSpot) - Math.abs(b.strike - lastSpot));
+      kept = kept.slice(0, 64);
     }
-    if (!files.length) return null;
-    payload = strikeFlowFromFiles(files, symbols);
-    payload.date = date;
-    payload.minuteCount = files.length;
-    strikeFlowCache.set(cacheKey, payload);
-    if (strikeFlowCache.size > STRIKE_FLOW_CACHE_LIMIT) strikeFlowCache.delete(strikeFlowCache.keys().next().value);
+    for (const item of kept) {
+      const last = item.series.at(-1);
+      strikes[`${item.symbol}|${item.strike}|${item.side}`] = {
+        symbol: item.symbol, strike: item.strike, side: item.side,
+        expiry: entry.expiry ?? null,
+        prevClose: item.prevClose, prevOi: item.prevOi,
+        ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null,
+        spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null,
+        series: item.series,
+      };
+    }
+    spot[symbol] = entry.spot;
+    spotPrevClose[symbol] = entry.spotPrevClose;
+    if (entry.expiry) expiry[symbol] = entry.expiry;
+    minuteCount = Math.min(minuteCount, entry.minuteCount);
   }
+  if (!any) return null;
+  const payload = { symbols, symbol: symbols[0], date, expiry, spot, spotPrevClose, strikes, minuteCount: minuteCount === Infinity ? 0 : minuteCount };
   return cursor ? truncateStrikeFlow(payload, cursor) : payload;
 }
 

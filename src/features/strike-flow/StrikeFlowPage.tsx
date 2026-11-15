@@ -9,7 +9,7 @@ import { applyTheme } from '@/lib/applyTheme';
 import { getLatestTradingSessionDate } from '@/lib/marketSession';
 import type { Underlying } from '@/lib/underlyings';
 import { clockOf, type FlowWindow } from '../market-flow/marketFlowModel';
-import { fetchStrikeFlow, type StrikeFlowPayload } from './feed';
+import { fetchStrikeFlows, type StrikeFlowPayload } from './feed';
 import { optionBoardFlow } from './optionBoardFlow';
 import '@/styles/oi-design-tokens.css';
 import '../market-flow/market-flow.css';
@@ -38,12 +38,7 @@ const MODES: CapsuleOption<'all' | 'CE' | 'PE'>[] = [
   { value: 'PE', label: 'Put (Top)' },
 ];
 
-function symbolsFor(scope: string, universe: Underlying[]): string[] {
-  if (scope === 'all-indices') return [...INDEX_SYMBOLS];
-  return [scope].filter(symbol => symbol === 'NIFTY' || symbol === 'BANKNIFTY' || symbol === 'SENSEX' || universe.some(item => item.symbol === symbol));
-}
-
-function StatusLine({ board }: { board: ReturnType<typeof optionBoardFlow> }) {
+function StatusLine({ board, unavailableSymbols = [] }: { board: ReturnType<typeof optionBoardFlow>; unavailableSymbols?: string[] }) {
   if (!board) return <div className="strike-flow__status mf-status" role="status">Reading the captured chain…</div>;
   const up = board.bullish.length;
   const down = board.bearish.length;
@@ -52,6 +47,7 @@ function StatusLine({ board }: { board: ReturnType<typeof optionBoardFlow> }) {
   return (
     <div className="strike-flow__status mf-status" role="status" aria-live="polite">
       <span><b className="is-up">{up} up</b> · <b className="is-flat">{flat} flat</b> · <b className="is-down">{down} down</b> of {board.stocks.length}</span>
+      {unavailableSymbols.length > 0 && <span className="strike-flow__partial">Partial chain · unavailable: {unavailableSymbols.join(', ')}</span>}
       <span className="strike-flow__status-time">As of {board.date} {clockOf(board.asOf)} · spot to {spotAt == null ? '—' : clockOf(spotAt)}</span>
     </div>
   );
@@ -73,32 +69,41 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
   const [date] = useState(() => getLatestTradingSessionDate());
   const stocks = universe.filter(item => item.kind === 'stock').slice().sort((a, b) => a.symbol.localeCompare(b.symbol));
   const [payloads, setPayloads] = useState<StrikeFlowPayload[] | null>(null);
+  const [unavailableSymbols, setUnavailableSymbols] = useState<string[]>([]);
+  const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
+  const forceNextFetch = useRef(false);
 
   // Stable identity: a fresh array here would re-trigger the fetch loop every render.
   const activeStock = stock || stocks[0]?.symbol || '';
+  const stockScope = scope === 'fno-stocks' ? activeStock : '';
   const symbols = useMemo(() => {
     if (scope === 'all-indices') return [...INDEX_SYMBOLS];
-    if (scope === 'fno-stocks') return activeStock ? [activeStock] : [];
-    return symbolsFor(scope, universe);
-  }, [scope, activeStock, universe]);
+    if (scope === 'fno-stocks') return stockScope ? [stockScope] : [];
+    return [scope];
+  }, [scope, stockScope]);
   useFitScrollerHeight(pageRef, fits);
 
   useEffect(() => {
     const controller = new AbortController();
+    const force = forceNextFetch.current;
+    forceNextFetch.current = false;
     setPayloads(null);
+    setUnavailableSymbols([]);
+    setFailedSymbols([]);
     setLoading(true);
     setFailed(false);
-    Promise.all(symbols.map(symbol => fetchStrikeFlow(symbol, { date, signal: controller.signal }).then(result => result ?? { ...({} as StrikeFlowPayload), strikes: {} })))
-      .then(results => {
+    void fetchStrikeFlows(symbols, { date, signal: controller.signal, force }).then(result => {
         if (controller.signal.aborted) return;
-        const kept = results.filter(result => Object.keys(result.strikes ?? {}).length > 0);
+        const kept = result.payloads.filter(payload => Object.keys(payload.strikes).length > 0);
         setPayloads(kept);
+        setUnavailableSymbols(result.unavailableSymbols);
+        setFailedSymbols(result.failedSymbols);
+        setFailed(kept.length === 0 && result.failedSymbols.length > 0);
         setLoading(false);
-      })
-      .catch(() => {
+      }).catch(() => {
         if (controller.signal.aborted) return;
         setFailed(true);
         setLoading(false);
@@ -157,13 +162,13 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
         </section>
       ) : failed ? (
         <section className="strike-flow__empty" role="alert">
-          <div><h2>Option chain could not be loaded</h2><p>The request failed. No premium or open-interest values are being shown.</p><button className="ui-flow-replay" type="button" onClick={() => setRetry(value => value + 1)}>Retry</button></div>
+          <div><h2>Option chain could not be loaded</h2><p>The request failed. No premium or open-interest values are being shown.</p>{failedSymbols.length > 0 && <p>Failed: {failedSymbols.join(', ')}</p>}<button className="ui-flow-replay" type="button" onClick={() => setRetry(value => value + 1)}>Retry</button></div>
         </section>
       ) : loading ? (
         <section className="strike-flow__empty" role="status"><div><h2>Reading the captured chain</h2><p>{symbols.join(' + ')} · {date}</p></div></section>
       ) : noChain ? (
         <section className="strike-flow__empty" role="status">
-          <div><h2>No captured chain for {symbols.join(' + ')} on {date}</h2><p>No chain is available yet, or the archive could not be read. Retry to check the local archive again.</p><button className="ui-flow-replay" type="button" onClick={() => setRetry(value => value + 1)}>Retry archive</button></div>
+          <div><h2>No captured chain for {symbols.join(' + ')} on {date}</h2><p>No chain is available yet, or the archive could not be read. Retry to check the local archive again.</p>{unavailableSymbols.length > 0 && <p>Awaiting capture: {unavailableSymbols.join(', ')}</p>}<button className="ui-flow-replay" type="button" onClick={() => setRetry(value => value + 1)}>Retry archive</button></div>
         </section>
       ) : viewed ? (
         <FlowBoard flow={viewed} settings={{ named: null, lines: 'all' }} layout={layout}

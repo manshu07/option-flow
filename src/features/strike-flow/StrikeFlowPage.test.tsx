@@ -6,7 +6,12 @@ import type { Underlying } from '@/lib/underlyings';
 import type { StrikeFlowContract, StrikeFlowPayload, StrikeSeriesPoint, StrikeSide } from './feed';
 
 const feed = vi.hoisted(() => ({ fetch: vi.fn() }));
-vi.mock('./feed', () => ({ fetchStrikeFlow: feed.fetch }));
+vi.mock('./feed', () => ({
+  fetchStrikeFlow: feed.fetch,
+  fetchStrikeFlows: (symbols: string[], options: { date: string }) =>
+    Promise.all(symbols.map(symbol => feed.fetch(symbol, options).then((payload: StrikeFlowPayload | null) => payload ?? { symbols: [symbol], symbol, date: options.date, expiry: {}, spotPrevClose: {}, spot: {}, strikes: {}, minuteCount: 0 })))
+      .then(payloads => ({ payloads, unavailableSymbols: [], failedSymbols: [] })),
+}));
 vi.mock('../market-flow/FlowBoard', () => ({
   FlowBoard: ({ flow, status }: { flow: { stocks: Array<{ symbol: string }> }; status?: ReactNode }) => (
     <div data-testid="flow-board">{status}{flow.stocks.map(stock => <span key={stock.symbol}>{stock.symbol}</span>)}</div>
