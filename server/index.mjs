@@ -65,6 +65,7 @@ const provider = createProvider(universe, flagged);
 const now = () => (provider.now ? provider.now() : Date.now());
 const SCAN_DIR = path.join(DATA_DIR, provider.id);
 const ARCHIVE_ROOT = path.join(DATA_DIR, 'archives');
+const BOOTED_AT = Date.now();
 
 // ── Collector ─────────────────────────────────────────────────────────────
 
@@ -116,14 +117,7 @@ async function build() {
   // successful build) instead of crawling 215 chains through the paced REST
   // fallback. A fresh session day starts empty and builds live.
   if (!provider.alwaysLive && !isMarketSessionTime(clock)) {
-    let stored = null;
-    try {
-      const json = fs.readFileSync(path.join(SCAN_DIR, 'latest.json'), 'utf8');
-      const file = JSON.parse(json);
-      if (file?.date === session && Array.isArray(file.series) && file.series.length) {
-        stored = { file, json, at: file.t, count: file.series.length };
-      }
-    } catch { /* unreadable → fall through to the live crawl */ }
+    const stored = storedSessionSnapshot(SCAN_DIR, session);
     if (stored) {
       state.latest = stored.file;
       state.latestJson = stored.json;
@@ -209,6 +203,54 @@ export async function loadFuturesWithArchiveLock(lock, load, persist, logger = (
     catch (error) { logger(error); }
   }
   return result;
+}
+
+/**
+ * The stored session snapshot behind the post-close fast path: SCAN_DIR's
+ * latest.json, only when it IS the active session's and holds series. A file
+ * from an earlier session returns null so a fresh day still builds live.
+ */
+export function storedSessionSnapshot(dir, session) {
+  try {
+    const json = fs.readFileSync(path.join(dir, 'latest.json'), 'utf8');
+    const file = JSON.parse(json);
+    if (file?.date === session && Array.isArray(file.series) && file.series.length) {
+      return { file, json, at: file.t, count: file.series.length };
+    }
+  } catch { /* unreadable → the caller falls through to the live crawl */ }
+  return null;
+}
+
+/**
+ * The /api/health payload: what an outside monitor needs, built from state
+ * alone — it never calls the provider chain. A provider without a health
+ * surface (demo, recorded) reports no rejection and no known feed problem.
+ */
+export function healthPayload(provider, state, capture, now = Date.now(), bootedAt = BOOTED_AT) {
+  let feed = { healthy: true, packets: null, lastPacketAt: null, connections: null };
+  let tokenState = 'ok';
+  try {
+    const health = typeof provider?.health === 'function' ? provider.health() : null;
+    if (health) {
+      feed = {
+        healthy: Boolean(health.healthy),
+        packets: Number.isFinite(health.packets) ? health.packets : null,
+        lastPacketAt: Number.isFinite(health.lastPacketAt) ? health.lastPacketAt : null,
+        connections: health.connections ?? null,
+      };
+      if (health.flowing !== undefined) feed.flowing = Boolean(health.flowing);
+      tokenState = health.tokenState === 'rejected' ? 'rejected' : 'ok';
+    }
+  } catch { /* a broken provider read must not break health */ }
+  return {
+    provider: provider?.id ?? null,
+    uptimeSeconds: Math.max(0, Math.round((now - bootedAt) / 1000)),
+    lastBuild: state.lastBuild && { at: state.lastBuild.at, series: state.lastBuild.series, failed: state.lastBuild.failed },
+    lastError: state.lastError && { at: state.lastError.at, message: state.lastError.message },
+    ...withCaptureStatus({}, capture),
+    feed,
+    tokenState,
+  };
 }
 
 async function futuresFor(symbol, session) {
@@ -472,6 +514,10 @@ async function handle(req, res) {
       log('replay days failed:', error?.message || error);
       return send(res, 503, { error: 'Stored replay catalog is invalid.', code: error?.code || 'REPLAY_DAYS_INVALID' });
     }
+  }
+
+  if (p === '/api/health') {
+    return send(res, 200, healthPayload(provider, state, capture, now()));
   }
 
   if (p === '/api/status') {

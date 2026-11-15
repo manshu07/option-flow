@@ -967,5 +967,22 @@ export function createDhanProvider(universe) {
         return { date: expiry, prevClose, prevOi, candles };
       }));
     },
+
+    // Read-only feed health for /api/health: the sockets that should be open,
+    // the packet counters, whether ticks still flow, and whether the
+    // credentials sit in a 401 cooldown. Never throws, never calls REST.
+    health() {
+      const open = conns.filter(conn => conn.socket?.readyState === 1).length;
+      const packets = conns.reduce((sum, conn) => sum + (conn.packets ?? 0), 0);
+      const lastPacketAt = conns.reduce((latest, conn) => Math.max(latest, conn.lastPacketAt ?? 0), 0) || null;
+      return {
+        connections: { open, total: conns.length },
+        healthy: conns.length > 0 && open === conns.length,
+        flowing: feedHealthy(),
+        packets,
+        lastPacketAt,
+        tokenState: Date.now() < authFailUntil ? 'rejected' : 'ok',
+      };
+    },
   };
 }

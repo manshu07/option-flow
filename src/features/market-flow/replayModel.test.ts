@@ -34,6 +34,14 @@ describe('replay model', () => {
     expect(boardReplayMinutes(date, minutes)).toEqual([['0915', at('09:15')], ['1530', at('15:30')], ['1540', at('15:40')]]);
   });
 
+  it("clips at the old 15:30 close before the derivatives close moved to 15:40", () => {
+    const date = '2026-07-01';
+    const at = (time: string) => Date.parse(`${date}T${time}:00+05:30`);
+    const minutes: Array<[string, number]> = [['1529', at('15:29')], ['1530', at('15:30')], ['1531', at('15:31')], ['1540', at('15:40')]];
+    expect(boardReplayMinutes(date, minutes)).toEqual([['1529', at('15:29')], ['1530', at('15:30')]]);
+    expect(clipReplayMinutes(date, minutes, { window: 'full' }).map(([minute]) => minute)).toEqual(['1529', '1530']);
+  });
+
   it('bounds the market-minute cache and refreshes a revisited minute', () => {
     const one = { value: 1 };
     const two = { value: 2 };

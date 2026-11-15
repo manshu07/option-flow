@@ -34,6 +34,7 @@ export function ReplayControls({ manifest, mode, loading, error, notice, retryab
   const capturedMinutes = manifest?.minutes ?? [];
   const recent = days.filter(isSelectableReplayDay).slice(0, 3);
   const labelFor = (day: ReplayDay) => `${day.date}${day.source === 'archive' ? ' · archive' : ''}`;
+  const selectedDay = days.find(day => day.date === selectedDate) ?? null;
   return (
     <div className={`mf-replay ${phone ? 'is-sheet' : 'is-popover'}`} role="dialog" aria-label="Market replay">
       <div className="mf-replay__head">
@@ -51,7 +52,7 @@ export function ReplayControls({ manifest, mode, loading, error, notice, retryab
         <select aria-label="Replay date" value={selectedDate ?? ''} onChange={event => onSelectDay?.(event.currentTarget.value)}>
           {days.map(day => <option key={day.date} value={day.date} disabled={!isSelectableReplayDay(day)}>{labelFor(day)}{!isSelectableReplayDay(day) ? ' · unavailable' : ` · ${day.minutes} min`}</option>)}
         </select>
-        {selectedSource && <span className="mf-replay__coverage">Source: {selectedSource} · {days.find(day => day.date === selectedDate)?.minutes ?? 0} captured minutes</span>}
+        {selectedSource && selectedDay && <span className="mf-replay__coverage">Source: {selectedSource} · {selectedDay.minutes} captured minutes · {selectedDay.futuresSymbols.length} futures</span>}
       </div>}
       {loading ? <p className="mf-replay__message">Loading the captured session…</p> : !manifest ? <div className="mf-replay__message is-error"><p>{error ?? 'No captured replay minutes.'}</p><button data-testid="flow-replay-retry" type="button" onClick={onRetry}>Retry</button></div> : (
         <>
