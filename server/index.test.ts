@@ -51,7 +51,7 @@ describe('stored session snapshot (post-close fast path)', () => {
 describe('strike flow extraction', () => {
   // Schema-1 row contract: strike, side(0=CE,1=PE), ltp, prevClose, oi, prevOi, volume, ...
   const minute = (t: number, spot: number, rows: number[][]) => ({
-    t, date: '2026-11-13', series: [{ s: 'NIFTY', k: 'index', e: '2026-11-26', t, sp: spot, r: rows }],
+    t, date: '2026-11-13', series: [{ s: 'NIFTY', k: 'index', e: '2026-11-26', t, sp: spot, pc: 24_900, r: rows }],
   });
   const files = [
     minute(1_000, 25_000, [[24_500, 0, 100, 90, 1_000, 900, 50], [25_500, 1, 80, 75, 800, 700, 40], [30_000, 0, 5, 4, 10, 8, 1]]),
@@ -65,6 +65,7 @@ describe('strike flow extraction', () => {
     expect(flow.date).toBe('2026-11-13');
     expect(flow.expiry).toBe('2026-11-26');
     expect(flow.spot).toEqual([[1_000, 25_000], [2_000, 25_100], [3_000, 25_200]]);
+    expect(flow.spotPrevClose).toBe(24_900);
     const ce = flow.strikes['24500|CE'];
     expect(ce.series).toEqual([[1_000, 100, 1_000, 50], [2_000, 110, 1_100, 60], [3_000, 125, 1_300, 70]]);
     expect(ce.prevClose).toBe(90);

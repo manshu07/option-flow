@@ -267,6 +267,7 @@ export function strikeFlowFromFiles(files, symbol, { windowPct = 0.05, cap = 64 
   const strikes = new Map();
   let expiry = null;
   let date = null;
+  let spotPrevClose = null;
   for (const file of files) {
     if (!file || typeof file !== 'object') continue;
     const series = (file.series ?? []).find(item => item?.s === wanted);
@@ -274,6 +275,9 @@ export function strikeFlowFromFiles(files, symbol, { windowPct = 0.05, cap = 64 
     if (Number.isFinite(series.sp) && series.sp > 0) spot.push([file.t, series.sp]);
     if (!expiry && typeof series.e === 'string') expiry = series.e;
     if (!date && typeof file.date === 'string') date = file.date;
+    // The underlying's previous close rides on every snapshot; the day window
+    // and the spot reference line quote it instead of the first capture.
+    if (spotPrevClose == null && Number.isFinite(series.pc) && series.pc > 0) spotPrevClose = series.pc;
     for (const row of series.r) {
       if (!Array.isArray(row) || row.length < 7) continue;
       // Row order is parseRow's contract: strike, side, ltp, prevClose, oi, prevOi, volume.
@@ -305,7 +309,7 @@ export function strikeFlowFromFiles(files, symbol, { windowPct = 0.05, cap = 64 
       series: item.series,
     };
   }
-  return { symbol: wanted, date, expiry, spot, strikes: out, minuteCount: files.length };
+  return { symbol: wanted, date, expiry, spot, spotPrevClose, strikes: out, minuteCount: files.length };
 }
 
 /** The as-of cut for replay: every series stops at the cursor and the "last"
