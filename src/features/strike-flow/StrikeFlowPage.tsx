@@ -126,7 +126,7 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
   const bar = (
     <div className="strike-flow__bar">
       {tabs}
-      <CapsuleSegmented options={SUB_TABS} value={subTab} onChange={setSubTab} ariaLabel="Option Board views" groupId="option-views" size="page" fill />
+      <CapsuleSegmented options={SUB_TABS} value={subTab} onChange={setSubTab} ariaLabel="Option Board views" groupId="option-views" size="page" />
       <CapsuleSegmented options={SCOPES} value={scope} onChange={setScope} ariaLabel="Option Board scope" groupId="option-scope" size="page" className="strike-flow__symbols" />
       {scope === 'fno-stocks' && (
         <>

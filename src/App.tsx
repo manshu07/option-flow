@@ -15,7 +15,7 @@ export default function App() {
   const [page, setPage] = useState<FlowPage>('order-flow');
   useEffect(() => { loadUnderlyings().then(setUniverse); }, []);
   const tabs = (
-    <CapsuleSegmented options={FLOW_PAGES} value={page} onChange={setPage} ariaLabel="Flow boards" groupId="app-flow-tabs" role="tablist" size="page" fill />
+    <CapsuleSegmented options={FLOW_PAGES} value={page} onChange={setPage} ariaLabel="Flow boards" groupId="app-flow-tabs" role="tablist" size="page" />
   );
   // Both pages carry the tabs inside their own bar row (reference header) — no strip above.
   return (
