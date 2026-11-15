@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CapsuleSegmented, type CapsuleOption } from '@/components/common/CapsuleSegmented';
 import { PageBar } from '@/components/chrome/PageBar';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
@@ -20,6 +20,8 @@ import './strike-flow.css';
 
 interface StrikeFlowPageProps {
   universe: Underlying[];
+  /** The app's Order Flow / Strike Flow capsule, rendered inside this page's bar row. */
+  tabs?: ReactNode;
 }
 
 const SYMBOLS: CapsuleOption<string>[] = HEADER_MARKET_SYMBOLS.map(symbol => ({ value: symbol, label: symbol }));
@@ -36,7 +38,7 @@ const SIDES: CapsuleOption<StrikeSideFilter>[] = [
 ];
 
 const BRAND = (
-  <a className="mf-brand strike-flow__brand" href="https://mrchartist.com/open-source/order-flow" target="_blank" rel="noreferrer" aria-label="Strike Flow by Mr. Chartist">
+  <a className="mf-brand" href="https://mrchartist.com/open-source/order-flow" target="_blank" rel="noreferrer" aria-label="Strike Flow by Mr. Chartist">
     <span className="mf-brand__dot" aria-hidden="true" />
     <span className="mf-brand__name">Strike <em>Flow</em></span>
     <span className="mf-brand__by">by Mr. Chartist</span>
@@ -117,7 +119,7 @@ function StatusLine({ flow, readings, loading, failed }: { flow: StrikeFlowPaylo
   );
 }
 
-export function StrikeFlowPage({ universe }: StrikeFlowPageProps) {
+export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
   const pageRef = useRef<HTMLDivElement>(null);
   const fits = useMediaQuery('(min-width: 1100px)');
   const phone = useMediaQuery('(max-width: 768px)');
@@ -167,41 +169,37 @@ export function StrikeFlowPage({ universe }: StrikeFlowPageProps) {
   const noChain = !loading && !failed && !hasChain;
   const noSideData = !loading && !failed && hasChain && readings.length === 0;
 
+  // One slim bar row, Order Flow's chrome: brand (PageBar) · tabs · scope chips ·
+  // F&O stocks · spacer · mode pill · side filter · window · theme.
   const pageActions = (
-    <>
+    <div className="strike-flow__bar">
+      {tabs}
+      <CapsuleSegmented
+        options={SYMBOLS}
+        value={HEADER_MARKET_SYMBOLS.includes(symbol) ? symbol : ''}
+        onChange={setSymbol}
+        ariaLabel="Strike Flow symbols"
+        groupId="strike-symbols"
+        size="page"
+        className="strike-flow__symbols"
+      />
+      <label className="is-visually-hidden" htmlFor="strike-flow-stock">F&O stocks</label>
+      <select id="strike-flow-stock" className="strike-flow__stocks" value={selectedStock} onChange={event => { if (event.currentTarget.value) setSymbol(event.currentTarget.value); }}>
+        <option value="">F&O stocks</option>
+        {stocks.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}
+      </select>
+      <span className="strike-flow__spacer" />
+      <span className="strike-flow__mode">Momentum Flow</span>
+      <CapsuleSegmented options={SIDES} value={side} onChange={setSide} ariaLabel="Option side" groupId="strike-side" size="page" className="strike-flow__sides" />
       <CapsuleSegmented options={WINDOWS} value={window} onChange={setWindow} ariaLabel="Premium change window" groupId="strike-window" size="page" className="strike-flow__window" />
       <ThemeToggle onChange={theme => applyTheme(theme)} size="md" className="ui-flow-theme" />
-    </>
+    </div>
   );
 
   return (
     <div className="ui-flow oi-design ui-strike-flow" data-window={window} data-layout={phone ? 'phone' : fits ? 'desktop' : 'tablet'} data-fit={fits ? 'true' : undefined} ref={pageRef}>
       <h1 className="is-visually-hidden">Strike Flow · Momentum Flow</h1>
       <PageBar current="Strike Flow" crumbs={false} className="oi-design ui-flow-pagebar ui-strike-flow-pagebar" brand={BRAND}>{pageActions}</PageBar>
-
-      <header className="strike-flow__controls">
-        <div className="strike-flow__symbol-group">
-          <CapsuleSegmented
-            options={SYMBOLS}
-            value={HEADER_MARKET_SYMBOLS.includes(symbol) ? symbol : ''}
-            onChange={setSymbol}
-            ariaLabel="Strike Flow symbols"
-            groupId="strike-symbols"
-            size="page"
-            className="strike-flow__symbols"
-          />
-          <label className="is-visually-hidden" htmlFor="strike-flow-stock">F&O stocks</label>
-          <select id="strike-flow-stock" className="strike-flow__stocks" value={selectedStock} onChange={event => { if (event.currentTarget.value) setSymbol(event.currentTarget.value); }}>
-            <option value="">F&O stocks</option>
-            {stocks.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}
-          </select>
-          <span className="strike-flow__expiry">Expiry · {flow?.expiry ?? '—'}</span>
-        </div>
-        <div className="strike-flow__heading-group">
-          <h2 className="strike-flow__heading">Momentum Flow</h2>
-          <CapsuleSegmented options={SIDES} value={side} onChange={setSide} ariaLabel="Option side" groupId="strike-side" size="page" className="strike-flow__sides" />
-        </div>
-      </header>
 
       <StatusLine flow={flow} readings={readings} loading={loading} failed={failed} />
 

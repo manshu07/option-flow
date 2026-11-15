@@ -1,10 +1,11 @@
+import type { ReactNode } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const underlyings = vi.hoisted(() => ({ load: vi.fn().mockResolvedValue([]) }));
 vi.mock('@/lib/underlyings', () => ({ loadUnderlyings: underlyings.load }));
 vi.mock('@/features/market-flow/MarketFlowPage', () => ({ MarketFlowPage: () => <div>Order Flow canvas</div> }));
-vi.mock('@/features/strike-flow/StrikeFlowPage', () => ({ StrikeFlowPage: () => <div>Strike Flow canvas</div> }));
+vi.mock('@/features/strike-flow/StrikeFlowPage', () => ({ StrikeFlowPage: ({ tabs }: { tabs?: ReactNode }) => <div>Strike Flow canvas {tabs}</div> }));
 
 import App from '@/App';
 
@@ -20,7 +21,11 @@ describe('App flow tabs', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Strike Flow' }));
 
+    // On Strike Flow the tabs live inside the page's own bar row (no app-level strip).
+    expect(screen.queryByRole('navigation', { name: 'Flow boards' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Strike Flow' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByText('Strike Flow canvas')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Order Flow' }));
+    expect(screen.getByText('Order Flow canvas')).toBeInTheDocument();
   });
 });

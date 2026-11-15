@@ -14,13 +14,16 @@ export default function App() {
   const [universe, setUniverse] = useState<Underlying[]>([]);
   const [page, setPage] = useState<FlowPage>('order-flow');
   useEffect(() => { loadUnderlyings().then(setUniverse); }, []);
+  const tabs = (
+    <CapsuleSegmented options={FLOW_PAGES} value={page} onChange={setPage} ariaLabel="Flow boards" groupId="app-flow-tabs" role="tablist" size="page" fill />
+  );
+  // Strike Flow carries the tabs inside its own PageBar row (reference header);
+  // Order Flow keeps the accepted strip above it, untouched.
   return (
     <div className="app-flow-shell">
-      <nav className="app-flow-tabs" aria-label="Flow boards">
-        <CapsuleSegmented options={FLOW_PAGES} value={page} onChange={setPage} ariaLabel="Flow boards" groupId="app-flow-tabs" role="tablist" size="page" fill />
-      </nav>
+      {page === 'order-flow' && <nav className="app-flow-tabs" aria-label="Flow boards">{tabs}</nav>}
       <div className="app-flow-panel" role="tabpanel" aria-label={page === 'order-flow' ? 'Order Flow board' : 'Strike Flow board'} tabIndex={0}>
-        {page === 'order-flow' ? <MarketFlowPage universe={universe} /> : <StrikeFlowPage universe={universe} />}
+        {page === 'order-flow' ? <MarketFlowPage universe={universe} /> : <StrikeFlowPage universe={universe} tabs={tabs} />}
       </div>
     </div>
   );
