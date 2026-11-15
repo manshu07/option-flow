@@ -704,6 +704,13 @@ export function createArchiveService({ scanDir, providerId, archiveRoot = path.j
       if (!result) fail('ARCHIVE_MISSING', `Futures ${symbol} is missing for ${date}.`);
       return { symbol, session: date, months: result.months };
     },
+    // One payload read for a whole session: callers that need many minutes
+    // (strike series) must not re-gunzip the archive per minute.
+    readSession: async date => {
+      requireDate(date);
+      const payload = await readIndexedArchivePayload(archiveRoot, providerId, date);
+      return { minutesIndex: payload.minutesIndex, minutes: payload.minutes };
+    },
     manifest: async date => {
       requireDate(date);
       const payload = await readIndexedArchivePayload(archiveRoot, providerId, date);

@@ -7,6 +7,8 @@
  *   GET /api/futures/<SYMBOL>?session=YYYY-MM-DD   its futures months and 1-minute candles
  *   GET /api/replay/<date>/manifest  captured market minutes and futures coverage
  *   GET /api/replay/<date>/futures/<SYMBOL>?asOf=HHMM  persisted futures at a cursor
+ *   GET /api/strikes/<SYMBOL>?date=&asOf=HHMM      one underlying's per-strike premium
+ *                                      series, read off stored minute snapshots
  *   POST /api/capture/now            request a non-blocking futures capture pass
  *   GET /api/archive                 verified EOD archive metadata
  *   POST /api/archive/<date>         request a non-blocking EOD archive
@@ -251,6 +253,122 @@ export function healthPayload(provider, state, capture, now = Date.now(), booted
     feed,
     tokenState,
   };
+}
+
+/**
+ * Strike-level momentum series for one underlying, read off stored minute
+ * snapshots (schema-1 market files, ascending). Only strikes within
+ * `windowPct` of the last spot are kept — nearest ATM first when past `cap` —
+ * so the payload stays a few hundred KB, not the whole chain.
+ */
+export function strikeFlowFromFiles(files, symbol, { windowPct = 0.05, cap = 64 } = {}) {
+  const wanted = String(symbol).toUpperCase();
+  const spot = [];
+  const strikes = new Map();
+  let expiry = null;
+  let date = null;
+  for (const file of files) {
+    if (!file || typeof file !== 'object') continue;
+    const series = (file.series ?? []).find(item => item?.s === wanted);
+    if (!series || !Array.isArray(series.r)) continue;
+    if (Number.isFinite(series.sp) && series.sp > 0) spot.push([file.t, series.sp]);
+    if (!expiry && typeof series.e === 'string') expiry = series.e;
+    if (!date && typeof file.date === 'string') date = file.date;
+    for (const row of series.r) {
+      if (!Array.isArray(row) || row.length < 7) continue;
+      // Row order is parseRow's contract: strike, side, ltp, prevClose, oi, prevOi, volume.
+      const [strike, side, ltp, prevClose, oi, prevOi, volume] = row;
+      if (!Number.isFinite(strike) || (side !== 0 && side !== 1) || !Number.isFinite(ltp)) continue;
+      const key = `${strike}|${side === 0 ? 'CE' : 'PE'}`;
+      const held = strikes.get(key) ?? { strike, side: side === 0 ? 'CE' : 'PE', series: [], prevClose: null, prevOi: null };
+      held.series.push([file.t, ltp, Number.isFinite(oi) ? oi : null, Number.isFinite(volume) ? volume : null]);
+      if (held.prevClose == null && Number.isFinite(prevClose) && prevClose > 0) held.prevClose = prevClose;
+      if (held.prevOi == null && Number.isFinite(prevOi) && prevOi >= 0) held.prevOi = prevOi;
+      strikes.set(key, held);
+    }
+  }
+  const lastSpot = spot.at(-1)?.[1] ?? null;
+  let kept = [...strikes.values()];
+  if (lastSpot) {
+    kept = kept.filter(item => Math.abs(item.strike - lastSpot) / lastSpot <= windowPct);
+    kept.sort((a, b) => Math.abs(a.strike - lastSpot) - Math.abs(b.strike - lastSpot));
+    kept = kept.slice(0, cap);
+  }
+  const out = {};
+  for (const item of kept) {
+    const last = item.series.at(-1);
+    out[`${item.strike}|${item.side}`] = {
+      strike: item.strike, side: item.side, expiry,
+      prevClose: item.prevClose, prevOi: item.prevOi,
+      ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null,
+      spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null,
+      series: item.series,
+    };
+  }
+  return { symbol: wanted, date, expiry, spot, strikes: out, minuteCount: files.length };
+}
+
+/** The as-of cut for replay: every series stops at the cursor and the "last"
+ * readings are recomputed from what survived — the payload never quotes a
+ * moment it does not show. */
+export function truncateStrikeFlow(payload, cursor) {
+  const spot = payload.spot.filter(([t]) => t <= cursor);
+  const lastSpot = spot.at(-1)?.[1] ?? null;
+  return {
+    ...payload,
+    spot,
+    strikes: Object.fromEntries(Object.entries(payload.strikes).map(([key, item]) => {
+      const series = item.series.filter(([t]) => t <= cursor);
+      const last = series.at(-1);
+      return [key, { ...item, series, ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null,
+        spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null }];
+    })),
+  };
+}
+
+const strikeFlowCache = new Map();
+const STRIKE_FLOW_CACHE_LIMIT = 20;
+
+/**
+ * One underlying's strike flow for a session: minutes come from the live dir,
+ * falling back per minute to the archive for closed sessions. Full-day
+ * aggregates are cached (invalidated when the minute count moves); `cursor`
+ * (epoch ms) truncates to an as-of instant without re-reading anything.
+ */
+async function strikeFlowFor(symbol, date, cursor = null) {
+  const cacheKey = `${date}|${symbol}`;
+  const minutes = readMinutes(date);
+  let payload = strikeFlowCache.get(cacheKey);
+  if (!payload || payload.minuteCount !== minutes.length) {
+    const files = [];
+    if (minutes.length) {
+      for (const [hhmm] of minutes) {
+        try { files.push(JSON.parse(fs.readFileSync(path.join(SCAN_DIR, date, `${hhmm}.json`), 'utf8'))); }
+        catch { /* a corrupt or vanished minute is skipped, not fatal */ }
+      }
+    } else {
+      // Closed and archived: the raw day dir is pruned, so the whole session
+      // comes from one archive read — never one read per minute.
+      try {
+        const session = await archive.readSession(date);
+        for (const [hhmm] of session.minutesIndex) {
+          const json = session.minutes[hhmm];
+          if (json == null) continue;
+          try { files.push(typeof json === 'string' ? JSON.parse(json) : json); }
+          catch { /* a corrupt minute is skipped, not fatal */ }
+        }
+      } catch (error) {
+        if (error?.code !== 'ARCHIVE_MISSING') throw error;
+      }
+    }
+    if (!files.length) return null;
+    payload = strikeFlowFromFiles(files, symbol);
+    payload.date = date;
+    payload.minuteCount = files.length;
+    strikeFlowCache.set(cacheKey, payload);
+    if (strikeFlowCache.size > STRIKE_FLOW_CACHE_LIMIT) strikeFlowCache.delete(strikeFlowCache.keys().next().value);
+  }
+  return cursor ? truncateStrikeFlow(payload, cursor) : payload;
 }
 
 async function futuresFor(symbol, session) {
@@ -561,6 +679,22 @@ async function handle(req, res) {
     }
     if (!result) return send(res, 404, { error: `No persisted futures for ${symbol} on ${date}.` });
     return send(res, 200, truncateFutures(result, cursor));
+  }
+
+  const strikesPath = p.match(/^\/api\/strikes\/([^/]+)$/);
+  if (strikesPath) {
+    const symbol = strikesPath[1].toUpperCase();
+    if (!REPLAY_SYMBOL.test(symbol) || !bySymbol.has(symbol)) return send(res, 400, { error: 'Invalid underlying.' });
+    const date = url.searchParams.get('date') ?? getLatestTradingSessionDate(new Date(now()));
+    if (!validReplayDate(date)) return send(res, 400, { error: 'Invalid session date.' });
+    const asOf = url.searchParams.get('asOf');
+    const cursor = asOf ? replayCursor(date, asOf) : null;
+    if (asOf && !cursor) return send(res, 400, { error: 'asOf must be a market-session time in HHMM.' });
+    try {
+      const payload = await strikeFlowFor(symbol, date, cursor);
+      return payload ? send(res, 200, payload, 'application/json', { 'Cache-Control': 'public, max-age=60' }) : send(res, 404, { error: `No stored chain minutes for ${symbol} on ${date}.` });
+    }
+    catch (error) { return sendArchiveReadError(res, error); }
   }
 
   if (p.startsWith('/api/replay/')) return send(res, 400, { error: 'Invalid replay request.' });
