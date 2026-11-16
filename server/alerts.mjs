@@ -209,7 +209,7 @@ export function evaluateAlerts(market, rules, state, now = Date.now()) {
   return messages;
 }
 
-const BROADCAST_FOOTER = '📊 educational market-data digest · not investment advice · /stop to opt out';
+export const BROADCAST_FOOTER = '📊 educational market-data digest · not investment advice · /stop to opt out';
 const DIGEST_MINUTES = [11 * 60, 13 * 60, 15 * 60 + 45];
 const ALERT_SECTIONS = [
   { type: 'level', heading: '🚨 <b>Level</b>' },

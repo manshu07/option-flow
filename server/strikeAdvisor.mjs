@@ -177,6 +177,18 @@ export function dedupeObservations(cards) {
   });
 }
 
+/** Keep every unresolved card; resolved history is evicted oldest-first. */
+export function retainObservations(cards, maxCards = MAX_CARDS) {
+  const unique = dedupeObservations(Array.isArray(cards) ? cards : []);
+  const limit = Number.isSafeInteger(maxCards) && maxCards >= 0 ? maxCards : MAX_CARDS;
+  if (unique.length <= limit) return unique;
+  const unresolved = unique.filter(card => !card?.outcome || typeof card.outcome !== 'object');
+  const resolved = unique.filter(card => card?.outcome && typeof card.outcome === 'object');
+  const resolvedToKeep = Math.max(0, limit - unresolved.length);
+  const keptResolved = new Set(resolved.slice(0, resolvedToKeep));
+  return unique.filter(card => !card?.outcome || typeof card.outcome !== 'object' || keptResolved.has(card));
+}
+
 /** Read + normalise the observations store. */
 export function loadObservations(path) {
   try {
@@ -234,7 +246,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       const freshCards = dedupeObservations(cards);
       const existing = loadObservations(obsPath);
       const existingKeys = new Set(existing.map(observationKey).filter(Boolean));
-      const stored = dedupeObservations([...freshCards, ...existing]).slice(0, MAX_CARDS);
+      const stored = retainObservations([...freshCards, ...existing]);
       saveObservations(obsPath, stored);
       const fresh = freshCards.filter(card => {
         const key = observationKey(card);

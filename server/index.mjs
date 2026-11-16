@@ -41,11 +41,12 @@ import { encodeSeries, marketFile } from './marketFile.mjs';
 import { createProvider } from './providers/index.mjs';
 import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, ReplayDataError, REPLAY_DATE, REPLAY_SYMBOL, truncateFutures } from './replayStorage.mjs';
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
-import { createAlertDigestState, flushScheduledDigests, runAlerts } from './alerts.mjs';
+import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAlerts } from './alerts.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { runJournal } from './journal.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
 import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
 
@@ -82,6 +83,7 @@ const ladderCache = { session: '', bySymbol: new Map() };
 const state = { ready: false, building: false, latestJson: null, latest: null, lastBuild: null, lastError: null };
 const alertState = new Map();
 const alertDigestState = createAlertDigestState();
+const journalMinuteIndexes = new Map();
 
 const hhmmOf = at => { const p = marketParts(at); return `${String(Math.floor(p.minuteOfDay / 60)).padStart(2, '0')}${String(p.minuteOfDay % 60).padStart(2, '0')}`; };
 
@@ -99,6 +101,39 @@ function storeMinute(date, at, json) {
   minutes.sort((a, b) => a[1] - b[1]);
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(minutes));
   return minutes;
+}
+
+/** Read captured minutes from the existing raw index, falling back to the verified archive. */
+async function readJournalMinute(date, hhmm) {
+  let available = journalMinuteIndexes.get(date);
+  if (!available) {
+    const index = readMinutes(date);
+    available = new Set((Array.isArray(index) ? index : []).map(entry => String(entry?.[0] ?? '').padStart(4, '0')));
+    journalMinuteIndexes.set(date, available);
+  }
+  if (available.has(hhmm)) {
+    try { return JSON.parse(fs.readFileSync(path.join(SCAN_DIR, date, `${hhmm}.json`), 'utf8')); }
+    catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  }
+  return readArchiveMinuteFallback(SCAN_DIR, archive, date, hhmm);
+}
+
+async function sendJournalSummary(text) {
+  let sent = false;
+  try { sent = (await sendTelegram(text)).sent === true; }
+  catch (error) { log('journal owner summary failed:', String(error?.message || error)); }
+  const ownerId = process.env.TELEGRAM_CHAT_ID == null ? null : String(process.env.TELEGRAM_CHAT_ID);
+  for (const chatId of activeChatIds(loadSubscribers(SUBSCRIBERS_PATH))) {
+    if (String(chatId) === ownerId) continue;
+    await new Promise(resolve => setTimeout(resolve, 30));
+    try {
+      const result = await sendTelegram(`${text}\n\n${BROADCAST_FOOTER}`, { chatId });
+      sent ||= result.sent === true;
+    } catch (error) {
+      log(`journal subscriber summary ${chatId} failed:`, String(error?.message || error));
+    }
+  }
+  return { sent };
 }
 
 /** The newest stored minute snapshot for a session, or null when nothing was captured. */
@@ -230,6 +265,13 @@ async function build() {
         }
       })
       .catch(error => log('triage failed:', String(error?.message || error)));
+    void runJournal({
+      obsPath: path.join(DATA_DIR, 'observations.json'),
+      readMinute: readJournalMinute,
+      now: at,
+      log,
+      send: process.env.TELEGRAM_BOT_TOKEN ? sendJournalSummary : undefined,
+    }).catch(error => log('journal failed:', String(error?.message || error)));
   } catch (error) {
     // The detail (which may quote the provider's own error) stays in this log; the page gets a plain line.
     log('market file failed:', String(error?.message || error));
