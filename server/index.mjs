@@ -41,6 +41,7 @@ import { encodeSeries, marketFile } from './marketFile.mjs';
 import { createProvider } from './providers/index.mjs';
 import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, ReplayDataError, REPLAY_DATE, REPLAY_SYMBOL, truncateFutures } from './replayStorage.mjs';
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
+import { runAlerts } from './alerts.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
 import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
 
@@ -74,6 +75,7 @@ const BOOTED_AT = Date.now();
 /** Expiries are read once a session: they change only when a contract lists or expires. */
 const ladderCache = { session: '', bySymbol: new Map() };
 const state = { ready: false, building: false, latestJson: null, latest: null, lastBuild: null, lastError: null };
+const alertState = new Map();
 
 const hhmmOf = at => { const p = marketParts(at); return `${String(Math.floor(p.minuteOfDay / 60)).padStart(2, '0')}${String(p.minuteOfDay % 60).padStart(2, '0')}`; };
 
@@ -175,6 +177,12 @@ async function build() {
     state.lastBuild = { at, ms: Date.now() - started, series: series.length, failed: failed.length, failedSymbols: failed.slice(0, 20), firstError };
     state.lastError = null;
     log(`market file: ${series.length} series, ${failed.length} failed, ${Date.now() - started} ms${firstError ? ` (first error: ${firstError})` : ''}`);
+    try {
+      const fired = await runAlerts(file, { rulesPath: path.join(DATA_DIR, 'alerts.json'), state: alertState, now: at, log });
+      if (fired.length) log(`alerts fired: ${fired.length}`);
+    } catch (error) {
+      log('alerts failed:', String(error?.message || error));
+    }
   } catch (error) {
     // The detail (which may quote the provider's own error) stays in this log; the page gets a plain line.
     log('market file failed:', String(error?.message || error));
