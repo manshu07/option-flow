@@ -43,6 +43,7 @@ import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, Replay
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
 import { runAlerts } from './alerts.mjs';
 import { runTriage } from './typesafe.mjs';
+import { runAdvisor } from './strikeAdvisor.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
 import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
 
@@ -189,6 +190,12 @@ async function build() {
       .then(result => {
         if (result.written != null) log(`triage: ${result.written} watch rule(s)${result.watches.length ? ` (${result.watches.map(w => w.symbol).join(' ')})` : ''}`);
         else if (result.skipped && result.skipped !== 'throttled') log(`triage skipped: ${result.skipped}`);
+        // Observation cards for the promoted watches — same cadence, fire-and-forget.
+        if (result.watches?.length) {
+          return runAdvisor(file, { obsPath: path.join(DATA_DIR, 'observations.json'), watches: result.watches, now: at, log })
+            .then(advisor => { if (advisor.written != null && advisor.written) log(`advisor: ${advisor.written} observation card(s) (${advisor.cards.map(c => `${c.symbol} ${c.strike}${c.side}`).join(' ')})`); })
+            .catch(error => log('advisor failed:', String(error?.message || error)));
+        }
       })
       .catch(error => log('triage failed:', String(error?.message || error)));
   } catch (error) {
@@ -890,6 +897,7 @@ async function handle(req, res) {
   }
 
   if (p === '/underlyings.json') return serveFile(res, path.join(ROOT, 'public/underlyings.json'), 'public, max-age=3600');
+  if (p === '/observations.json') return fs.existsSync(path.join(DATA_DIR, 'observations.json')) ? serveFile(res, path.join(DATA_DIR, 'observations.json')) : send(res, 200, { cards: [] });
 
   // The built page; any other path is the page itself (its router is in memory).
   if (fs.existsSync(DIST)) {
