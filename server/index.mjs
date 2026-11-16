@@ -192,10 +192,26 @@ async function build() {
   }
 }
 
-/** Live (in session, or a provider that is always live): every minute, a few seconds past the boundary. Otherwise hourly. */
+/**
+ * Live (in session, or a provider that is always live): every minute, a few
+ * seconds past the boundary. Otherwise hourly — but the sleep never crosses
+ * the next session open (09:15:03 IST): a server that boots before open
+ * still fires its first live build exactly when the market opens, instead of
+ * waking at an hourly boundary past it.
+ */
 function schedule() {
-  const live = provider.alwaysLive || isMarketSessionTime(Date.now());
-  const wait = live ? 60_000 - (Date.now() % 60_000) + 3_000 : 60 * 60_000;
+  const now = Date.now();
+  const live = provider.alwaysLive || isMarketSessionTime(now);
+  let wait;
+  if (live) {
+    wait = 60_000 - (now % 60_000) + 3_000;
+  } else {
+    const IST = 5.5 * 60 * 60_000;
+    const midnightUtc = Math.floor((now + IST) / 86_400_000) * 86_400_000 - IST;
+    let open = midnightUtc + (9 * 60 + 15) * 60_000 + 3_000;
+    if (open <= now) open += 86_400_000;
+    wait = Math.min(3_600_000, Math.max(60_000, open - now));
+  }
   setTimeout(async () => { await build(); schedule(); }, wait);
 }
 
