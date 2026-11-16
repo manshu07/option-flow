@@ -168,8 +168,9 @@ function topMoversMessage(rule, market, now) {
  * Evaluate one rules array against one market file. `state` maps each rule id
  * to its session day, last fire time, daily count, and cooldown step.
  */
-export function evaluateAlerts(market, rules, state, now = Date.now()) {
+export function evaluateAlerts(market, rules, state, now = Date.now(), { dailyCap = DAILY_FIRE_CAP } = {}) {
   if (!inFireWindow(now)) return [];
+  const fireCap = Number.isSafeInteger(dailyCap) && dailyCap >= 0 ? dailyCap : DAILY_FIRE_CAP;
   const messages = [];
   const dayKey = typeof market?.date === 'string' ? market.date : null;
   for (const rule of Array.isArray(rules) ? rules : []) {
@@ -182,7 +183,7 @@ export function evaluateAlerts(market, rules, state, now = Date.now()) {
       ? stored
       : { dayKey, lastAt: null, firesToday: 0, step: 0 };
     if (current !== stored) state.set(rule.id, current);
-    if (current.firesToday >= DAILY_FIRE_CAP) continue;
+    if (current.firesToday >= fireCap) continue;
     if (rule.type === 'oi-spike') {
       // The spike summary is a once-per-session digest, independent of cooldown.
       if (current.firesToday > 0) continue;
@@ -372,12 +373,13 @@ function recipientsFor(chatIds) {
 }
 
 export function createAlertDigestState() {
-  return { dayKey: null, pending: new Map(), dailyEvents: new Map(), sentSlots: new Set() };
+  return { dayKey: null, pending: new Map(), dailyEvents: new Map(), personalAlertStates: new Map(), sentSlots: new Set() };
 }
 
 function prepareDigestState(state, dayKey) {
   if (!(state.pending instanceof Map)) state.pending = new Map();
   if (!(state.dailyEvents instanceof Map)) state.dailyEvents = new Map();
+  if (!(state.personalAlertStates instanceof Map)) state.personalAlertStates = new Map();
   if (!(state.sentSlots instanceof Set)) state.sentSlots = new Set();
   if (state.dayKey !== dayKey) {
     state.dayKey = dayKey;
@@ -407,22 +409,23 @@ export async function runAlerts(market, {
   log = () => {},
   send = sendTelegram,
   broadcastChatIds = [],
+  subscriberEntries = [],
   digestState,
 }) {
   const rules = loadAlertRules(rulesPath);
-  if (!rules.length) return [];
   const previous = new Map(state);
   const messages = evaluateAlerts(market, rules, state, now);
-  if (!messages.length) return messages;
   const firedRules = rulesThatFired(rules, previous, state);
   const events = messages.map((text, index) => ({ text, rule: firedRules[index] ?? { type: 'unknown' } }));
   const subscribers = recipientsFor(broadcastChatIds);
-  const ownerMessage = combinedHtml(events, market, now, false);
 
-  try {
-    safeLogResult(log, 'telegram owner', await send(ownerMessage, { parseMode: 'HTML', retry: true }));
-  } catch (error) {
-    log(`telegram owner not sent (${String(error?.message || error)})`);
+  if (events.length) {
+    const ownerMessage = combinedHtml(events, market, now, false);
+    try {
+      safeLogResult(log, 'telegram owner', await send(ownerMessage, { parseMode: 'HTML', retry: true }));
+    } catch (error) {
+      log(`telegram owner not sent (${String(error?.message || error)})`);
+    }
   }
 
   const instant = events.filter(event => event.rule.broadcast === true
@@ -446,6 +449,34 @@ export async function runAlerts(market, {
       } catch (error) {
         log(`telegram instant subscriber ${chatId} not sent (${String(error?.message || error)})`);
       }
+    }
+  }
+
+  if (digestState && !(digestState.personalAlertStates instanceof Map)) digestState.personalAlertStates = new Map();
+  const personalStates = digestState?.personalAlertStates ?? new Map();
+  for (const subscriber of Array.isArray(subscriberEntries) ? subscriberEntries : []) {
+    const chatId = Number(subscriber?.chatId);
+    if (!subscriber?.active || !Number.isSafeInteger(chatId) || !Array.isArray(subscriber.alerts) || !subscriber.alerts.length) continue;
+    const rulesForSubscriber = subscriber.alerts.map(alert => ({
+      id: `subscriber:${chatId}:${alert.id}`,
+      type: 'level',
+      symbol: alert.symbol,
+      ...(alert.direction === 'above' ? { above: alert.level } : { below: alert.level }),
+      label: `${alert.symbol} ${alert.direction} ${alert.level}`,
+    }));
+    const stateForSubscriber = personalStates.get(String(chatId)) ?? new Map();
+    personalStates.set(String(chatId), stateForSubscriber);
+    const before = new Map(stateForSubscriber);
+    const personalMessages = evaluateAlerts(market, rulesForSubscriber, stateForSubscriber, now, { dailyCap: 5 });
+    if (!personalMessages.length) continue;
+    const personalRules = rulesThatFired(rulesForSubscriber, before, stateForSubscriber);
+    const personalEvents = personalMessages.map((text, index) => ({ text, rule: personalRules[index] ?? rulesForSubscriber[index] }));
+    const personalMessage = combinedHtml(personalEvents, market, now, true);
+    await pause(30);
+    try {
+      safeLogResult(log, `telegram personal alerts ${chatId}`, await send(personalMessage, { chatId, parseMode: 'HTML', retry: true }));
+    } catch (error) {
+      log(`telegram personal alerts ${chatId} not sent (${String(error?.message || error)})`);
     }
   }
   return messages;

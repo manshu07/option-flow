@@ -43,7 +43,7 @@ describe('Telegram subscribers', () => {
     const first = await pollCommands({ token: 'test-token', statePath, now: NOW, handle, send });
     expect(first.offset).toBe(11);
     expect(loadSubscribers(statePath)).toEqual({
-      subscribers: [{ chatId: 123, startedAt: NOW, active: true }],
+      subscribers: [{ chatId: 123, startedAt: NOW, active: true, alerts: [] }],
       offset: 11,
     });
     expect(send).toHaveBeenCalledWith(expect.stringContaining('Educational only; not investment advice.'), { chatId: 123 });
@@ -68,7 +68,7 @@ describe('Telegram subscribers', () => {
 
     expect(result.offset).toBe(7);
     expect(loadSubscribers(statePath)).toEqual({
-      subscribers: [{ chatId: 123, startedAt: NOW - 1000, active: false }],
+      subscribers: [{ chatId: 123, startedAt: NOW - 1000, active: false, alerts: [] }],
       offset: 7,
     });
     expect(activeChatIds(loadSubscribers(statePath))).toEqual([]);
@@ -350,5 +350,84 @@ describe('/journal command dispatch', () => {
     expect(handleJournal).not.toHaveBeenCalled();
     expect(send.mock.calls[0][0]).toContain('Use /start');
     expect(send.mock.calls[0][0]).toContain('not investment advice');
+  });
+});
+
+describe('personal subscriber alerts', () => {
+  it('creates, lists, and removes a persisted threshold alert by id', async () => {
+    const statePath = join(tempDir(), 'subscribers.json');
+    saveSubscribers(statePath, { subscribers: [{ chatId: 701, startedAt: NOW, active: true }], offset: 0 });
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
+
+    await pollCommands({
+      token: 'test-token', statePath, now: NOW, send, isKnownSymbol: symbol => symbol === 'NIFTY',
+      handle: async () => telegramResponse([update(1, 701, '/alert nifty above 25246')]),
+    });
+    const created = loadSubscribers(statePath).subscribers[0].alerts[0];
+    expect(created).toMatchObject({ symbol: 'NIFTY', direction: 'above', level: 25246, createdAt: NOW });
+    expect(created.id).toMatch(/^[0-9a-f]{8}$/);
+    expect(send).toHaveBeenLastCalledWith(expect.stringContaining(`Personal alert <b>${created.id}</b> set`), { chatId: 701, parseMode: 'HTML' });
+
+    await pollCommands({
+      token: 'test-token', statePath, now: NOW + 1, send, isKnownSymbol: symbol => symbol === 'NIFTY',
+      handle: async () => telegramResponse([update(2, 701, '/alerts')]),
+    });
+    expect(send).toHaveBeenLastCalledWith(expect.stringContaining(`${created.id}</b> NIFTY above 25246`), { chatId: 701, parseMode: 'HTML' });
+
+    await pollCommands({
+      token: 'test-token', statePath, now: NOW + 2, send, isKnownSymbol: symbol => symbol === 'NIFTY',
+      handle: async () => telegramResponse([update(3, 701, `/unalert ${created.id}`)]),
+    });
+    expect(loadSubscribers(statePath).subscribers[0].alerts).toEqual([]);
+    expect(send).toHaveBeenLastCalledWith(expect.stringContaining('removed'), { chatId: 701, parseMode: 'HTML' });
+  });
+
+  it('enforces the ten-rule cap and rejects unknown symbols', async () => {
+    const statePath = join(tempDir(), 'subscribers.json');
+    saveSubscribers(statePath, {
+      subscribers: [
+        { chatId: 702, startedAt: NOW, active: true, alerts: Array.from({ length: 10 }, (_, i) => ({ id: `a${i}`, symbol: 'NIFTY', direction: 'above', level: 100 + i, createdAt: NOW })) },
+        { chatId: 703, startedAt: NOW, active: true },
+      ],
+      offset: 0,
+    });
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
+
+    await pollCommands({
+      token: 'test-token', statePath, now: NOW, send, isKnownSymbol: symbol => symbol === 'NIFTY',
+      handle: async () => telegramResponse([update(1, 702, '/alert NIFTY below 90'), update(2, 703, '/alert UNKNOWN above 10')]),
+    });
+
+    expect(loadSubscribers(statePath).subscribers[0].alerts).toHaveLength(10);
+    expect(send).toHaveBeenNthCalledWith(1, expect.stringContaining('limit reached (10)'), { chatId: 702 });
+    expect(send).toHaveBeenNthCalledWith(2, expect.stringContaining('unknown or unsupported'), { chatId: 703, parseMode: 'HTML' });
+    expect(send.mock.calls.every(([text]) => String(text).includes('not investment advice'))).toBe(true);
+  });
+
+  it('evaluates personal thresholds through the shared engine with a five-fire daily cap', async () => {
+    const rulesPath = rulesFile(tempDir(), []);
+    const digestState = createAlertDigestState();
+    const calls: Array<{ text: string; options?: { chatId: number; parseMode: string; retry: boolean } }> = [];
+    const send = vi.fn(async (text: string, options?: { chatId: number; parseMode: string; retry: boolean }) => {
+      calls.push({ text, options });
+      return { sent: true };
+    });
+    const market = { date: '2026-11-16', series: [{ s: 'NIFTY', sp: 101, pc: 100, r: [] }] };
+    const subscriberEntries = [{ chatId: 704, active: true, alerts: [{ id: 'a1', symbol: 'NIFTY', direction: 'above', level: 100 }] }];
+
+    for (const minutes of [0, 10, 40, 100, 160, 220]) {
+      await runAlerts(market, {
+        rulesPath,
+        state: new Map(),
+        digestState,
+        now: NOW + minutes * 60_000,
+        send,
+        subscriberEntries,
+      });
+    }
+
+    expect(calls).toHaveLength(5);
+    expect(calls.every(call => call.options?.chatId === 704 && call.options.parseMode === 'HTML')).toBe(true);
+    expect(calls.every(call => call.text.includes('NIFTY above 100') && call.text.includes('not investment advice'))).toBe(true);
   });
 });

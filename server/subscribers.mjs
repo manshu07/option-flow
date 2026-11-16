@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -7,8 +8,28 @@ const HINT_LIMIT = 3;
 const HINT_WINDOW_MS = 60 * 60_000;
 const LIVE_LIMIT = 5;
 const LIVE_WINDOW_MS = 10 * 60_000;
+const MAX_PERSONAL_ALERTS = 10;
+const escapeHtml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const hintTimes = new Map();
 const liveTimes = new Map();
+
+function normalizeAlerts(value) {
+  const seen = new Set();
+  const alerts = [];
+  for (const row of Array.isArray(value) ? value : []) {
+    const id = String(row?.id ?? '').trim().slice(0, 24);
+    const symbol = String(row?.symbol ?? '').trim().toUpperCase();
+    const direction = row?.direction;
+    const level = Number(row?.level);
+    if (!id || seen.has(id) || !/^[A-Z0-9&._-]{1,40}$/.test(symbol)
+      || (direction !== 'above' && direction !== 'below')
+      || !Number.isFinite(level) || level <= 0) continue;
+    seen.add(id);
+    alerts.push({ id, symbol, direction, level, createdAt: Number.isFinite(row?.createdAt) ? row.createdAt : 0 });
+    if (alerts.length >= MAX_PERSONAL_ALERTS) break;
+  }
+  return alerts;
+}
 
 function normalizeState(value) {
   if (!value || typeof value !== 'object') return { subscribers: [], offset: 0 };
@@ -20,6 +41,7 @@ function normalizeState(value) {
       chatId,
       startedAt: Number.isFinite(row?.startedAt) ? row.startedAt : 0,
       active: row?.active === true,
+      alerts: normalizeAlerts(row?.alerts),
     });
   }
   return {
@@ -79,7 +101,7 @@ function mayRequestLive(chatId, now) {
   return true;
 }
 
-function processCommand(state, message, now, replies, ownerChatId) {
+function processCommand(state, message, now, replies, ownerChatId, isKnownSymbol) {
   const chatId = Number(message?.chat?.id);
   if (!Number.isSafeInteger(chatId) || chatId === 0) return;
   const parsed = commandFor(message?.text);
@@ -152,11 +174,65 @@ function processCommand(state, message, now, replies, ownerChatId) {
     return;
   }
 
+  if (command === 'alert' || command === 'alerts' || command === 'unalert') {
+    if (!subscriber?.active) {
+      replies.push({ chatId, text: 'Use /start to subscribe before managing personal alerts. Educational data only; not investment advice.' });
+      return;
+    }
+    if (command === 'alerts') {
+      const lines = subscriber.alerts.length
+        ? subscriber.alerts.map(alert => `• <b>${escapeHtml(alert.id)}</b> ${escapeHtml(alert.symbol)} ${alert.direction} ${alert.level}`)
+        : ['No personal alerts set. Use /alert SYMBOL above|below LEVEL to add one.'];
+      replies.push({ chatId, text: `${lines.join('\n')}\n\n🎓 Personal alerts use captured educational data, not investment advice.`, parseMode: 'HTML' });
+      return;
+    }
+    if (command === 'alert') {
+      const args = parsed.args.split(/\s+/).filter(Boolean);
+      const symbol = args[0]?.toUpperCase();
+      const direction = args[1]?.toLowerCase();
+      const level = Number(args[2]);
+      const validSyntax = args.length === 3 && /^[A-Z0-9&._-]{1,40}$/.test(symbol ?? '')
+        && (direction === 'above' || direction === 'below') && Number.isFinite(level) && level > 0;
+      if (!validSyntax) {
+        replies.push({ chatId, text: 'Usage: /alert SYMBOL above|below LEVEL. Educational data only; not investment advice.' });
+        return;
+      }
+      if (typeof isKnownSymbol === 'function' && !isKnownSymbol(symbol)) {
+        replies.push({ chatId, text: `${escapeHtml(symbol)} is unknown or unsupported. Educational data only; not investment advice.`, parseMode: 'HTML' });
+        return;
+      }
+      if (subscriber.alerts.length >= MAX_PERSONAL_ALERTS) {
+        replies.push({ chatId, text: `Personal alert limit reached (${MAX_PERSONAL_ALERTS}). Use /unalert ID first. Educational data only; not investment advice.` });
+        return;
+      }
+      let id;
+      do { id = randomBytes(4).toString('hex'); }
+      while (subscriber.alerts.some(alert => alert.id === id));
+      subscriber.alerts.push({ id, symbol, direction, level, createdAt: now });
+      replies.push({ chatId, text: `Personal alert <b>${id}</b> set: ${escapeHtml(symbol)} ${direction} ${level}. Educational data only; not investment advice.`, parseMode: 'HTML' });
+      return;
+    }
+
+    const id = parsed.args.split(/\s+/).filter(Boolean)[0]?.toLowerCase();
+    if (!id) {
+      replies.push({ chatId, text: 'Usage: /unalert ID. Educational data only; not investment advice.' });
+      return;
+    }
+    const index = subscriber.alerts.findIndex(alert => alert.id.toLowerCase() === id);
+    if (index < 0) {
+      replies.push({ chatId, text: `No personal alert with ID ${escapeHtml(id)}. Educational data only; not investment advice.`, parseMode: 'HTML' });
+      return;
+    }
+    const [removed] = subscriber.alerts.splice(index, 1);
+    replies.push({ chatId, text: `Personal alert <b>${escapeHtml(removed.id)}</b> removed. Educational data only; not investment advice.`, parseMode: 'HTML' });
+    return;
+  }
+
   if (maySendHint(chatId, now)) replies.push({ chatId, text: 'Unknown command. Use /help to see the available commands.' });
 }
 
 /** One crash-safe getUpdates pass. `handle` is an injectable fetch transport. */
-export async function pollCommands({ token, statePath, now = Date.now(), log = () => {}, send, handle = globalThis.fetch, ownerChatId, handleLive, handleJournal } = {}) {
+export async function pollCommands({ token, statePath, now = Date.now(), log = () => {}, send, handle = globalThis.fetch, ownerChatId, handleLive, handleJournal, isKnownSymbol } = {}) {
   if (!token || !statePath || typeof handle !== 'function') return { processed: 0, offset: 0, skipped: 'not configured' };
   try {
     const before = loadSubscribers(statePath);
@@ -187,7 +263,7 @@ export async function pollCommands({ token, statePath, now = Date.now(), log = (
     let lastUpdateId = before.offset - 1;
     for (const update of updates) {
       if (Number.isSafeInteger(update?.update_id)) lastUpdateId = Math.max(lastUpdateId, update.update_id);
-      if (update?.message) processCommand(state, update.message, now, replies, ownerChatId);
+      if (update?.message) processCommand(state, update.message, now, replies, ownerChatId, isKnownSymbol);
     }
     const next = { ...state, offset: lastUpdateId >= 0 ? lastUpdateId + 1 : before.offset };
 

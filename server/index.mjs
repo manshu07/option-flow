@@ -221,7 +221,8 @@ async function build() {
     state.lastError = null;
     log(`market file: ${series.length} series, ${failed.length} failed, ${Date.now() - started} ms${firstError ? ` (first error: ${firstError})` : ''}`);
     try {
-      const broadcastChatIds = process.env.TELEGRAM_BOT_TOKEN ? activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)) : [];
+      const subscriberState = process.env.TELEGRAM_BOT_TOKEN ? loadSubscribers(SUBSCRIBERS_PATH) : { subscribers: [], offset: 0 };
+      const broadcastChatIds = activeChatIds(subscriberState);
       const fired = await runAlerts(file, {
         rulesPath: path.join(DATA_DIR, 'alerts.json'),
         state: alertState,
@@ -229,6 +230,7 @@ async function build() {
         now: at,
         log,
         broadcastChatIds,
+        subscriberEntries: subscriberState.subscribers,
       });
       if (fired.length) log(`alerts fired: ${fired.length}`);
     } catch (error) {
@@ -1046,6 +1048,7 @@ server.listen(PORT, HOST, async () => {
               loadObservations(path.join(DATA_DIR, 'observations.json')),
               marketParts(Date.now()).dateKey,
             ),
+            isKnownSymbol: symbol => bySymbol.has(symbol),
           });
           await flushScheduledDigests({
             digestState: alertDigestState,
