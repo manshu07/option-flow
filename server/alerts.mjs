@@ -84,6 +84,47 @@ function chainOi(series) {
   return { oi, prev };
 }
 
+/** Heaviest CE above spot and PE below spot; the shape mirrors the Observation wall read. */
+function wallReadings(series) {
+  const spot = series?.sp;
+  if (!Number.isFinite(spot)) return { ce: null, pe: null };
+  let ce = null;
+  let pe = null;
+  for (const row of series?.r ?? []) {
+    if (!Array.isArray(row) || !Number.isFinite(row[0]) || !Number.isFinite(row[4]) || row[4] <= 0) continue;
+    if (row[1] === 0 && row[0] >= spot && (!ce || row[4] > ce.oi)) ce = { strike: row[0], oi: row[4] };
+    if (row[1] === 1 && row[0] <= spot && (!pe || row[4] > pe.oi)) pe = { strike: row[0], oi: row[4] };
+  }
+  return { ce, pe };
+}
+
+function wallOiText(value) {
+  return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M`
+    : value >= 100_000 ? `${(value / 100_000).toFixed(1)}L`
+      : `${(value / 1000).toFixed(1)}K`;
+}
+
+function wallShiftMessage(rule, series, baseline, now) {
+  if (!baseline) return null;
+  const current = wallReadings(series);
+  const changes = [];
+  for (const [side, label] of [['ce', 'CE'], ['pe', 'PE']]) {
+    const before = baseline[side];
+    const after = current[side];
+    if (!before && after) changes.push(`${label} wall appeared at ${after.strike} (OI ${wallOiText(after.oi)})`);
+    else if (before && !after) changes.push(`${label} wall disappeared from ${before.strike}`);
+    else if (before && after) {
+      if (before.strike !== after.strike) changes.push(`${label} wall moved ${before.strike}→${after.strike}`);
+      if (before.oi > 0) {
+        const changePct = ((after.oi - before.oi) / before.oi) * 100;
+        if (Math.abs(changePct) >= 25) changes.push(`${label} wall OI ${changePct >= 0 ? '+' : '−'}${Math.abs(changePct).toFixed(0)}% from first capture`);
+      }
+    }
+  }
+  if (!changes.length) return null;
+  return `🚨 ${rule.label ?? `${rule.symbol} OI wall shift`}: ${changes.join('; ')} · ${clock(now)} IST`;
+}
+
 function levelMessage(rule, series, now) {
   const spot = series.sp;
   if (!Number.isFinite(spot) || spot <= 0) return null;
@@ -168,7 +209,7 @@ function topMoversMessage(rule, market, now) {
  * Evaluate one rules array against one market file. `state` maps each rule id
  * to its session day, last fire time, daily count, and cooldown step.
  */
-export function evaluateAlerts(market, rules, state, now = Date.now(), { dailyCap = DAILY_FIRE_CAP } = {}) {
+export function evaluateAlerts(market, rules, state, now = Date.now(), { dailyCap = DAILY_FIRE_CAP, wallBaselines } = {}) {
   if (!inFireWindow(now)) return [];
   const fireCap = Number.isSafeInteger(dailyCap) && dailyCap >= 0 ? dailyCap : DAILY_FIRE_CAP;
   const messages = [];
@@ -195,6 +236,7 @@ export function evaluateAlerts(market, rules, state, now = Date.now(), { dailyCa
     if (rule.type === 'level') text = levelMessage(rule, series, now);
     else if (rule.type === 'buildup') text = buildupMessage(rule, series, now);
     else if (rule.type === 'oi-spike') text = oiSpikeMessage(rule, series, now);
+    else if (rule.type === 'wall-shift') text = wallShiftMessage(rule, series, wallBaselines?.get(rule.symbol), now);
     else if (rule.type === 'top-movers') text = topMoversMessage(rule, market, now);
     if (!text) continue;
     const firesToday = current.firesToday + 1;
@@ -216,6 +258,7 @@ const ALERT_SECTIONS = [
   { type: 'level', heading: '🚨 <b>Level</b>' },
   { type: 'buildup', heading: '📈 <b>Build-ups</b>' },
   { type: 'oi-spike', heading: '⚡ <b>OI spikes</b>' },
+  { type: 'wall-shift', heading: '🧱 <b>Wall shifts</b>' },
   { type: 'top-movers', heading: '📊 <b>Digest</b>' },
 ];
 
@@ -257,6 +300,11 @@ function alertItems({ rule, text }, market) {
     const detail = colon >= 0 ? plain.slice(colon + 1).trim() : plain;
     return [`• <b>${escapeHtml(label)}</b> ${escapeHtml(detail)}`];
   }
+  if (rule.type === 'wall-shift') {
+    const colon = plain.indexOf(':');
+    const detail = colon >= 0 ? plain.slice(colon + 1).trim() : plain;
+    return [`• <b>${escapeHtml(rule.symbol)}</b> ${escapeHtml(detail)}`];
+  }
   if (rule.type === 'top-movers') {
     return String(text).split('\n').slice(1).map(line => {
       const content = line.replace(/^[🟢🔴]\s*/, '');
@@ -295,6 +343,7 @@ function combinedHtml(events, market, now, includeFooter) {
 const EOD_SECTIONS = [
   { type: 'top-movers', heading: '📊 <b>Top movers</b>' },
   { type: 'buildup', heading: '📈 <b>Build-ups</b>' },
+  { type: 'wall-shift', heading: '🧱 <b>Wall shifts</b>' },
   { type: 'level', heading: '🚨 <b>Levels touched</b>' },
 ];
 
@@ -373,18 +422,20 @@ function recipientsFor(chatIds) {
 }
 
 export function createAlertDigestState() {
-  return { dayKey: null, pending: new Map(), dailyEvents: new Map(), personalAlertStates: new Map(), sentSlots: new Set() };
+  return { dayKey: null, pending: new Map(), dailyEvents: new Map(), wallBaselines: new Map(), personalAlertStates: new Map(), sentSlots: new Set() };
 }
 
 function prepareDigestState(state, dayKey) {
   if (!(state.pending instanceof Map)) state.pending = new Map();
   if (!(state.dailyEvents instanceof Map)) state.dailyEvents = new Map();
+  if (!(state.wallBaselines instanceof Map)) state.wallBaselines = new Map();
   if (!(state.personalAlertStates instanceof Map)) state.personalAlertStates = new Map();
   if (!(state.sentSlots instanceof Set)) state.sentSlots = new Set();
   if (state.dayKey !== dayKey) {
     state.dayKey = dayKey;
     state.pending.clear();
     state.dailyEvents.clear();
+    state.wallBaselines.clear();
     state.sentSlots.clear();
   }
 }
@@ -413,11 +464,30 @@ export async function runAlerts(market, {
   digestState,
 }) {
   const rules = loadAlertRules(rulesPath);
-  const previous = new Map(state);
-  const messages = evaluateAlerts(market, rules, state, now);
-  const firedRules = rulesThatFired(rules, previous, state);
-  const events = messages.map((text, index) => ({ text, rule: firedRules[index] ?? { type: 'unknown' } }));
   const subscribers = recipientsFor(broadcastChatIds);
+  let rulesForEvaluation = rules;
+  let wallBaselines;
+  if (digestState && subscribers.length && typeof market?.date === 'string') {
+    prepareDigestState(digestState, market.date);
+    const watchedSymbols = new Set(['NIFTY', 'BANKNIFTY', ...rules
+      .filter(rule => rule?.type === 'buildup' && rule.broadcast === true && typeof rule.symbol === 'string')
+      .map(rule => rule.symbol)]);
+    for (const symbol of watchedSymbols) {
+      if (digestState.wallBaselines.has(symbol)) continue;
+      const series = seriesFor(market, symbol);
+      if (series) digestState.wallBaselines.set(symbol, wallReadings(series));
+    }
+    const existingIds = new Set(rules.map(rule => rule?.id));
+    const wallRules = [...watchedSymbols]
+      .map(symbol => ({ id: `wall-shift:${symbol}`, type: 'wall-shift', symbol, label: `${symbol} OI wall shift`, broadcast: true }))
+      .filter(rule => !existingIds.has(rule.id));
+    rulesForEvaluation = [...rules, ...wallRules];
+    wallBaselines = digestState.wallBaselines;
+  }
+  const previous = new Map(state);
+  const messages = evaluateAlerts(market, rulesForEvaluation, state, now, { wallBaselines });
+  const firedRules = rulesThatFired(rulesForEvaluation, previous, state);
+  const events = messages.map((text, index) => ({ text, rule: firedRules[index] ?? { type: 'unknown' } }));
 
   if (events.length) {
     const ownerMessage = combinedHtml(events, market, now, false);
@@ -431,13 +501,12 @@ export async function runAlerts(market, {
   const instant = events.filter(event => event.rule.broadcast === true
     && (event.rule.type === 'oi-spike' || (event.rule.type === 'level' && event.rule.symbol === 'NIFTY')));
   if (digestState && subscribers.length && typeof market?.date === 'string') {
-    prepareDigestState(digestState, market.date);
-    const daily = events.filter(event => event.rule.broadcast === true && ['level', 'buildup', 'top-movers'].includes(event.rule.type));
+    const daily = events.filter(event => event.rule.broadcast === true && ['level', 'buildup', 'top-movers', 'wall-shift'].includes(event.rule.type));
     for (const event of daily) {
       const key = `${event.rule.type}:${event.rule.id}`;
       const prepared = { ...event, items: alertItems(event, market) };
       digestState.dailyEvents.set(key, prepared);
-      if (['buildup', 'top-movers'].includes(event.rule.type)) digestState.pending.set(key, prepared);
+      if (['buildup', 'top-movers', 'wall-shift'].includes(event.rule.type)) digestState.pending.set(key, prepared);
     }
   }
   if (instant.length) {

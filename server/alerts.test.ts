@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
-import { createAlertDigestState, evaluateAlerts, flushScheduledDigests } from './alerts.mjs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createAlertDigestState, evaluateAlerts, flushScheduledDigests, runAlerts } from './alerts.mjs';
 
 const NOW = Date.parse('2026-11-16T04:17:00Z'); // 09:47 IST
 const MINUTE = 60_000;
@@ -16,6 +19,19 @@ const rows: number[][] = [
   [25_200, 0, 120, 110, 700_000, 650_000, 30_000], // CE OI day +7%
   [24_800, 0, 15, 14, 20_000, 19_000, 5_000], // dust strike
 ];
+const tempDirs: string[] = [];
+
+function tempRules() {
+  const dir = mkdtempSync(join(tmpdir(), 'order-flow-wall-shift-'));
+  tempDirs.push(dir);
+  const path = join(dir, 'alerts.json');
+  writeFileSync(path, JSON.stringify({ rules: [] }));
+  return path;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 const rules = [
   { id: 'nifty-level', type: 'level', symbol: 'NIFTY', below: 25_054, above: 25_246, label: 'NIFTY level' },
@@ -163,5 +179,52 @@ describe('15:45 subscriber EOD report', () => {
     expect(sent.every(text => text.length < 900 && text.includes('not investment advice'))).toBe(true);
     expect(sent[0]).toContain('<b>Build-ups</b>');
     expect(sent[1]).toContain('<b>Journal outcomes</b>');
+  });
+});
+
+describe('OI wall-shift digest', () => {
+  it('captures day baselines, detects strike/OI movement, and delivers only in a digest to subscribers', async () => {
+    const rulesPath = tempRules();
+    const digestState = createAlertDigestState();
+    const alertState = new Map();
+    const sent: Array<{ text: string; options?: { chatId?: number; parseMode?: string; retry?: boolean } }> = [];
+    const send = vi.fn(async (text: string, options?: { chatId?: number; parseMode?: string; retry?: boolean }) => {
+      sent.push({ text, options });
+      return { sent: true };
+    });
+    const marketAt = (at: number, rows: number[][]) => ({
+      date: '2026-11-16',
+      t: at,
+      series: [{ s: 'NIFTY', sp: 100, pc: 100, r: rows }],
+    });
+    const baseline = [
+      [110, 0, 10, 9, 1_000, 900, 1],
+      [120, 0, 10, 9, 800, 700, 1],
+      [90, 1, 10, 9, 1_000, 900, 1],
+      [80, 1, 10, 9, 900, 800, 1],
+    ];
+    const moved = [
+      [110, 0, 10, 9, 900, 900, 1],
+      [120, 0, 10, 9, 1_200, 700, 1],
+      [90, 1, 10, 9, 700, 900, 1],
+      [80, 1, 10, 9, 500, 800, 1],
+    ];
+
+    await runAlerts(marketAt(NOW, baseline), { rulesPath, state: alertState, digestState, now: NOW, send, broadcastChatIds: [701] });
+    expect(send).not.toHaveBeenCalled();
+    expect(digestState.wallBaselines.get('NIFTY')).toMatchObject({ ce: { strike: 110, oi: 1000 }, pe: { strike: 90, oi: 1000 } });
+
+    await runAlerts(marketAt(NOW + 10 * MINUTE, moved), { rulesPath, state: alertState, digestState, now: NOW + 10 * MINUTE, send, broadcastChatIds: [701] });
+    expect(send).toHaveBeenCalledTimes(1); // owner keeps the combined immediate path
+    expect(sent[0].options?.chatId).toBeUndefined();
+    expect(sent[0].text).toContain('CE wall moved 110→120');
+    expect(sent[0].text).toContain('PE wall OI −30%');
+    expect(digestState.pending.size).toBe(1);
+
+    await flushScheduledDigests({ digestState, now: Date.parse('2026-11-16T05:30:00Z'), broadcastChatIds: [701], send });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(sent[1].text).toContain('<b>Wall shifts</b>');
+    expect(sent[1].options).toMatchObject({ chatId: 701, parseMode: 'HTML', retry: true });
+    expect(sent[1].text).toContain('not investment advice');
   });
 });
