@@ -44,6 +44,7 @@ import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs'
 import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAlerts } from './alerts.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
+import { liveErrorMessage, liveSnapshotMessage } from './liveCommand.mjs';
 import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
@@ -1023,7 +1024,24 @@ server.listen(PORT, HOST, async () => {
         if (telegramTaskActive) return;
         telegramTaskActive = true;
         try {
-          await pollCommands({ token, statePath: SUBSCRIBERS_PATH, now: Date.now(), log, send: sendTelegram });
+          await pollCommands({
+            token,
+            statePath: SUBSCRIBERS_PATH,
+            now: Date.now(),
+            log,
+            send: sendTelegram,
+            ownerChatId: process.env.TELEGRAM_CHAT_ID,
+            handleLive: (symbol, side) => {
+              if (!bySymbol.has(symbol)) return liveErrorMessage(symbol, 'unknown or unsupported symbol.');
+              const market = state.latest;
+              if (!market?.series?.some(series => series?.s === symbol)) return liveErrorMessage(symbol, 'no captured snapshot is available yet.');
+              let spotReading = null;
+              let futureReading = null;
+              try { spotReading = provider.spots?.()?.[symbol] ?? null; } catch { /* use the captured market spot */ }
+              try { futureReading = provider.ticksFor?.({ symbols: [symbol] })?.futures?.[symbol] ?? null; } catch { /* report unavailable cache */ }
+              return liveSnapshotMessage({ symbol, side, market, spotReading, futureReading });
+            },
+          });
           await flushScheduledDigests({
             digestState: alertDigestState,
             now: Date.now(),

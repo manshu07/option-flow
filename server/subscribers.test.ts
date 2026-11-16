@@ -38,7 +38,7 @@ describe('Telegram subscribers', () => {
     const statePath = join(tempDir(), 'subscribers.json');
     let updates = [update(10, 123, '/START@orderflowbot')];
     const handle = vi.fn(async () => telegramResponse(updates));
-    const send = vi.fn(async () => ({ sent: true }));
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
 
     const first = await pollCommands({ token: 'test-token', statePath, now: NOW, handle, send });
     expect(first.offset).toBe(11);
@@ -62,7 +62,7 @@ describe('Telegram subscribers', () => {
     const statePath = join(tempDir(), 'subscribers.json');
     saveSubscribers(statePath, { subscribers: [{ chatId: 123, startedAt: NOW - 1000, active: true }], offset: 5 });
     const handle = vi.fn(async () => telegramResponse([update(5, 123, '/stop'), update(6, 456, '/stop')]));
-    const send = vi.fn(async () => ({ sent: true }));
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
 
     const result = await pollCommands({ token: 'test-token', statePath, now: NOW, handle, send });
 
@@ -82,7 +82,7 @@ describe('Telegram subscribers', () => {
       subscribers: Array.from({ length: 500 }, (_, index) => ({ chatId: index + 1, startedAt: NOW, active: true })),
       offset: 0,
     });
-    const send = vi.fn(async () => ({ sent: true }));
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
 
     await pollCommands({ token: 'test-token', statePath, now: NOW, handle: async () => telegramResponse([update(1, 501, '/start')]), send });
 
@@ -96,7 +96,7 @@ describe('Telegram subscribers', () => {
     const blockedParent = join(dir, 'not-a-directory');
     writeFileSync(blockedParent, 'file prevents the state directory');
     const statePath = join(blockedParent, 'subscribers.json');
-    const send = vi.fn(async () => ({ sent: true }));
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
 
     const result = await pollCommands({
       token: 'test-token',
@@ -271,5 +271,48 @@ describe('Telegram subscribers', () => {
     expect(digestState.pending.size).toBe(0);
     await flushScheduledDigests({ digestState, now: digestAt, broadcastChatIds: [777], send });
     expect(send).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('/live command dispatch', () => {
+  it('routes active subscribers and the owner through the same cached-data handler', async () => {
+    const statePath = join(tempDir(), 'subscribers.json');
+    saveSubscribers(statePath, { subscribers: [{ chatId: 321, startedAt: NOW, active: true }], offset: 0 });
+    const handleLive = vi.fn(async (symbol: string, side: string | null) => `<b>${symbol} ${side ?? 'both'}</b> · educational only; not investment advice.`);
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
+    const handle = vi.fn(async () => telegramResponse([update(1, 321, '/LIVE NIFTY PE'), update(2, 999, '/live BANKNIFTY') ]));
+
+    await pollCommands({ token: 'test-token', statePath, now: NOW, handle, send, ownerChatId: '999', handleLive });
+
+    expect(handleLive).toHaveBeenNthCalledWith(1, 'NIFTY', 'PE');
+    expect(handleLive).toHaveBeenNthCalledWith(2, 'BANKNIFTY', null);
+    expect(send).toHaveBeenNthCalledWith(1, expect.stringContaining('<b>NIFTY PE</b>'), { chatId: 321, parseMode: 'HTML' });
+    expect(send).toHaveBeenNthCalledWith(2, expect.stringContaining('<b>BANKNIFTY both</b>'), { chatId: 999, parseMode: 'HTML' });
+    expect(send.mock.calls.every(([text]) => String(text).includes('not investment advice'))).toBe(true);
+  });
+
+  it('limits each chat to five live requests per ten minutes', async () => {
+    const statePath = join(tempDir(), 'subscribers.json');
+    saveSubscribers(statePath, { subscribers: [{ chatId: 891, startedAt: NOW, active: true }], offset: 0 });
+    const updates = Array.from({ length: 6 }, (_, index) => update(index + 1, 891, '/live TMPV'));
+    const handleLive = vi.fn(async () => '📡 TMPV · not investment advice');
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
+
+    await pollCommands({ token: 'test-token', statePath, now: NOW, handle: async () => telegramResponse(updates), send, handleLive });
+
+    expect(handleLive).toHaveBeenCalledTimes(5);
+    expect(send).toHaveBeenCalledTimes(6);
+    expect(send.mock.calls[5][0]).toContain('5 requests per 10 minutes');
+    expect(send.mock.calls[5][0]).toContain('not investment advice');
+
+    await pollCommands({
+      token: 'test-token',
+      statePath,
+      now: NOW + 10 * 60_000,
+      handle: async () => telegramResponse([update(7, 891, '/live TMPV')]),
+      send,
+      handleLive,
+    });
+    expect(handleLive).toHaveBeenCalledTimes(6);
   });
 });

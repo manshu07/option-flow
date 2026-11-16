@@ -5,7 +5,10 @@ const TELEGRAM_API = 'https://api.telegram.org';
 const MAX_SUBSCRIBERS = 500;
 const HINT_LIMIT = 3;
 const HINT_WINDOW_MS = 60 * 60_000;
+const LIVE_LIMIT = 5;
+const LIVE_WINDOW_MS = 10 * 60_000;
 const hintTimes = new Map();
+const liveTimes = new Map();
 
 function normalizeState(value) {
   if (!value || typeof value !== 'object') return { subscribers: [], offset: 0 };
@@ -48,8 +51,8 @@ export function activeChatIds(state) {
 }
 
 function commandFor(text) {
-  const match = /^\/([a-z]+)(?:@[a-z0-9_]+)?(?:\s|$)/i.exec(String(text ?? '').trim());
-  return match?.[1]?.toLowerCase() ?? null;
+  const match = /^\/([a-z]+)(?:@[a-z0-9_]+)?(?:\s+([\s\S]*))?$/i.exec(String(text ?? '').trim());
+  return match ? { name: match[1].toLowerCase(), args: String(match[2] ?? '').trim() } : null;
 }
 
 function maySendHint(chatId, now) {
@@ -64,10 +67,23 @@ function maySendHint(chatId, now) {
   return true;
 }
 
-function processCommand(state, message, now, replies) {
+function mayRequestLive(chatId, now) {
+  const key = String(chatId);
+  const recent = (liveTimes.get(key) ?? []).filter(at => now - at < LIVE_WINDOW_MS);
+  if (recent.length >= LIVE_LIMIT) {
+    liveTimes.set(key, recent);
+    return false;
+  }
+  recent.push(now);
+  liveTimes.set(key, recent);
+  return true;
+}
+
+function processCommand(state, message, now, replies, ownerChatId) {
   const chatId = Number(message?.chat?.id);
   if (!Number.isSafeInteger(chatId) || chatId === 0) return;
-  const command = commandFor(message?.text);
+  const parsed = commandFor(message?.text);
+  const command = parsed?.name;
   const subscriber = state.subscribers.find(row => row.chatId === chatId);
 
   if (command === 'start') {
@@ -105,11 +121,32 @@ function processCommand(state, message, now, replies) {
     return;
   }
 
+  if (command === 'live') {
+    const args = parsed.args.split(/\s+/).filter(Boolean);
+    const symbol = args[0]?.toUpperCase();
+    const side = args[1]?.toUpperCase() ?? null;
+    const authorized = subscriber?.active || String(chatId) === String(ownerChatId ?? '');
+    if (!authorized) {
+      replies.push({ chatId, text: 'Use /start to subscribe before using /live. Educational data only; not investment advice.' });
+      return;
+    }
+    if (!symbol || args.length > 2 || (side != null && side !== 'CE' && side !== 'PE')) {
+      replies.push({ chatId, text: 'Usage: /live SYMBOL [CE|PE]. Educational data only; not investment advice.' });
+      return;
+    }
+    if (!mayRequestLive(chatId, now)) {
+      replies.push({ chatId, text: '/live is limited to 5 requests per 10 minutes. Educational data only; not investment advice.' });
+      return;
+    }
+    replies.push({ chatId, live: { symbol, side }, parseMode: 'HTML' });
+    return;
+  }
+
   if (maySendHint(chatId, now)) replies.push({ chatId, text: 'Unknown command. Use /help to see the available commands.' });
 }
 
 /** One crash-safe getUpdates pass. `handle` is an injectable fetch transport. */
-export async function pollCommands({ token, statePath, now = Date.now(), log = () => {}, send, handle = globalThis.fetch } = {}) {
+export async function pollCommands({ token, statePath, now = Date.now(), log = () => {}, send, handle = globalThis.fetch, ownerChatId, handleLive } = {}) {
   if (!token || !statePath || typeof handle !== 'function') return { processed: 0, offset: 0, skipped: 'not configured' };
   try {
     const before = loadSubscribers(statePath);
@@ -140,7 +177,7 @@ export async function pollCommands({ token, statePath, now = Date.now(), log = (
     let lastUpdateId = before.offset - 1;
     for (const update of updates) {
       if (Number.isSafeInteger(update?.update_id)) lastUpdateId = Math.max(lastUpdateId, update.update_id);
-      if (update?.message) processCommand(state, update.message, now, replies);
+      if (update?.message) processCommand(state, update.message, now, replies, ownerChatId);
     }
     const next = { ...state, offset: lastUpdateId >= 0 ? lastUpdateId + 1 : before.offset };
 
@@ -154,7 +191,21 @@ export async function pollCommands({ token, statePath, now = Date.now(), log = (
     const sendReply = typeof send === 'function' ? send : async () => ({ sent: false, reason: 'not-configured' });
     for (const reply of replies) {
       try {
-        const result = await sendReply(reply.text, { chatId: reply.chatId });
+        let text = reply.text;
+        if (reply.live) {
+          try {
+            const result = await handleLive?.(reply.live.symbol, reply.live.side);
+            text = typeof result === 'string'
+              ? result
+              : typeof result?.text === 'string'
+                ? result.text
+                : `${reply.live.symbol}: live snapshot unavailable with this provider.\n\n🎓 Educational data only; not investment advice.`;
+          } catch {
+            text = `${reply.live.symbol}: live snapshot unavailable with this provider.\n\n🎓 Educational data only; not investment advice.`;
+          }
+        }
+        const options = { chatId: reply.chatId, ...(reply.parseMode ? { parseMode: reply.parseMode } : {}) };
+        const result = await sendReply(text, options);
         if (!result?.sent) log(`telegram subscriber reply not sent (${result?.reason ?? result?.status ?? 'unknown'})`);
       } catch (error) {
         log(`telegram subscriber reply failed: ${String(error?.message || error)}`);
