@@ -2,6 +2,11 @@
 import { spawn } from 'node:child_process';
 
 const run = (cmd, args) => spawn(cmd, args, { stdio: 'inherit', shell: process.platform === 'win32' });
+// Node's --env-file never overrides an already-set variable, so a stale key
+// exported in the launching shell (e.g. the agent daemon's TYPESAFE_API_KEY)
+// would silently beat the fresh .env value. The .env file is the source of
+// truth for provider keys, so drop the inherited one first.
+delete process.env.TYPESAFE_API_KEY;
 // `npm run dev:recorded` replays a recorded real session instead of the demo market.
 const api = run(process.execPath, ['--env-file-if-exists=.env', 'server/index.mjs', ...process.argv.slice(2)]);
 // VITE_PORT lets a second dev tree run beside the live one (default: Vite's own 5195).
