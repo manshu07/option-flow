@@ -3,6 +3,7 @@ import { CapsuleSegmented, type CapsuleOption } from '@/components/common/Capsul
 import { MarketFlowPage } from '@/features/market-flow/MarketFlowPage';
 import { StrikeFlowPage } from '@/features/strike-flow/StrikeFlowPage';
 import { ObservationsPage } from '@/features/observations/ObservationsPage';
+import { uniqueObservationCards } from '@/features/observations/observationModel';
 import { loadUnderlyings, type Underlying } from '@/lib/underlyings';
 
 const API = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
@@ -18,7 +19,7 @@ function useObservationCount() {
     let alive = true;
     const read = () => {
       fetch(OBSERVATIONS_URL).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
-        if (alive) setCount(Array.isArray(body?.cards) ? body.cards.length : 0);
+        if (alive) setCount(uniqueObservationCards(Array.isArray(body?.cards) ? body.cards : []).length);
       }).catch(() => { /* the page itself surfaces failures; the count just waits */ });
     };
     read();

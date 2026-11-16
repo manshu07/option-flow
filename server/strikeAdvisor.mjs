@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { sendTelegram } from './telegram.mjs';
+import { sendTelegramObservationCard } from './telegram.mjs';
 import { askTypeSafe, typesafeConfigured } from './typesafe.mjs';
 import { inFireWindow } from './alerts.mjs';
 
@@ -142,10 +142,12 @@ export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, p
     if (!(chosen.ltp > MIN_ENTRY_PREMIUM)) { skipped.push({ symbol, reason: 'premium too thin' }); continue; }
     const walls = watch.walls ?? {};
     cards.push({
-      id: `${symbol}-${watch.at ?? Date.now()}`,
+      id: `${symbol}|${watch.date ?? `at-${watch.at ?? 0}`}`,
       at: watch.at ?? Date.now(),
       date: watch.date,
       symbol,
+      spot: watch.spot ?? null,
+      spotChangePct: watch.spotChangePct ?? null,
       bias: watch.bias,
       side: chosen.side === 1 ? 'PE' : 'CE',
       strike: chosen.strike,
@@ -160,11 +162,26 @@ export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, p
   return { cards, skipped };
 }
 
+export function observationKey(card) {
+  if (typeof card?.symbol === 'string' && typeof card?.date === 'string') return `${card.symbol}|${card.date}`;
+  return typeof card?.id === 'string' && card.id.length ? `id:${card.id}` : null;
+}
+
+export function dedupeObservations(cards) {
+  const seen = new Set();
+  return cards.filter((card, index) => {
+    const key = observationKey(card) ?? `unkeyed:${index}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Read + normalise the observations store. */
 export function loadObservations(path) {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8'));
-    return Array.isArray(parsed?.cards) ? parsed.cards : [];
+    return Array.isArray(parsed?.cards) ? dedupeObservations(parsed.cards) : [];
   } catch { return []; }
 }
 
@@ -180,7 +197,7 @@ const notified = new Set(); // `symbol|sessionDate` — one Telegram note per ca
  * One advisor pass over the triage's watch list. Never throws; every failure
  * is logged and the observations file keeps its previous content.
  */
-export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegram } = {}) {
+export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null } = {}) {
   const sessionDate = typeof market?.date === 'string' ? market.date : null;
   if (!configured()) return { skipped: 'not configured' };
   if (!inFireWindow(now)) return { skipped: 'outside fire window' };
@@ -191,7 +208,9 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     const series = seriesFor(watch.symbol);
     const candidates = candidateStrikes(series, watch.bias);
     if (!candidates.length) continue;
-    prepared.push({ ...watch, at: now, date: sessionDate, expiry: series?.e ?? null, candidates, walls: chainWalls(series) });
+    const spot = Number.isFinite(series?.sp) ? series.sp : null;
+    const spotChangePct = spot !== null && Number.isFinite(series?.pc) && series.pc > 0 ? round2((spot / series.pc - 1) * 100) : null;
+    prepared.push({ ...watch, at: now, date: sessionDate, expiry: series?.e ?? null, spot, spotChangePct, candidates, walls: chainWalls(series) });
   }
   if (!prepared.length) return { skipped: 'no readable chains on watched symbols' };
   try {
@@ -212,17 +231,23 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     const answers = await ask(state, questions);
     const { cards, skipped } = advisorDecisions(prepared, answers);
     if (cards.length) {
-      const stored = [...cards, ...loadObservations(obsPath)]
-        .filter((card, index, all) => all.findIndex(c => c.id === card.id) === index)
-        .slice(0, MAX_CARDS);
+      const freshCards = dedupeObservations(cards);
+      const existing = loadObservations(obsPath);
+      const existingKeys = new Set(existing.map(observationKey).filter(Boolean));
+      const stored = dedupeObservations([...freshCards, ...existing]).slice(0, MAX_CARDS);
       saveObservations(obsPath, stored);
-      const fresh = cards.filter(card => !notified.has(`${card.symbol}|${card.date}`));
+      const fresh = freshCards.filter(card => {
+        const key = observationKey(card);
+        return key && !existingKeys.has(key) && !notified.has(key);
+      });
+      for (const card of freshCards) {
+        const key = observationKey(card);
+        if (key) notified.add(key);
+      }
       for (const card of fresh) {
-        notified.add(`${card.symbol}|${card.date}`);
-        const wallText = card.bias === 'bearish'
-          ? `SL confirm below ${card.support?.strike ?? '—'} (PE wall) · resistance ${card.resistance?.strike ?? '—'} (CE wall)`
-          : `SL confirm above ${card.resistance?.strike ?? '—'} (CE wall) · support ${card.support?.strike ?? '—'} (PE wall)`;
-        const result = await send(`🔍 OBSERVATION ${card.symbol} ${card.strike}${card.side} (${card.bias}, quality ${(card.quality * 100).toFixed(0)}%)\nEntry ~${card.entry} · SL ${card.sl} (−45%) · TGT1 ${card.tgt1} (+55%) · TGT2 ${card.tgt2} (+90%)\n${wallText}\n${card.disclaimer}`);
+        let live = null;
+        try { live = getLive(card); } catch { /* quiet live feeds do not block the captured-data card */ }
+        const result = await send({ ...card, sentAt: now, live });
         log(`telegram ${result.sent ? 'sent' : `not sent (${result.reason ?? result.status})`}: observation ${card.symbol} ${card.strike}${card.side}`);
       }
     }

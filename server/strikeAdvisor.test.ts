@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { candidateStrikes, chainWalls, levelsFor, advisorQuestions, advisorDecisions, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { candidateStrikes, chainWalls, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 
 const NOW = Date.parse('2026-11-16T05:00:00Z');
 
@@ -85,6 +85,39 @@ describe('advisorQuestions / advisorDecisions', () => {
     const unsure = advisorDecisions([watch], { quality_MANAPPURAM: { noul: 0.9 }, strike_MANAPPURAM: { choice: 'c1', probabilities: { c1: 0.34, c2: 0.33, c3: 0.33 } } });
     expect(unsure.cards).toHaveLength(0);
   });
+
+  it('uses a stable symbol/session identity across advisor passes', () => {
+    const answers = { quality_MANAPPURAM: { noul: 0.8 }, strike_MANAPPURAM: { choice: 'c1', probabilities: { c1: 0.75 } } };
+    const first = advisorDecisions([{ ...watch, at: NOW }], answers).cards[0];
+    const later = advisorDecisions([{ ...watch, at: NOW + 10 * 60_000 }], answers).cards[0];
+
+    expect(first.id).toBe('MANAPPURAM|2026-11-16');
+    expect(later.id).toBe(first.id);
+  });
+});
+
+describe('observation deduplication', () => {
+  it('keeps the first card per symbol/session while allowing another day', () => {
+    const latest = { id: 'NIFTY|2026-11-16', symbol: 'NIFTY', date: '2026-11-16', entry: 10 };
+    const duplicate = { id: 'NIFTY-1731730000', symbol: 'NIFTY', date: '2026-11-16', entry: 9 };
+    const nextDay = { id: 'NIFTY|2026-11-17', symbol: 'NIFTY', date: '2026-11-17', entry: 11 };
+    expect(dedupeObservations([latest, duplicate, nextDay])).toEqual([latest, nextDay]);
+  });
+
+  it('normalizes duplicate persisted cards on read', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-dedupe-'));
+    const obsPath = join(dir, 'observations.json');
+    try {
+      writeFileSync(obsPath, JSON.stringify({ cards: [
+        { id: 'new', symbol: 'NIFTY', date: '2026-11-16' },
+        { id: 'old', symbol: 'NIFTY', date: '2026-11-16' },
+        { id: 'other', symbol: 'SENSEX', date: '2026-11-16' },
+      ] }));
+      expect(loadObservations(obsPath).map(card => card.id)).toEqual(['new', 'other']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('runAdvisor gates', () => {
@@ -103,5 +136,69 @@ describe('runAdvisor gates', () => {
     expect(result.skipped).toBe('failed');
     expect(loadObservations(obsPath)).toHaveLength(1);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('updates one symbol/session card but sends only one Telegram note', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-once-'));
+    const obsPath = join(dir, 'observations.json');
+    const marketSeries = { ...seriesFixture(), s: 'DUPTEST' };
+    const watches = [{ symbol: 'DUPTEST', bias: 'bullish' }];
+    const ask = async () => ({ quality_DUPTEST: { noul: 0.9 }, strike_DUPTEST: { choice: 'c1', probabilities: { c1: 0.9 } } });
+    const sent = [];
+    try {
+      const first = await runAdvisor({ date: '2026-11-16', series: [marketSeries] }, {
+        obsPath, watches, now: NOW, ask, send: async message => { sent.push(message); return { sent: true }; },
+      });
+      const second = await runAdvisor({ date: '2026-11-16', series: [marketSeries] }, {
+        obsPath, watches, now: NOW + 10 * 60_000, ask, send: async message => { sent.push(message); return { sent: true }; },
+      });
+
+      const cards = loadObservations(obsPath);
+      expect(first.written).toBe(1);
+      expect(second.written).toBe(1);
+      expect(cards).toHaveLength(1);
+      expect(cards[0].id).toBe('DUPTEST|2026-11-16');
+      expect(cards[0].at).toBe(NOW + 10 * 60_000);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ symbol: 'DUPTEST', date: '2026-11-16', spot: 300.4, spotChangePct: expect.any(Number) });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('samples cached live readings immediately before sending without persisting them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-live-'));
+    const obsPath = join(dir, 'observations.json');
+    const marketSeries = { ...seriesFixture(), s: 'LIVEV2' };
+    const watches = [{ symbol: 'LIVEV2', bias: 'bullish' }];
+    const events: string[] = [];
+    let sentCard: Record<string, unknown> | null = null;
+
+    try {
+      const result = await runAdvisor({ date: '2026-11-16', series: [marketSeries] }, {
+        obsPath,
+        watches,
+        now: NOW,
+        configured: () => true,
+        ask: async () => ({ quality_LIVEV2: { noul: 0.9 }, strike_LIVEV2: { choice: 'c1', probabilities: { c1: 0.9 } } }),
+        getLive: card => {
+          events.push('live');
+          expect(card.symbol).toBe('LIVEV2');
+          return { spot: 300.5, future: 301, option: 4.2 };
+        },
+        send: async card => {
+          events.push('send');
+          sentCard = card;
+          return { sent: true };
+        },
+      });
+
+      expect(result.written).toBe(1);
+      expect(events).toEqual(['live', 'send']);
+      expect(sentCard).toMatchObject({ sentAt: NOW, live: { spot: 300.5, future: 301, option: 4.2 } });
+      expect(loadObservations(obsPath)[0]).not.toHaveProperty('live');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
