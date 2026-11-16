@@ -142,11 +142,21 @@ function processCommand(state, message, now, replies, ownerChatId) {
     return;
   }
 
+  if (command === 'journal') {
+    const authorized = subscriber?.active || String(chatId) === String(ownerChatId ?? '');
+    if (!authorized) {
+      replies.push({ chatId, text: 'Use /start to subscribe before using /journal. Educational data only; not investment advice.' });
+      return;
+    }
+    replies.push({ chatId, journal: true, parseMode: 'HTML' });
+    return;
+  }
+
   if (maySendHint(chatId, now)) replies.push({ chatId, text: 'Unknown command. Use /help to see the available commands.' });
 }
 
 /** One crash-safe getUpdates pass. `handle` is an injectable fetch transport. */
-export async function pollCommands({ token, statePath, now = Date.now(), log = () => {}, send, handle = globalThis.fetch, ownerChatId, handleLive } = {}) {
+export async function pollCommands({ token, statePath, now = Date.now(), log = () => {}, send, handle = globalThis.fetch, ownerChatId, handleLive, handleJournal } = {}) {
   if (!token || !statePath || typeof handle !== 'function') return { processed: 0, offset: 0, skipped: 'not configured' };
   try {
     const before = loadSubscribers(statePath);
@@ -202,6 +212,18 @@ export async function pollCommands({ token, statePath, now = Date.now(), log = (
                 : `${reply.live.symbol}: live snapshot unavailable with this provider.\n\n🎓 Educational data only; not investment advice.`;
           } catch {
             text = `${reply.live.symbol}: live snapshot unavailable with this provider.\n\n🎓 Educational data only; not investment advice.`;
+          }
+        }
+        if (reply.journal) {
+          try {
+            const result = await handleJournal?.(now);
+            text = typeof result === 'string'
+              ? result
+              : typeof result?.text === 'string'
+                ? result.text
+                : 'No outcomes resolved yet today.\n\n🎓 Observation history is educational only; not investment advice.';
+          } catch {
+            text = 'Journal outcomes are temporarily unavailable.\n\n🎓 Observation history is educational only; not investment advice.';
           }
         }
         const options = { chatId: reply.chatId, ...(reply.parseMode ? { parseMode: reply.parseMode } : {}) };

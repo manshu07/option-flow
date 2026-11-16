@@ -316,3 +316,39 @@ describe('/live command dispatch', () => {
     expect(handleLive).toHaveBeenCalledTimes(6);
   });
 });
+
+describe('/journal command dispatch', () => {
+  it('routes the journal reply only to an active subscriber or the owner', async () => {
+    const statePath = join(tempDir(), 'subscribers.json');
+    saveSubscribers(statePath, { subscribers: [{ chatId: 651, startedAt: NOW, active: true }], offset: 0 });
+    const handleJournal = vi.fn(async () => '<b>Journal · not investment advice</b>');
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
+    const handle = async () => telegramResponse([update(1, 651, '/journal'), update(2, 999, '/journal')]);
+
+    await pollCommands({ token: 'test-token', statePath, now: NOW, handle, send, ownerChatId: '999', handleJournal });
+
+    expect(handleJournal).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenNthCalledWith(1, '<b>Journal · not investment advice</b>', { chatId: 651, parseMode: 'HTML' });
+    expect(send).toHaveBeenNthCalledWith(2, '<b>Journal · not investment advice</b>', { chatId: 999, parseMode: 'HTML' });
+  });
+
+  it('denies inactive chats without reading the journal and keeps the disclaimer', async () => {
+    const statePath = join(tempDir(), 'subscribers.json');
+    const handleJournal = vi.fn(async () => 'should not be read');
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
+
+    await pollCommands({
+      token: 'test-token',
+      statePath,
+      now: NOW,
+      handle: async () => telegramResponse([update(1, 652, '/journal')]),
+      send,
+      ownerChatId: '999',
+      handleJournal,
+    });
+
+    expect(handleJournal).not.toHaveBeenCalled();
+    expect(send.mock.calls[0][0]).toContain('Use /start');
+    expect(send.mock.calls[0][0]).toContain('not investment advice');
+  });
+});

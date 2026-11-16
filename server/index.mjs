@@ -45,6 +45,7 @@ import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAle
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { liveErrorMessage, liveSnapshotMessage } from './liveCommand.mjs';
+import { formatJournalMessage } from './journalCommand.mjs';
 import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
@@ -1041,6 +1042,10 @@ server.listen(PORT, HOST, async () => {
               try { futureReading = provider.ticksFor?.({ symbols: [symbol] })?.futures?.[symbol] ?? null; } catch { /* report unavailable cache */ }
               return liveSnapshotMessage({ symbol, side, market, spotReading, futureReading });
             },
+            handleJournal: () => formatJournalMessage(
+              loadObservations(path.join(DATA_DIR, 'observations.json')),
+              marketParts(Date.now()).dateKey,
+            ),
           });
           await flushScheduledDigests({
             digestState: alertDigestState,
