@@ -133,13 +133,38 @@ For each snapshot at or after `card.at` (same `date`):
   need accumulated outcomes first; the outcome fields here are their input.
 - Any UI change, any Jev prompt change, auto threshold tuning.
 
+## Day rollover & history (owner requirement, 2026-11-16)
+
+- **Cards persist.** `observations.json` is never cleared by a restart or a
+  new session; the 50-card cap is the only eviction. Cards created today are
+  still readable (and shown on the Observations tab) tomorrow.
+- **Every card resolves against ITS OWN date's minute snapshots** — a card
+  created 2026-11-16 is measured with 2026-11-16 captures, never with the
+  next day's prices. A card's entry/SL/TGT levels are today's premiums; they
+  are never re-evaluated against tomorrow's market.
+- **Unresolved at session end = final `open`.** A card still unsettled at the
+  15:40 close (e.g. created at 15:35) gets `status: 'open'` with its MFE/MAE
+  from the day it lived in — permanently. It is NOT carried forward as a live
+  trade map, and the next day's snapshots must not be used to "finish" it.
+  Phase 2 analytics treat `open` as its own bucket.
+- **Eviction order:** the 50-cap must never drop an unresolved card before
+  its resolution pass has run for that date. Evict resolved cards oldest
+  first; if unresolved cards would be evicted, raise the kept-window instead
+  (resolve-then-evict is guaranteed because the journal pass runs at 15:40
+  the same day, before any new day's cards could push past the cap — keep
+  that invariant with a test).
+- **Restart-safe:** resolution reads cards from `observations.json`, not from
+  memory — a server restart before the EOD pass loses nothing. (The
+  already-sent-summary set is in-memory: one duplicate summary after a
+  same-evening restart is acceptable, note it in the log.)
+
 ## Handoff prompt (paste into Kilo)
 
 > Read `docs/OBSERVATION_JOURNAL_SPEC.md` and implement it exactly: new
-> `server/journal.mjs` with the pure `resolveCard` + throttled `runJournal`
-> described there, the once-per-day hook in `server/index.mjs` build path
-> (fire-and-forget, after the advisor block), and `server/journal.test.ts`
-> covering the seven cases listed. Do not modify strikeAdvisor.mjs,
-> typesafe.mjs, the alert fire path, or any client file. Rulebook applies:
-> additive only, reuse existing minute readers, old paths keep working. Pause
-> when tests pass for verification.
+> `server/journal.mjs` with the pure `resolveCard` + throttled `runJournal`,
+> the once-per-day hook in `server/index.mjs` build path (fire-and-forget,
+> after the advisor block), and `server/journal.test.ts` covering the seven
+> cases listed plus the Day-rollover rules (per-date resolution, unresolved
+> at close = final open, eviction never drops unresolved cards). Do not
+> modify strikeAdvisor.mjs, typesafe.mjs, the alert fire path, or any client
+> file. Pause when tests pass for verification.
