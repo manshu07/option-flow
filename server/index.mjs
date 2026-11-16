@@ -897,7 +897,7 @@ async function handle(req, res) {
   }
 
   if (p === '/underlyings.json') return serveFile(res, path.join(ROOT, 'public/underlyings.json'), 'public, max-age=3600');
-  if (p === '/observations.json') return fs.existsSync(path.join(DATA_DIR, 'observations.json')) ? serveFile(res, path.join(DATA_DIR, 'observations.json')) : send(res, 200, { cards: [] });
+  if (p === '/api/observations') return fs.existsSync(path.join(DATA_DIR, 'observations.json')) ? serveFile(res, path.join(DATA_DIR, 'observations.json')) : send(res, 200, { cards: [] });
 
   // The built page; any other path is the page itself (its router is in memory).
   if (fs.existsSync(DIST)) {

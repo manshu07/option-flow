@@ -5,6 +5,7 @@ import { clockOf } from '../market-flow/marketFlowModel';
 import './observations.css';
 
 const API = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+const OBSERVATIONS_URL = `${API}/api/observations`;
 const POLL_MS = 30_000;
 
 interface ObservationCard {
@@ -63,7 +64,7 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   useEffect(() => {
     let alive = true;
     const read = () => {
-      fetch(`${API}/observations.json`).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
+      fetch(OBSERVATIONS_URL).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
         if (!alive) return;
         setCards(Array.isArray(body?.cards) ? body.cards : []);
         setFailed(false);

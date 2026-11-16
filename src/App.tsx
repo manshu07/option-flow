@@ -6,6 +6,7 @@ import { ObservationsPage } from '@/features/observations/ObservationsPage';
 import { loadUnderlyings, type Underlying } from '@/lib/underlyings';
 
 const API = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+const OBSERVATIONS_URL = `${API}/api/observations`;
 const OBSERVATIONS_POLL_MS = 30_000;
 
 type FlowPage = 'order-flow' | 'strike-flow' | 'observations';
@@ -16,7 +17,7 @@ function useObservationCount() {
   useEffect(() => {
     let alive = true;
     const read = () => {
-      fetch(`${API}/observations.json`).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
+      fetch(OBSERVATIONS_URL).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
         if (alive) setCount(Array.isArray(body?.cards) ? body.cards.length : 0);
       }).catch(() => { /* the page itself surfaces failures; the count just waits */ });
     };
