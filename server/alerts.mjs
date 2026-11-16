@@ -25,6 +25,16 @@ const OI_FLOOR_PCT = 2;
 
 const istClock = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
 const clock = ms => istClock.format(ms);
+/** Alerts fire only inside this IST window: skip the volatile first 15 minutes after open, last fire 15:00. */
+const FIRE_FROM_MINUTE = 9 * 60 + 30;
+const FIRE_TO_MINUTE = 15 * 60;
+
+function istMinuteOfDay(now) {
+  const parts = istClock.formatToParts(now);
+  const hour = Number(parts.find(part => part.type === 'hour')?.value);
+  const minute = Number(parts.find(part => part.type === 'minute')?.value);
+  return hour * 60 + minute;
+}
 
 export function loadAlertRules(rulesPath) {
   try {
@@ -131,6 +141,7 @@ function topMoversMessage(rule, market, now) {
  * once-per-session-date for oi-spike. Returns the messages to send.
  */
 export function evaluateAlerts(market, rules, state, now = Date.now()) {
+  if (istMinuteOfDay(now) < FIRE_FROM_MINUTE || istMinuteOfDay(now) > FIRE_TO_MINUTE) return [];
   const messages = [];
   const dayKey = typeof market?.date === 'string' ? market.date : null;
   for (const rule of Array.isArray(rules) ? rules : []) {

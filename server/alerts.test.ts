@@ -77,6 +77,16 @@ describe('evaluateAlerts', () => {
     expect(evaluateAlerts(moversMarket, [{ id: 'digest', type: 'top-movers', top: 2, cooldownMin: 30 }], state, NOW + 5 * MINUTE)).toHaveLength(0);
   });
 
+  it('fires only inside the 09:30-15:00 IST alert window', () => {
+    const state = new Map();
+    // 07:30 IST — before the window
+    expect(evaluateAlerts(market(rows), rules, state, Date.parse('2026-11-16T02:00:00Z'))).toHaveLength(0);
+    // 15:45 IST — after the last fire
+    expect(evaluateAlerts(market(rows), rules, state, Date.parse('2026-11-16T10:15:00Z'))).toHaveLength(0);
+    // 09:47 IST — inside
+    expect(evaluateAlerts(market(rows), rules, state, Date.parse('2026-11-16T04:17:00Z')).length).toBeGreaterThan(0);
+  });
+
   it('skips rules for symbols the market file does not carry', () => {
     const state = new Map();
     const messages = evaluateAlerts(market(rows), [{ id: 'x', type: 'level', symbol: 'BANKNIFTY', below: 50_000 }], state, NOW);
