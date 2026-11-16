@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { sendTelegram } from './telegram.mjs';
 
 /**
@@ -36,7 +37,25 @@ function istMinuteOfDay(now) {
   return hour * 60 + minute;
 }
 
+/** True inside the alert fire window (skips the volatile open, stops at 15:00 IST). */
+export function inFireWindow(now) {
+  const minute = istMinuteOfDay(now);
+  return minute >= FIRE_FROM_MINUTE && minute <= FIRE_TO_MINUTE;
+}
+
 export function loadAlertRules(rulesPath) {
+  const rules = readRuleFile(rulesPath);
+  // Auto rules (TypeSafe triage) merge in: static file always wins on id and
+  // on hand-written buildup coverage of the same symbol.
+  const auto = readRuleFile(join(dirname(rulesPath), 'alerts.auto.json'))
+    .filter(rule => rule?.auto === true && typeof rule?.symbol === 'string');
+  if (!auto.length) return rules;
+  const ids = new Set(rules.map(rule => rule.id));
+  const staticBuildups = new Set(rules.filter(rule => rule?.type === 'buildup').map(rule => rule.symbol));
+  return [...rules, ...auto.filter(rule => !ids.has(rule.id) && !staticBuildups.has(rule.symbol))];
+}
+
+function readRuleFile(rulesPath) {
   try {
     const parsed = JSON.parse(readFileSync(rulesPath, 'utf8'));
     return Array.isArray(parsed?.rules) ? parsed.rules : [];
@@ -109,12 +128,8 @@ function oiSpikeMessage(rule, series, now) {
   return `🚨 ${rule.label ?? `${rule.symbol} OI spikes`}: ${detail} · ${clock(now)} IST`;
 }
 
-/**
- * The board's ranked movers as a digest: top N rising and top N falling
- * underlyings by day change, each with the chain OI it added. One message
- * per rule.cooldownMin (default 30 minutes).
- */
-function topMoversMessage(rule, market, now) {
+/** Every underlying with a readable day change and the chain OI it added. */
+export function marketMovers(market) {
   const movers = [];
   for (const series of market?.series ?? []) {
     const spot = series.sp;
@@ -123,9 +138,21 @@ function topMoversMessage(rule, market, now) {
     const changePct = ((spot - prevClose) / prevClose) * 100;
     const { oi, prev } = chainOi(series);
     if (!(prev > 0)) continue;
-    const oiAdded = oi - prev;
-    movers.push({ symbol: series.s, changePct, oiAdded });
+    const oiPct = ((oi - prev) / prev) * 100;
+    const buildup = changePct >= PRICE_FLOOR_PCT && oiPct >= OI_FLOOR_PCT ? 'LONG BUILD-UP'
+      : changePct <= -PRICE_FLOOR_PCT && oiPct >= OI_FLOOR_PCT ? 'SHORT BUILD-UP' : null;
+    movers.push({ symbol: series.s, spot, changePct, oiAdded: oi - prev, oiPct, buildup });
   }
+  return movers;
+}
+
+/**
+ * The board's ranked movers as a digest: top N rising and top N falling
+ * underlyings by day change, each with the chain OI it added. One message
+ * per rule.cooldownMin (default 30 minutes).
+ */
+function topMoversMessage(rule, market, now) {
+  const movers = marketMovers(market);
   const top = Math.max(1, rule.top ?? 10);
   const byUp = [...movers].sort((a, b) => b.changePct - a.changePct).slice(0, top);
   const byDown = [...movers].sort((a, b) => a.changePct - b.changePct).slice(0, top);
@@ -141,7 +168,7 @@ function topMoversMessage(rule, market, now) {
  * once-per-session-date for oi-spike. Returns the messages to send.
  */
 export function evaluateAlerts(market, rules, state, now = Date.now()) {
-  if (istMinuteOfDay(now) < FIRE_FROM_MINUTE || istMinuteOfDay(now) > FIRE_TO_MINUTE) return [];
+  if (!inFireWindow(now)) return [];
   const messages = [];
   const dayKey = typeof market?.date === 'string' ? market.date : null;
   for (const rule of Array.isArray(rules) ? rules : []) {

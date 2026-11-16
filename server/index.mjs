@@ -42,6 +42,7 @@ import { createProvider } from './providers/index.mjs';
 import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, ReplayDataError, REPLAY_DATE, REPLAY_SYMBOL, truncateFutures } from './replayStorage.mjs';
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
 import { runAlerts } from './alerts.mjs';
+import { runTriage } from './typesafe.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
 import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
 
@@ -183,6 +184,13 @@ async function build() {
     } catch (error) {
       log('alerts failed:', String(error?.message || error));
     }
+    // Throttled to TYPESAFE_TRIAGE_MIN (default 10); never blocks or fails the build.
+    runTriage(file, { autoPath: path.join(DATA_DIR, 'alerts.auto.json'), now: at, log })
+      .then(result => {
+        if (result.written != null) log(`triage: ${result.written} watch rule(s)${result.watches.length ? ` (${result.watches.map(w => w.symbol).join(' ')})` : ''}`);
+        else if (result.skipped && result.skipped !== 'throttled') log(`triage skipped: ${result.skipped}`);
+      })
+      .catch(error => log('triage failed:', String(error?.message || error)));
   } catch (error) {
     // The detail (which may quote the provider's own error) stays in this log; the page gets a plain line.
     log('market file failed:', String(error?.message || error));
