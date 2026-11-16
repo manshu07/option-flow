@@ -54,6 +54,7 @@ const FEED_HOSTS = ['wss://api-feed.dhan.co', 'wss://ws-feed.dhan.co'];
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isMarketSessionTime } from '../../src/lib/marketSession.ts';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MASTER_CACHE = path.join(ROOT, 'data', '.dhan-master.csv');
 const MASTER_MAX_AGE_MS = 2 * 60 * 60_000;
@@ -612,10 +613,14 @@ export function createDhanProvider(universe) {
     // ~1 request every 3 s: the first pass seeds the whole universe in about
     // eleven minutes, entirely inside the documented Option Chain limit. The
     // loop keeps running so strikes that join the window on a rebalance (and
-    // anything that failed on a 429) get their prev-day figures too.
+    // anything that failed on a 429) get their prev-day figures too. Outside
+    // market hours the loop idles — a closed market has nothing new to seed,
+    // and retrying the (sometimes dead) chain endpoint all night is waste.
     for (;;) {
-      for (const held of map.values()) {
-        if (!seeded.has(held.symbol)) await seedPrevDayOi(held).catch(() => undefined);
+      if (isMarketSessionTime(Date.now())) {
+        for (const held of map.values()) {
+          if (!seeded.has(held.symbol)) await seedPrevDayOi(held).catch(() => undefined);
+        }
       }
       await sleep(60_000);
     }
@@ -867,6 +872,10 @@ export function createDhanProvider(universe) {
 
       if (rebalanceTimer) clearInterval(rebalanceTimer);
       rebalanceTimer = setInterval(() => {
+        // Market closed → the spot is frozen and nothing can rebalance into a
+        // new strike window: every one of these would be a wasted REST call
+        // against a closed market.
+        if (!isMarketSessionTime(Date.now())) return;
         // Indices are not broadcast on the feed: one quote request a minute keeps
         // their spot (and every underlying's prevClose backup) current.
         ensureQuotes().catch(() => undefined);
