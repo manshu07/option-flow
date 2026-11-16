@@ -7,19 +7,21 @@ import { sendTelegram } from './telegram.mjs';
  * file and turns matches into Telegram messages.
  *
  * Rules live in `<DATA_DIR>/alerts.json` and are re-read every evaluation, so
- * editing them needs no restart. Three rule types:
+ * editing them needs no restart. Four rule types:
  *
  *   level    — the underlying's spot crossed a level      { above?, below? }
  *   buildup  — day price move and chain OI added the same way (LONG/SHORT
  *              build-up, the board's day floors: price ±0.5%, OI ±2%)
  *   oi-spike — strikes whose day OI change crosses a % floor (once per day)
+ *   top-movers — ranked rising/falling underlyings with their chain OI
  *
- * Every rule carries an id and a 10-minute cooldown; oi-spike fires once per
- * session date. Cooldown state is in memory: a restart re-arms everything.
+ * Every rule carries an id and an escalating per-session cooldown; oi-spike
+ * fires once per session date. State is in memory, so a restart re-arms rules.
  */
 
 const MINUTE = 60_000;
-const COOLDOWN_MS = 10 * MINUTE;
+const COOLDOWN_STEPS_MIN = [10, 30, 60];
+const DAILY_FIRE_CAP = 6;
 /** Day floors, mirroring the board's own build-up day defaults. */
 const PRICE_FLOOR_PCT = 0.5;
 const OI_FLOOR_PCT = 2;
@@ -148,8 +150,8 @@ export function marketMovers(market) {
 
 /**
  * The board's ranked movers as a digest: top N rising and top N falling
- * underlyings by day change, each with the chain OI it added. One message
- * per rule.cooldownMin (default 30 minutes).
+ * underlyings by day change, each with the chain OI it added. Frequency is
+ * governed by the shared escalating per-rule cooldown.
  */
 function topMoversMessage(rule, market, now) {
   const movers = marketMovers(market);
@@ -163,9 +165,8 @@ function topMoversMessage(rule, market, now) {
 }
 
 /**
- * Evaluate one rules array against one market file. `state` is a Map of
- * rule id → last fired (ms): 10-minute cooldown for level/buildup rules,
- * once-per-session-date for oi-spike. Returns the messages to send.
+ * Evaluate one rules array against one market file. `state` maps each rule id
+ * to its session day, last fire time, daily count, and cooldown step.
  */
 export function evaluateAlerts(market, rules, state, now = Date.now()) {
   if (!inFireWindow(now)) return [];
@@ -176,38 +177,226 @@ export function evaluateAlerts(market, rules, state, now = Date.now()) {
     // top-movers reads the whole market; every other type is per-symbol.
     const series = rule.type === 'top-movers' ? market : seriesFor(market, rule.symbol);
     if (rule.type !== 'top-movers' && !series) continue;
-    const last = state.get(rule.id) ?? 0;
-    const dayKeyId = `${rule.id}|${dayKey}`;
-    const cooldownMs = Number.isFinite(rule.cooldownMin) ? rule.cooldownMin * MINUTE : COOLDOWN_MS;
+    const stored = state.get(rule.id);
+    const current = stored && typeof stored === 'object' && stored.dayKey === dayKey
+      ? stored
+      : { dayKey, lastAt: null, firesToday: 0, step: 0 };
+    if (current !== stored) state.set(rule.id, current);
+    if (current.firesToday >= DAILY_FIRE_CAP) continue;
     if (rule.type === 'oi-spike') {
-      // Once per session date: the summary would otherwise repeat all day.
-      if (state.has(dayKeyId)) continue;
-    } else if (now - last < cooldownMs) continue;
+      // The spike summary is a once-per-session digest, independent of cooldown.
+      if (current.firesToday > 0) continue;
+    } else if (Number.isFinite(current.lastAt)) {
+      const step = Math.min(Math.max(0, current.step | 0), COOLDOWN_STEPS_MIN.length - 1);
+      if (now - current.lastAt < COOLDOWN_STEPS_MIN[step] * MINUTE) continue;
+    }
     let text = null;
     if (rule.type === 'level') text = levelMessage(rule, series, now);
     else if (rule.type === 'buildup') text = buildupMessage(rule, series, now);
     else if (rule.type === 'oi-spike') text = oiSpikeMessage(rule, series, now);
     else if (rule.type === 'top-movers') text = topMoversMessage(rule, market, now);
     if (!text) continue;
-    state.set(rule.type === 'oi-spike' ? dayKeyId : rule.id, now);
+    const firesToday = current.firesToday + 1;
+    state.set(rule.id, {
+      dayKey,
+      lastAt: now,
+      firesToday,
+      // The first fire arms 10 minutes; each subsequent fire widens the gate.
+      step: Math.min(firesToday - 1, COOLDOWN_STEPS_MIN.length - 1),
+    });
     messages.push(text);
   }
   return messages;
 }
 
-/**
- * Evaluate + deliver. Telegram failures are logged and retried on the next
- * build's evaluation (cooldown state was already consumed, so a failed send
- * is the only chance a missed alert has — hence send before arming is not
- * done here: the caller decides delivery and logs).
- */
-export async function runAlerts(market, { rulesPath, state, now = Date.now(), log = () => {}, send = sendTelegram }) {
+const BROADCAST_FOOTER = '📊 educational market-data digest · not investment advice · /stop to opt out';
+const DIGEST_MINUTES = [11 * 60, 13 * 60, 15 * 60 + 45];
+const ALERT_SECTIONS = [
+  { type: 'level', heading: '🚨 <b>Level</b>' },
+  { type: 'buildup', heading: '📈 <b>Build-ups</b>' },
+  { type: 'oi-spike', heading: '⚡ <b>OI spikes</b>' },
+  { type: 'top-movers', heading: '📊 <b>Digest</b>' },
+];
+
+const escapeHtml = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function rulesThatFired(rules, previous, state) {
+  return rules.filter(rule => {
+    const current = state.get(rule?.id);
+    if (!current || typeof current !== 'object') return false;
+    const prior = previous.get(rule.id);
+    const priorCount = prior?.dayKey === current.dayKey ? prior.firesToday : 0;
+    return current.firesToday > priorCount;
+  });
+}
+
+function alertItems({ rule, text }, market) {
+  const plain = String(text).replace(/^🚨\s*/, '').replace(/\s*· \d{2}:\d{2} IST$/, '');
+  if (rule.type === 'level') {
+    const colon = plain.indexOf(':');
+    const label = colon >= 0 ? plain.slice(0, colon) : rule.label ?? rule.symbol;
+    const detail = colon >= 0 ? plain.slice(colon + 1).trim() : plain;
+    return [`• <b>${escapeHtml(label)}</b> ${escapeHtml(detail)}`];
+  }
+  if (rule.type === 'buildup') {
+    const match = plain.match(/(LONG|SHORT) BUILD-UP: spot ([+-]\d+\.\d+%), chain OI ([+-]\d+\.\d+%)/);
+    const mover = marketMovers(market).find(item => item.symbol === rule.symbol);
+    const oiAdded = Math.abs(mover?.oiAdded ?? 0);
+    const sign = (mover?.oiAdded ?? 0) >= 0 ? '+' : '−';
+    const oi = mover
+      ? `${sign}${oiAdded >= 1_000_000 ? `${(oiAdded / 1_000_000).toFixed(1)}M` : oiAdded >= 1000 ? `${(oiAdded / 1000).toFixed(1)}K` : oiAdded.toFixed(0)}`
+      : match?.[3] ?? '';
+    if (match) return [`• <b>${escapeHtml(rule.symbol ?? rule.label ?? '')}</b> ${escapeHtml(match[2])} · OI ${escapeHtml(oi)} · ${match[1].toLowerCase()}`];
+    return [`• <b>${escapeHtml(rule.symbol ?? rule.label ?? '')}</b> ${escapeHtml(plain)}`];
+  }
+  if (rule.type === 'oi-spike') {
+    const colon = plain.indexOf(':');
+    const label = colon >= 0 ? plain.slice(0, colon) : rule.label ?? `${rule.symbol} OI spikes`;
+    const detail = colon >= 0 ? plain.slice(colon + 1).trim() : plain;
+    return [`• <b>${escapeHtml(label)}</b> ${escapeHtml(detail)}`];
+  }
+  if (rule.type === 'top-movers') {
+    return String(text).split('\n').slice(1).map(line => {
+      const content = line.replace(/^[🟢🔴]\s*/, '');
+      const escaped = escapeHtml(content).replace(/(\d+\.\s*)([A-Z][A-Z0-9._-]*)/g, '$1<b>$2</b>');
+      return `• ${escaped}`;
+    }).filter(line => line !== '• ');
+  }
+  return [`• ${escapeHtml(plain)}`];
+}
+
+function combinedHtml(events, market, now, includeFooter) {
+  const footer = includeFooter ? BROADCAST_FOOTER : '';
+  const maxBody = 900 - (includeFooter ? footer.length + 2 : 0);
+  let lines = [`📊 <b>Order Flow</b> · ${clock(now)} IST`];
+  for (const section of ALERT_SECTIONS) {
+    const items = events.filter(event => event.rule?.type === section.type)
+      .flatMap(event => event.items ?? alertItems(event, market));
+    if (!items.length) continue;
+    const beforeSection = lines;
+    const withHeading = [...lines, '', section.heading];
+    if (withHeading.join('\n').length > maxBody) continue;
+    lines = withHeading;
+    let added = 0;
+    for (const item of items) {
+      const candidate = [...lines, item];
+      if (candidate.join('\n').length > maxBody) break;
+      lines = candidate;
+      added++;
+    }
+    if (!added) lines = beforeSection;
+  }
+  const body = lines.join('\n');
+  return includeFooter ? `${body}\n\n${footer}` : body;
+}
+
+function recipientsFor(chatIds) {
+  const ownerId = process.env.TELEGRAM_CHAT_ID == null ? null : String(process.env.TELEGRAM_CHAT_ID);
+  return [...new Set((Array.isArray(chatIds) ? chatIds : [])
+    .map(Number)
+    .filter(chatId => Number.isSafeInteger(chatId) && chatId !== 0 && String(chatId) !== ownerId))];
+}
+
+export function createAlertDigestState() {
+  return { dayKey: null, pending: new Map(), sentSlots: new Set() };
+}
+
+function prepareDigestState(state, dayKey) {
+  if (!(state.pending instanceof Map)) state.pending = new Map();
+  if (!(state.sentSlots instanceof Set)) state.sentSlots = new Set();
+  if (state.dayKey !== dayKey) {
+    state.dayKey = dayKey;
+    state.pending.clear();
+    state.sentSlots.clear();
+  }
+}
+
+function istDateKey(now) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now);
+  const part = type => parts.find(item => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function safeLogResult(log, prefix, result) {
+  log(`${prefix} ${result?.sent ? 'sent' : `not sent (${result?.reason ?? result?.status ?? 'unknown'})`}`);
+}
+
+/** Evaluate one market snapshot, send one owner batch, and route subscriber events by cadence. */
+export async function runAlerts(market, {
+  rulesPath,
+  state,
+  now = Date.now(),
+  log = () => {},
+  send = sendTelegram,
+  broadcastChatIds = [],
+  digestState,
+}) {
   const rules = loadAlertRules(rulesPath);
   if (!rules.length) return [];
+  const previous = new Map(state);
   const messages = evaluateAlerts(market, rules, state, now);
-  for (const text of messages) {
-    const result = await send(text);
-    log(`telegram ${result.sent ? 'sent' : `not sent (${result.reason ?? result.status})`}: ${text}`);
+  if (!messages.length) return messages;
+  const firedRules = rulesThatFired(rules, previous, state);
+  const events = messages.map((text, index) => ({ text, rule: firedRules[index] ?? { type: 'unknown' } }));
+  const subscribers = recipientsFor(broadcastChatIds);
+  const ownerMessage = combinedHtml(events, market, now, false);
+
+  try {
+    safeLogResult(log, 'telegram owner', await send(ownerMessage, { parseMode: 'HTML', retry: true }));
+  } catch (error) {
+    log(`telegram owner not sent (${String(error?.message || error)})`);
+  }
+
+  const instant = events.filter(event => event.rule.broadcast === true
+    && (event.rule.type === 'oi-spike' || (event.rule.type === 'level' && event.rule.symbol === 'NIFTY')));
+  const deferred = events.filter(event => event.rule.broadcast === true && ['buildup', 'top-movers'].includes(event.rule.type));
+  if (digestState && subscribers.length && typeof market?.date === 'string') {
+    prepareDigestState(digestState, market.date);
+    for (const event of deferred) {
+      const key = `${event.rule.type}:${event.rule.id}`;
+      digestState.pending.set(key, { ...event, items: alertItems(event, market) });
+    }
+  }
+  if (instant.length) {
+    const subscriberMessage = combinedHtml(instant, market, now, true);
+    for (const chatId of subscribers) {
+      await pause(30);
+      try {
+        safeLogResult(log, `telegram instant subscriber ${chatId}`, await send(subscriberMessage, { chatId, parseMode: 'HTML', retry: true }));
+      } catch (error) {
+        log(`telegram instant subscriber ${chatId} not sent (${String(error?.message || error)})`);
+      }
+    }
   }
   return messages;
+}
+
+/** Flush queued build-up/top-mover items at 11:00, 13:00, and 15:45 IST. */
+export async function flushScheduledDigests({ digestState, now = Date.now(), broadcastChatIds = [], send = sendTelegram, log = () => {} } = {}) {
+  if (!digestState) return { sent: 0, skipped: 'no digest state' };
+  const dayKey = istDateKey(now);
+  prepareDigestState(digestState, dayKey);
+  const currentMinute = istMinuteOfDay(now);
+  const dueSlots = DIGEST_MINUTES.filter(minute => minute <= currentMinute && !digestState.sentSlots.has(minute));
+  if (!dueSlots.length) return { sent: 0, skipped: 'not due' };
+
+  for (const minute of dueSlots) digestState.sentSlots.add(minute);
+  const events = [...digestState.pending.values()];
+  digestState.pending.clear();
+  const subscribers = recipientsFor(broadcastChatIds);
+  if (!events.length || !subscribers.length) return { sent: 0, skipped: 'empty' };
+
+  const message = combinedHtml(events, null, now, true);
+  for (const chatId of subscribers) {
+    await pause(30);
+    try {
+      safeLogResult(log, `telegram digest subscriber ${chatId}`, await send(message, { chatId, parseMode: 'HTML', retry: true }));
+    } catch (error) {
+      log(`telegram digest subscriber ${chatId} not sent (${String(error?.message || error)})`);
+    }
+  }
+  return { sent: subscribers.length, slots: dueSlots };
 }

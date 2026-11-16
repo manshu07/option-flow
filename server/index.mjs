@@ -41,7 +41,9 @@ import { encodeSeries, marketFile } from './marketFile.mjs';
 import { createProvider } from './providers/index.mjs';
 import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, ReplayDataError, REPLAY_DATE, REPLAY_SYMBOL, truncateFutures } from './replayStorage.mjs';
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
-import { runAlerts } from './alerts.mjs';
+import { createAlertDigestState, flushScheduledDigests, runAlerts } from './alerts.mjs';
+import { sendTelegram } from './telegram.mjs';
+import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
@@ -54,6 +56,7 @@ const AUTH = process.env.MF_BASIC_AUTH || '';
 const CORS_ORIGIN = process.env.MF_CORS_ORIGIN || '';
 if (AUTH && !/^[^:]+:.{8,}$/.test(AUTH)) throw new Error('MF_BASIC_AUTH must be user:password, with a password of at least 8 characters.');
 const DATA_DIR = path.resolve(ROOT, process.env.MF_DATA_DIR || 'server/data');
+const SUBSCRIBERS_PATH = path.join(DATA_DIR, 'subscribers.json');
 const DIST = path.join(ROOT, 'dist');
 const WORKERS = 8;
 /** A futures read is kept this long: the page asks again every two minutes. */
@@ -78,6 +81,7 @@ const BOOTED_AT = Date.now();
 const ladderCache = { session: '', bySymbol: new Map() };
 const state = { ready: false, building: false, latestJson: null, latest: null, lastBuild: null, lastError: null };
 const alertState = new Map();
+const alertDigestState = createAlertDigestState();
 
 const hhmmOf = at => { const p = marketParts(at); return `${String(Math.floor(p.minuteOfDay / 60)).padStart(2, '0')}${String(p.minuteOfDay % 60).padStart(2, '0')}`; };
 
@@ -180,7 +184,15 @@ async function build() {
     state.lastError = null;
     log(`market file: ${series.length} series, ${failed.length} failed, ${Date.now() - started} ms${firstError ? ` (first error: ${firstError})` : ''}`);
     try {
-      const fired = await runAlerts(file, { rulesPath: path.join(DATA_DIR, 'alerts.json'), state: alertState, now: at, log });
+      const broadcastChatIds = process.env.TELEGRAM_BOT_TOKEN ? activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)) : [];
+      const fired = await runAlerts(file, {
+        rulesPath: path.join(DATA_DIR, 'alerts.json'),
+        state: alertState,
+        digestState: alertDigestState,
+        now: at,
+        log,
+        broadcastChatIds,
+      });
       if (fired.length) log(`alerts fired: ${fired.length}`);
     } catch (error) {
       log('alerts failed:', String(error?.message || error));
@@ -192,7 +204,27 @@ async function build() {
         else if (result.skipped && result.skipped !== 'throttled') log(`triage skipped: ${result.skipped}`);
         // Observation cards for the promoted watches — same cadence, fire-and-forget.
         if (result.watches?.length) {
-          return runAdvisor(file, { obsPath: path.join(DATA_DIR, 'observations.json'), watches: result.watches, now: at, log })
+          return runAdvisor(file, {
+            obsPath: path.join(DATA_DIR, 'observations.json'),
+            watches: result.watches,
+            now: at,
+            log,
+            getLive: card => {
+              try {
+                const spots = provider.spots?.() ?? {};
+                const ticks = provider.ticksFor?.({
+                  symbols: [card.symbol],
+                  options: [{ symbol: card.symbol, strike: card.strike, side: card.side, expiry: card.expiry }],
+                }) ?? { futures: {}, options: {} };
+                const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
+                return {
+                  spot: spots[card.symbol]?.ltp,
+                  future: ticks.futures?.[card.symbol]?.ltp,
+                  option: ticks.options?.[optionKey]?.ltp,
+                };
+              } catch { return null; }
+            },
+          })
             .then(advisor => { if (advisor.written != null && advisor.written) log(`advisor: ${advisor.written} observation card(s) (${advisor.cards.map(c => `${c.symbol} ${c.strike}${c.side}`).join(' ')})`); })
             .catch(error => log('advisor failed:', String(error?.message || error)));
         }
@@ -941,6 +973,34 @@ const LOOPBACK = ['127.0.0.1', '::1', 'localhost'];
 server.listen(PORT, HOST, async () => {
   log(`Order Flow on http://${HOST.includes(':') ? `[${HOST}]` : HOST}:${PORT} · provider: ${provider.label} (${provider.id}) · ${universe.length} underlyings${AUTH ? ' · password on' : ''}`);
   if (!LOOPBACK.includes(HOST) && !AUTH) log('WARNING: listening beyond this machine with no password. Set MF_BASIC_AUTH=user:password, or put the server behind a proxy that signs people in.');
+  if (process.env.TELEGRAM_BOT_TOKEN) {
+    try {
+      const token = process.env.TELEGRAM_BOT_TOKEN;
+      let telegramTaskActive = false;
+      const subscriberPoll = async () => {
+        if (telegramTaskActive) return;
+        telegramTaskActive = true;
+        try {
+          await pollCommands({ token, statePath: SUBSCRIBERS_PATH, now: Date.now(), log, send: sendTelegram });
+          await flushScheduledDigests({
+            digestState: alertDigestState,
+            now: Date.now(),
+            broadcastChatIds: activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)),
+            send: sendTelegram,
+            log,
+          });
+        } catch (error) {
+          log('telegram background task failed:', String(error?.message || error));
+        } finally {
+          telegramTaskActive = false;
+        }
+      };
+      const timer = setInterval(() => { void subscriberPoll(); }, 5000);
+      timer.unref();
+    } catch (error) {
+      log('telegram polling did not start:', String(error?.message || error));
+    }
+  }
   try {
     await provider.init?.();
     state.ready = true;
