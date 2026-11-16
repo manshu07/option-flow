@@ -43,7 +43,7 @@ import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, Replay
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
 import { runAlerts } from './alerts.mjs';
 import { runTriage } from './typesafe.mjs';
-import { runAdvisor } from './strikeAdvisor.mjs';
+import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
 import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
 
@@ -816,11 +816,19 @@ async function handle(req, res) {
 
   if (p === '/api/stream/spots') {
     // Server-sent events: the provider's in-memory feed readings (ticks the
-    // sockets already received) pushed every 3s. Spots only — chains still
-    // move through the minute builds.
+    // sockets already received) pushed every 3s. Query params name the extra
+    // contracts to track: symbols=A,B and options=SYM|strike|SIDE|expiry,…
+    const streamSymbols = (url.searchParams.get('symbols') ?? '').split(',').filter(part => REPLAY_SYMBOL.test(part)).slice(0, 12);
+    const streamOptions = (url.searchParams.get('options') ?? '').split(',').filter(Boolean).slice(0, 16).map(entry => {
+      const [symbol, strike, side, expiry] = entry.split('|');
+      return { symbol, strike: Number(strike), side: side === 'PE' ? 'PE' : 'CE', expiry };
+    }).filter(option => option.symbol && Number.isFinite(option.strike));
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     const push = () => {
-      try { res.write(`data: ${JSON.stringify({ t: now(), spots: provider.spots?.() ?? {} })}\n\n`); }
+      try {
+        const ticks = provider.ticksFor?.({ symbols: streamSymbols, options: streamOptions }) ?? { futures: {}, options: {} };
+        res.write(`data: ${JSON.stringify({ t: now(), spots: provider.spots?.() ?? {}, futures: ticks.futures, optionTicks: ticks.options })}\n\n`);
+      }
       catch { clearInterval(timer); }
     };
     push();
@@ -912,7 +920,7 @@ async function handle(req, res) {
   }
 
   if (p === '/underlyings.json') return serveFile(res, path.join(ROOT, 'public/underlyings.json'), 'public, max-age=3600');
-  if (p === '/api/observations') return fs.existsSync(path.join(DATA_DIR, 'observations.json')) ? serveFile(res, path.join(DATA_DIR, 'observations.json')) : send(res, 200, { cards: [] });
+  if (p === '/api/observations') return send(res, 200, { cards: loadObservations(path.join(DATA_DIR, 'observations.json')) });
 
   // The built page; any other path is the page itself (its router is in memory).
   if (fs.existsSync(DIST)) {

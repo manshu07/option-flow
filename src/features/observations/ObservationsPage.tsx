@@ -1,7 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { PageBar } from '@/components/chrome/PageBar';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
+import { applyTheme } from '@/lib/applyTheme';
 import { clockOf } from '../market-flow/marketFlowModel';
+import { uniqueObservationCards } from './observationModel';
 import './observations.css';
 
 const API = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
@@ -10,12 +12,15 @@ const SPOTS_STREAM_URL = `${API}/api/stream/spots`;
 const MARKET_URL = `${API}/api/market`;
 const POLL_MS = 30_000;
 const INDEX_SYMBOLS = ['NIFTY', 'BANKNIFTY', 'SENSEX'] as const;
+const priceText = (value: number): string => Number.isFinite(value) ? value.toFixed(2) : '—';
 
 interface ObservationCard {
   id: string;
   at: number;
   date: string;
   symbol: string;
+  spot?: number | null;
+  spotChangePct?: number | null;
   bias: 'bullish' | 'bearish';
   side: 'CE' | 'PE';
   strike: number;
@@ -37,23 +42,32 @@ interface SpotReading { sp: number; pc: number; changePct: number | null }
 
 type SpotMap = Map<string, SpotReading>;
 
-/** Live spots over server-sent events — the feed's tick readings, pushed ~3s.
- *  A one-shot /api/market fetch primes the map, and a slow poll takes over
- *  only while the stream is down. */
-function useMarketSnapshot() {
+/** Live spots + contract ticks over server-sent events — the feed's tick
+ *  readings, pushed ~3s. trackedSymbols adds futures ticks, trackedOptions
+ *  (SYM|strike|SIDE|expiry) adds live option premiums. A one-shot /api/market
+ *  fetch primes the map, and a slow poll takes over only while the stream is
+ *  down. */
+function useMarketSnapshot(trackedSymbols: string[], trackedOptions: string[]) {
   const [spots, setSpots] = useState<SpotMap>(new Map());
+  const [futuresTicks, setFuturesTicks] = useState<Record<string, { ltp: number }>>({});
+  const [optionTicks, setOptionTicks] = useState<Record<string, { ltp: number }>>({});
   const [asOf, setAsOf] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
+  const symbolsKey = trackedSymbols.join(','), optionsKey = trackedOptions.join(',');
   useEffect(() => {
     let alive = true;
-    const fromBody = (body: { t?: number; spots?: Record<string, { ltp?: number; prevClose?: number }> }) => {
+    const fromBody = (body: { t?: number; spots?: Record<string, { ltp?: number; prevClose?: number }>; futures?: Record<string, { ltp?: number }>; optionTicks?: Record<string, { ltp?: number }> }) => {
       const map: SpotMap = new Map();
       for (const [symbol, reading] of Object.entries(body.spots ?? {})) {
-        if (Number.isFinite(reading?.ltp) && Number.isFinite(reading?.prevClose) && reading.prevClose > 0) {
-          map.set(symbol, { sp: reading.ltp as number, pc: reading.prevClose as number, changePct: ((reading.ltp as number - reading.prevClose) / reading.prevClose) * 100 });
+        const ltp = reading?.ltp;
+        const prevClose = reading?.prevClose;
+        if (typeof ltp === 'number' && Number.isFinite(ltp) && typeof prevClose === 'number' && Number.isFinite(prevClose) && prevClose > 0) {
+          map.set(symbol, { sp: ltp, pc: prevClose, changePct: ((ltp - prevClose) / prevClose) * 100 });
         }
       }
-      if (map.size) { setSpots(map); setAsOf(Number.isFinite(body.t) ? body.t : null); setFailed(false); }
+      if (map.size) { setSpots(map); setAsOf(typeof body.t === 'number' && Number.isFinite(body.t) ? body.t : null); setFailed(false); }
+      if (body.futures) setFuturesTicks(body.futures);
+      if (body.optionTicks) setOptionTicks(body.optionTicks);
     };
     // Prime once from the built snapshot (covers symbols the stream may not have yet).
     fetch(MARKET_URL, { cache: 'no-store' }).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
@@ -67,7 +81,8 @@ function useMarketSnapshot() {
       setSpots(map);
       setAsOf(Number.isFinite(body?.t) ? body.t : null);
     }).catch(() => { /* the stream or the next poll will fill in */ });
-    const source = new EventSource(SPOTS_STREAM_URL);
+    const query = `?symbols=${encodeURIComponent(symbolsKey)}&options=${encodeURIComponent(optionsKey)}`;
+    const source = new EventSource(SPOTS_STREAM_URL + query);
     source.onmessage = event => {
       if (!alive) return;
       try { fromBody(JSON.parse(event.data)); } catch { /* malformed frame — ignore */ }
@@ -88,8 +103,8 @@ function useMarketSnapshot() {
       }).catch(() => { if (alive) setFailed(true); });
     }, 60_000);
     return () => { alive = false; source.close(); clearInterval(timer); };
-  }, []);
-  return { spots, asOf, failed };
+  }, [symbolsKey, optionsKey]);
+  return { spots, futuresTicks, optionTicks, asOf, failed };
 }
 
 interface FuturesSeries { at: number; close: number }
@@ -132,24 +147,42 @@ function Sparkline({ closes }: { closes: FuturesSeries[] | null }) {
   );
 }
 
-function CardLive({ symbol, spots, closes }: { symbol: string; spots: SpotMap; closes: FuturesSeries[] | null }) {
-  const spot = spots.get(symbol);
+function CardLive({ card, spots, futuresTick, optionTick, closes }: {
+  card: ObservationCard;
+  spots: SpotMap;
+  futuresTick?: { ltp: number };
+  optionTick?: { ltp: number };
+  closes: FuturesSeries[] | null;
+}) {
+  const liveSpot = spots.get(card.symbol);
+  const spot = liveSpot ?? (card.spot != null ? { sp: card.spot, changePct: card.spotChangePct ?? null } : null);
+  const opt = optionTick?.ltp;
   return (
     <div className="obs-card__live">
       <Sparkline closes={closes} />
       <div className="obs-card__quote">
-        <span className="obs-card__quote-symbol">{symbol}</span>
+        <span className="obs-card__quote-symbol">{card.symbol}</span>
         {spot
-          ? <><span className={`obs-card__quote-ltp ${spot.changePct != null && spot.changePct >= 0 ? 'is-up' : 'is-down'}`}>{spot.sp}</span><span className={`obs-card__quote-chg ${spot.changePct != null && spot.changePct >= 0 ? 'is-up' : 'is-down'}`}>{spot.changePct != null ? `${spot.changePct >= 0 ? '+' : ''}${spot.changePct.toFixed(2)}%` : '—'}</span></>
+          ? <><span className={`obs-card__quote-ltp ${spot.changePct != null && spot.changePct >= 0 ? 'is-up' : 'is-down'}`}>{priceText(spot.sp)}</span><span className={`obs-card__quote-chg ${spot.changePct != null && spot.changePct >= 0 ? 'is-up' : 'is-down'}`}>{spot.changePct != null ? `${spot.changePct >= 0 ? '+' : ''}${spot.changePct.toFixed(2)}%` : '—'}</span></>
           : <span className="obs-card__quote-chg">spot warming up…</span>}
+        {futuresTick && <span className="obs-card__quote-sub" title="live futures price (~3s ticks)">fut {priceText(futuresTick.ltp)}</span>}
+        <span className="obs-card__quote-sub" title="live option premium (~3s ticks) vs entry">
+          {card.side} {opt != null ? <b className={opt >= card.entry ? 'is-up' : 'is-down'}>₹{priceText(opt)}</b> : `~₹${priceText(card.entry)}`} · entry ₹{priceText(card.entry)}
+        </span>
       </div>
     </div>
   );
 }
 
-function Card({ card, spots }: { card: ObservationCard; spots: SpotMap }) {
+function Card({ card, spots, futuresTicks, optionTicks }: {
+  card: ObservationCard;
+  spots: SpotMap;
+  futuresTicks: Record<string, { ltp: number }>;
+  optionTicks: Record<string, { ltp: number }>;
+}) {
   const up = card.bias === 'bullish';
   const closes = useFutures(card.symbol);
+  const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
   return (
     <article className={`obs-card ${up ? 'obs-card--bull' : 'obs-card--bear'}`}>
       <header className="obs-card__head">
@@ -158,16 +191,16 @@ function Card({ card, spots }: { card: ObservationCard; spots: SpotMap }) {
         <span className={`obs-card__bias ${up ? 'is-up' : 'is-down'}`}>{up ? 'bullish' : 'bearish'} · quality {(card.quality * 100).toFixed(0)}%</span>
         <time className="obs-card__time">{clockOf(card.at)}</time>
       </header>
-      <CardLive symbol={card.symbol} spots={spots} closes={closes} />
+      <CardLive card={card} spots={spots} futuresTick={futuresTicks[card.symbol]} optionTick={optionTicks[optionKey]} closes={closes} />
       <dl className="obs-card__levels">
-        <div><dt>Entry</dt><dd>~{card.entry}</dd></div>
-        <div className="is-down"><dt>SL −45%</dt><dd>{card.sl}</dd></div>
-        <div className="is-up"><dt>TGT1 +55%</dt><dd>{card.tgt1}</dd></div>
-        <div className="is-up"><dt>TGT2 +90%</dt><dd>{card.tgt2}</dd></div>
+        <div><dt>Entry</dt><dd>~{priceText(card.entry)}</dd></div>
+        <div className="is-down"><dt>SL −45%</dt><dd>{priceText(card.sl)}</dd></div>
+        <div className="is-up"><dt>TGT1 +55%</dt><dd>{priceText(card.tgt1)}</dd></div>
+        <div className="is-up"><dt>TGT2 +90%</dt><dd>{priceText(card.tgt2)}</dd></div>
       </dl>
       <p className="obs-card__walls">
-        {card.support && <span>support {card.support.strike} PE ({(card.support.oi / 1_000_000).toFixed(1)}M{card.support.changePct != null ? ` ${card.support.changePct >= 0 ? '+' : ''}${card.support.changePct}%` : ''})</span>}
-        {card.resistance && <span>resistance {card.resistance.strike} CE ({(card.resistance.oi / 1_000_000).toFixed(1)}M{card.resistance.changePct != null ? ` ${card.resistance.changePct >= 0 ? '+' : ''}${card.resistance.changePct}%` : ''})</span>}
+        {card.support && <span>support {card.support.strike} PE ({(card.support.oi / 1_000_000).toFixed(1)}M{card.support.changePct != null ? ` ${card.support.changePct >= 0 ? '+' : ''}${card.support.changePct.toFixed(2)}%` : ''})</span>}
+        {card.resistance && <span>resistance {card.resistance.strike} CE ({(card.resistance.oi / 1_000_000).toFixed(1)}M{card.resistance.changePct != null ? ` ${card.resistance.changePct >= 0 ? '+' : ''}${card.resistance.changePct.toFixed(2)}%` : ''})</span>}
         <span className="obs-card__tsl">{card.tsl}</span>
       </p>
       <footer className="obs-card__foot">{card.disclaimer}</footer>
@@ -175,18 +208,20 @@ function Card({ card, spots }: { card: ObservationCard; spots: SpotMap }) {
   );
 }
 
-function IndexStrip({ spots, asOf, failed }: { spots: SpotMap; asOf: number | null; failed: boolean }) {
+function IndexStrip({ spots, futuresTicks, asOf, failed }: { spots: SpotMap; futuresTicks: Record<string, { ltp: number }>; asOf: number | null; failed: boolean }) {
   return (
     <div className="obs-indices" role="status" aria-live="polite">
       {INDEX_SYMBOLS.map(symbol => {
         const spot = spots.get(symbol);
+        const fut = futuresTicks[symbol]?.ltp;
         const up = (spot?.changePct ?? 0) >= 0;
         return (
           <span key={symbol} className="obs-index">
             <span className="obs-index__name">{symbol === 'NIFTY' ? 'Nifty' : symbol === 'BANKNIFTY' ? 'BankNifty' : 'Sensex'}</span>
             {spot
-              ? <><span className={`obs-index__ltp ${up ? 'is-up' : 'is-down'}`}>{spot.sp.toLocaleString('en-IN')}</span><span className={`obs-index__chg ${up ? 'is-up' : 'is-down'}`}>{up ? '▲' : '▼'} {Math.abs(spot.changePct ?? 0).toFixed(2)}%</span></>
+              ? <><span className={`obs-index__ltp ${up ? 'is-up' : 'is-down'}`}>{priceText(spot.sp)}</span><span className={`obs-index__chg ${up ? 'is-up' : 'is-down'}`}>{up ? '▲' : '▼'} {Math.abs(spot.changePct ?? 0).toFixed(2)}%</span></>
               : <span className="obs-index__ltp">—</span>}
+            {fut != null && <span className="obs-index__fut" title="live futures price — ticks every ~3s (Dhan's feed does not stream index spot)">fut {priceText(fut)}</span>}
           </span>
         );
       })}
@@ -198,13 +233,22 @@ function IndexStrip({ spots, asOf, failed }: { spots: SpotMap; asOf: number | nu
 export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   const [cards, setCards] = useState<ObservationCard[] | null>(null);
   const [failed, setFailed] = useState(false);
-  const { spots, asOf, failed: spotFailed } = useMarketSnapshot();
+  // Always track the three indices' futures; add every card symbol + its exact option contract.
+  const trackedSymbols = useMemo(
+    () => [...new Set([...INDEX_SYMBOLS, ...(cards ?? []).map(card => card.symbol)])],
+    [cards],
+  );
+  const trackedOptions = useMemo(
+    () => (cards ?? []).filter(card => card.expiry).map(card => `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`),
+    [cards],
+  );
+  const { spots, futuresTicks, optionTicks, asOf, failed: spotFailed } = useMarketSnapshot(trackedSymbols, trackedOptions);
   useEffect(() => {
     let alive = true;
     const read = () => {
       fetch(OBSERVATIONS_URL).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
         if (!alive) return;
-        setCards(Array.isArray(body?.cards) ? body.cards : []);
+        setCards(uniqueObservationCards(Array.isArray(body?.cards) ? body.cards : []));
         setFailed(false);
       }).catch(() => { if (alive) setFailed(true); });
     };
@@ -216,13 +260,13 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
     <>
       {tabs}
       <span className="ui-flow-spacer" aria-hidden="true" />
-      <ThemeToggle />
+      <ThemeToggle onChange={theme => applyTheme(theme)} />
     </>
   );
   return (
     <div className="observations">
       <PageBar current="Observations" crumbs={false} className="ui-flow-pagebar">{bar}</PageBar>
-      <IndexStrip spots={spots} asOf={asOf} failed={spotFailed} />
+      <IndexStrip spots={spots} futuresTicks={futuresTicks} asOf={asOf} failed={spotFailed} />
       <div className="observations__status mf-status" role="status" aria-live="polite">
         {failed
           ? <span className="is-down">Observations could not be loaded — retrying every 30s.</span>
@@ -236,7 +280,7 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
             <div><h2>No observations yet</h2><p>When the advisor promotes a build-up to a watch (quality ≥ 70%), its strike observation card appears here — with entry, stop and targets computed from the captured chain.</p></div>
           </section>
         )}
-        {cards?.map(card => <Card key={card.id} card={card} spots={spots} />)}
+        {cards?.map(card => <Card key={card.id} card={card} spots={spots} futuresTicks={futuresTicks} optionTicks={optionTicks} />)}
       </div>
     </div>
   );

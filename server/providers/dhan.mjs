@@ -993,6 +993,31 @@ export function createDhanProvider(universe) {
       return out;
     },
 
+    // Live tick readings for named contracts: the nearest future per symbol
+    // and specific option strikes (symbol|strike|side|expiry). Entries whose
+    // contract is unknown or hasn't ticked yet are absent. Never throws.
+    ticksFor({ symbols = [], options = [] } = {}) {
+      const out = { futures: {}, options: {} };
+      for (const symbol of Array.isArray(symbols) ? symbols : []) {
+        const held = map.get(symbol);
+        const fut = held?.fut?.[0];
+        if (!fut) continue;
+        const reading = live.get(`${SEG_BYTE[held.exchSeg]}:${fut.id}`);
+        if (Number.isFinite(reading?.ltp) && reading.ltp > 0) out.futures[symbol] = { ltp: reading.ltp, at: reading.t ?? null };
+      }
+      for (const option of Array.isArray(options) ? options : []) {
+        const held = map.get(option?.symbol);
+        if (!held) continue;
+        const expiry = held.expiries.includes(option.expiry) ? option.expiry : held.expiries[0];
+        if (!expiry) continue;
+        const id = held.strikeMap.get(expiry)?.get(option.strike)?.[option.side];
+        if (!id) continue;
+        const reading = live.get(`${SEG_BYTE[held.exchSeg]}:${id}`);
+        if (Number.isFinite(reading?.ltp) && reading.ltp > 0) out.options[`${option.symbol}|${option.strike}|${option.side}|${expiry}`] = { ltp: reading.ltp, at: reading.t ?? null };
+      }
+      return out;
+    },
+
     // Read-only feed health for /api/health: the sockets that should be open,
     // the packet counters, whether ticks still flow, and whether the
     // credentials sit in a 401 cooldown. Never throws, never calls REST.

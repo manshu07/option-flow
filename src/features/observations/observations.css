@@ -39,6 +39,13 @@
 .is-up { color: var(--mf-up, #1d8a4b); }
 .is-down { color: var(--mf-down, #c23b3b); }
 .obs-indices__asof { margin-left: auto; font-size: 11px; color: var(--mf-dim, #6b6b74); }
+.obs-index__fut {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mf-dim, #6b6b74);
+  border-left: 1px solid var(--mf-line, #dcdce2);
+  padding-left: 7px;
+}
 
 /* Card live block: sparkline + spot quote. */
 .obs-card__live { display: flex; gap: 10px; align-items: center; }
@@ -52,6 +59,7 @@
 .obs-card__quote-symbol { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--mf-dim, #6b6b74); }
 .obs-card__quote-ltp { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .obs-card__quote-chg { font-size: 12px; font-variant-numeric: tabular-nums; }
+.obs-card__quote-sub { font-size: 11px; color: var(--mf-dim, #6b6b74); font-variant-numeric: tabular-nums; }
 
 .observations__list {
   overflow-y: auto;
