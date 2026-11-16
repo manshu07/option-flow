@@ -141,6 +141,44 @@ minutes are not wanted. Two fixes, both required:
 - Build-up lines standard shape: `• <b>SYMBOL</b> +5.16% · OI +2.9M · long`.
 - Ordering inside one evaluation: Level → Build-ups → OI spikes → Digest.
 
+### E. Observation card message (v2 design — owner chat ONLY, approved 2026-11-16)
+
+Cards are never broadcast to subscribers (see the private-judgments rule) —
+this section upgrades the card message the OWNER receives from
+`runAdvisor` in `server/strikeAdvisor.mjs`. Replace the current plain-text
+send with this HTML template (all numbers from the card; the Live line is
+read at send time from `provider.spots()`/`ticksFor()` — same access the
+SSE stream uses, no new fetches):
+
+```
+🔍 <b>OBSERVATION</b> · TMPV 265PE · 11:22 IST
+
+Bias: <b>bearish</b> · quality <b>93%</b> · strike pick 81%
+
+<b>Trade map</b> (premium)
+• Entry ~<b>5.95</b> · spot 265.40 (−7.6%)
+• 🛑 SL <b>3.27</b> (−45%)
+• 🎯 TGT1 <b>9.22</b> (+55%)
+• 🎯 TGT2 <b>11.31</b> (+90%)
+• 🔒 after TGT1 → SL to cost
+
+<b>Chain walls</b>
+• Support 260 PE · Resistance 300 CE
+
+<b>Live</b> · spot 261.30 · fut 261.80 · opt ₹6.90 (▲ +16% vs entry)
+
+🎓 captured-data observation · not advice · final call yours
+```
+
+- `strike pick 81%` = the card's `strikePickProbability`; `spot (−7.6%)` =
+  spot vs prevClose at creation (already on the card as `spotChangePct`-style
+  data or recomputed from `sp/pc` at send time).
+- The Live line's `opt` premium is colour-coded against `entry`
+  (`▲ is-up` / `▼ is-down` semantics in plain text via ▲/▼ glyphs).
+- If the Live readings are unavailable (feed quiet), omit the Live line —
+  never placeholder numbers.
+- The disclaimer line is mandatory on every card, owner included.
+
 ## Tests — `server/subscribers.test.ts` (vitest, injected send, no network)
 
 1. `/start` adds a subscriber, replies welcome; duplicate `/start` is idempotent.
