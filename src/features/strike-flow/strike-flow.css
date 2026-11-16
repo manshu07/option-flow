@@ -6,6 +6,9 @@
 .app-flow-shell .ui-flow-pagebar > * { flex: none; }
 
 .ui-strike-flow { gap: 8px; }
+/* The board must have real height at first measure: a zero box makes the
+   diagram draw nothing until the next resize (DevTools-open symptom). */
+.ui-strike-flow .mf-board { min-height: 520px; }
 .ui-strike-flow[data-fit='true'] { height: var(--ui-page-fit-h); min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
 .ui-strike-flow .mf-brand em { color: var(--brand-wine); }
 .ui-strike-flow .strike-flow__window { flex: none; }

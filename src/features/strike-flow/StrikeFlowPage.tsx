@@ -171,7 +171,7 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
           <div><h2>No captured chain for {symbols.join(' + ')} on {date}</h2><p>No chain is available yet, or the archive could not be read. Retry to check the local archive again.</p>{unavailableSymbols.length > 0 && <p>Awaiting capture: {unavailableSymbols.join(', ')}</p>}<button className="ui-flow-replay" type="button" onClick={() => setRetry(value => value + 1)}>Retry archive</button></div>
         </section>
       ) : viewed ? (
-        <FlowBoard flow={viewed} settings={{ named: null, lines: 'all' }} layout={layout}
+        <FlowBoard key={hasChain ? 'loaded' : 'empty'} flow={viewed} settings={{ named: null, lines: 'all' }} layout={layout}
           status={<StatusLine board={viewed} />} />
       ) : null}
     </div>
