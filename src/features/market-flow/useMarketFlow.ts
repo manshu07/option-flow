@@ -47,10 +47,20 @@ export function useMarketFlow(universe: readonly Underlying[], settings: FlowSet
 
   // The settings that change the chart only (lines, named) do not re-deal the board.
   const { window: win, scope, floorPct } = settings;
-  const flow: MarketFlow | null = useMemo(
-    () => (market ? buildMarketFlow(market, committed.series, universe, sectorLabels, { window: win, scope, floorPct, named: null, lines: 'all' }, { failed: committed.failed }) : null),
-    [market, committed, universe, sectorLabels, win, scope, floorPct],
-  );
+  // The featured gate blanks the large cards while any future read is in
+  // flight (settled share dips below its share) — mid-trading that reads as
+  // the cards vanishing every refresh. Hold the last settled cards through
+  // provisional builds; a fully settled rebuild replaces them.
+  const lastFeatured = useRef<MarketFlow['featured'] | null>(null);
+  const flow: MarketFlow | null = useMemo(() => {
+    const built = market
+      ? buildMarketFlow(market, committed.series, universe, sectorLabels, { window: win, scope, floorPct, named: null, lines: 'all' }, { failed: committed.failed })
+      : null;
+    if (!built) { lastFeatured.current = null; return null; }
+    if (built.provisional && lastFeatured.current) return { ...built, featured: lastFeatured.current };
+    if (!built.provisional) lastFeatured.current = built.featured;
+    return built;
+  }, [market, committed, universe, sectorLabels, win, scope, floorPct]);
 
   return {
     flow,
