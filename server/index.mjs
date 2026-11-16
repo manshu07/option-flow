@@ -814,6 +814,21 @@ async function handle(req, res) {
     return send(res, 200, state.latestJson);
   }
 
+  if (p === '/api/stream/spots') {
+    // Server-sent events: the provider's in-memory feed readings (ticks the
+    // sockets already received) pushed every 3s. Spots only — chains still
+    // move through the minute builds.
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    const push = () => {
+      try { res.write(`data: ${JSON.stringify({ t: now(), spots: provider.spots?.() ?? {} })}\n\n`); }
+      catch { clearInterval(timer); }
+    };
+    push();
+    const timer = setInterval(push, 3000);
+    req.on('close', () => clearInterval(timer));
+    return;
+  }
+
   const replayManifestPath = p.match(/^\/api\/replay\/([^/]+)\/manifest$/);
   if (replayManifestPath) {
     const date = replayManifestPath[1];

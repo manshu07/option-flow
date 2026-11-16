@@ -699,8 +699,11 @@ export function createDhanProvider(universe) {
       held.optionStrikes.window = nearestStrikes(listed, spot, STRIKES_EACH_SIDE);
       for (const strike of held.optionStrikes.window) {
         const legs = ids.get(strike) ?? {};
-        if (legs.CE) optionKeys.push(`${SEG_BYTE.NSE_FNO}:${legs.CE}`);
-        if (legs.PE) optionKeys.push(`${SEG_BYTE.NSE_FNO}:${legs.PE}`);
+        // Option legs live on the UNDERLYING's FNO segment: NSE options on
+        // NSE_FNO, BSE options (Sensex, BSE-listed stocks) on BSE_FNO.
+        const legSeg = SEG_BYTE[held.exchSeg] ?? SEG_BYTE.NSE_FNO;
+        if (legs.CE) optionKeys.push(`${legSeg}:${legs.CE}`);
+        if (legs.PE) optionKeys.push(`${legSeg}:${legs.PE}`);
       }
       held.optionStrikes.center = spot;
     }
@@ -889,8 +892,10 @@ export function createDhanProvider(universe) {
           }
         }
         if (process.env.DHAN_DEBUG) {
-          const niftyFut = [...map.values()].find(h => h.symbol === 'NIFTY')?.fut?.[0]?.id;
-          console.log(`dhan: dbg conns ${conns.map(c => `${c.packets ?? 0}pkt/${c.socket?.readyState}`).join(' ')} | futTicks(NIFTY fut) ${futTicks.get(niftyFut)?.size ?? 'none'} | futRest ${futRest.has(niftyFut) ? 'set' : 'unset'} | live ${live.size}`);
+          const sensexHeld = map.get('SENSEX');
+          const sensexIds = sensexHeld?.optionStrikes?.ids ?? new Map();
+          const sample = [...sensexIds.keys()].slice(0, 2).map(strike => `${SEG_BYTE.BSE_FNO}:${sensexIds.get(strike)?.CE ?? '?'}`).join(', ');
+          console.log(`dhan: dbg conns ${conns.map(c => `${c.packets ?? 0}pkt/${c.socket?.readyState}`).join(' ')} | sensex optionStrikes expiry=${sensexHeld?.optionStrikes?.expiry} window=${sensexHeld?.optionStrikes?.window?.length ?? 0} sample=[${sample}] | inWant=${feedWant.has(`8:${sensexIds.get(25100)?.PE ?? '?'}`)}`);
         }
       }, 30_000);
     },
@@ -971,6 +976,21 @@ export function createDhanProvider(universe) {
         const prevOi = feed.prevOi ?? rest?.prevOi ?? null;
         return { date: expiry, prevClose, prevOi, candles };
       }));
+    },
+
+    // Tick-level spots straight from the feed's live readings — no REST, no
+    // build cycle. Indices land via the 60s REST quote pass (Dhan's feed does
+    // not broadcast index spots). Symbols without a usable reading are absent.
+    spots() {
+      const out = {};
+      for (const held of map.values()) {
+        const feed = live.get(`${SEG_BYTE[held.underSeg]}:${held.underlyingId}`);
+        const q = quotes?.[held.underSeg]?.[String(held.underlyingId)];
+        const ltp = feed?.ltp || num(q?.last_price) || null;
+        const prevClose = feed?.prevClose || num(q?.ohlc?.close) || null;
+        if (ltp != null && prevClose != null) out[held.symbol] = { ltp, prevClose, at: feed?.t ?? null };
+      }
+      return out;
     },
 
     // Read-only feed health for /api/health: the sockets that should be open,
