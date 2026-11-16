@@ -291,6 +291,79 @@ function combinedHtml(events, market, now, includeFooter) {
   return includeFooter ? `${body}\n\n${footer}` : body;
 }
 
+const EOD_SECTIONS = [
+  { type: 'top-movers', heading: '📊 <b>Top movers</b>' },
+  { type: 'buildup', heading: '📈 <b>Build-ups</b>' },
+  { type: 'level', heading: '🚨 <b>Levels touched</b>' },
+];
+
+function boundedSectionBody(events, sections, heading, limit) {
+  let lines = [heading];
+  for (const section of sections) {
+    const items = events.filter(event => event.rule?.type === section.type)
+      .flatMap(event => event.items ?? []);
+    if (!items.length) continue;
+    const before = lines;
+    const withHeading = [...lines, '', section.heading];
+    if (withHeading.join('\n').length > limit) continue;
+    lines = withHeading;
+    let added = 0;
+    for (let index = 0; index < items.length; index++) {
+      const remaining = items.length - index - 1;
+      const marker = remaining ? `• … ${remaining} more` : null;
+      if ([...lines, items[index], ...(marker ? [marker] : [])].join('\n').length <= limit) {
+        lines.push(items[index]);
+        added++;
+        continue;
+      }
+      const truncated = `• … ${items.length - index} more`;
+      if ([...lines, truncated].join('\n').length <= limit) lines.push(truncated);
+      break;
+    }
+    if (!added) lines = before;
+  }
+  return lines.join('\n');
+}
+
+function eodJournalBody(observations, date, limit) {
+  const cards = (Array.isArray(observations) ? observations : []).filter(card => card?.date === date);
+  const outcomes = cards.filter(card => card?.outcome && typeof card.outcome === 'object');
+  const tally = status => outcomes.filter(card => card.outcome.status === status).length;
+  const counts = `Cards written ${cards.length} · ${tally('tgt1')} TGT1 · ${tally('sl')} SL · ${tally('open')} open · ${tally('ambiguous')} ambiguous`;
+  const lines = [`📓 <b>Journal outcomes</b> · ${escapeHtml(date)}`, counts];
+  const items = outcomes.map(card => {
+    const status = String(card.outcome.status ?? 'unknown').toUpperCase();
+    const r = Number.isFinite(card.outcome.r) ? `${card.outcome.r >= 0 ? '+' : '−'}${Math.abs(card.outcome.r).toFixed(2)}` : '—';
+    return `• <b>${escapeHtml(card.symbol)} ${escapeHtml(card.strike)}${card.side === 'PE' ? 'PE' : 'CE'}</b> · ${escapeHtml(status)} · R${r}`;
+  });
+  lines.push(`🔬 <b>Jev tally</b> · ${counts}`);
+  for (let index = 0; index < items.length; index++) {
+    const remaining = items.length - index - 1;
+    const marker = remaining ? `• … ${remaining} more cards` : null;
+    if ([...lines, items[index], ...(marker ? [marker] : [])].join('\n').length <= limit) {
+      lines.push(items[index]);
+      continue;
+    }
+    const truncated = `• … ${items.length - index} more cards`;
+    if ([...lines, truncated].join('\n').length <= limit) lines.push(truncated);
+    break;
+  }
+  return lines.join('\n');
+}
+
+function eodBroadcasts(digestState, observations, date, pendingEvents = []) {
+  const limit = 900 - BROADCAST_FOOTER.length - 2;
+  const dayEvents = [...new Map([
+    ...pendingEvents.map(event => [`${event.rule?.type}:${event.rule?.id}`, event]),
+    ...digestState.dailyEvents,
+  ]).values()];
+  const report = boundedSectionBody(dayEvents, EOD_SECTIONS, `📊 <b>15:45 EOD report</b> · ${escapeHtml(date)}`, limit);
+  const journal = eodJournalBody(observations, date, limit);
+  const combined = `${report}\n\n${journal}`;
+  const bodies = combined.length <= limit ? [combined] : [report, journal];
+  return bodies.map(body => `${body}\n\n${BROADCAST_FOOTER}`);
+}
+
 function recipientsFor(chatIds) {
   const ownerId = process.env.TELEGRAM_CHAT_ID == null ? null : String(process.env.TELEGRAM_CHAT_ID);
   return [...new Set((Array.isArray(chatIds) ? chatIds : [])
@@ -299,15 +372,17 @@ function recipientsFor(chatIds) {
 }
 
 export function createAlertDigestState() {
-  return { dayKey: null, pending: new Map(), sentSlots: new Set() };
+  return { dayKey: null, pending: new Map(), dailyEvents: new Map(), sentSlots: new Set() };
 }
 
 function prepareDigestState(state, dayKey) {
   if (!(state.pending instanceof Map)) state.pending = new Map();
+  if (!(state.dailyEvents instanceof Map)) state.dailyEvents = new Map();
   if (!(state.sentSlots instanceof Set)) state.sentSlots = new Set();
   if (state.dayKey !== dayKey) {
     state.dayKey = dayKey;
     state.pending.clear();
+    state.dailyEvents.clear();
     state.sentSlots.clear();
   }
 }
@@ -352,12 +427,14 @@ export async function runAlerts(market, {
 
   const instant = events.filter(event => event.rule.broadcast === true
     && (event.rule.type === 'oi-spike' || (event.rule.type === 'level' && event.rule.symbol === 'NIFTY')));
-  const deferred = events.filter(event => event.rule.broadcast === true && ['buildup', 'top-movers'].includes(event.rule.type));
   if (digestState && subscribers.length && typeof market?.date === 'string') {
     prepareDigestState(digestState, market.date);
-    for (const event of deferred) {
+    const daily = events.filter(event => event.rule.broadcast === true && ['level', 'buildup', 'top-movers'].includes(event.rule.type));
+    for (const event of daily) {
       const key = `${event.rule.type}:${event.rule.id}`;
-      digestState.pending.set(key, { ...event, items: alertItems(event, market) });
+      const prepared = { ...event, items: alertItems(event, market) };
+      digestState.dailyEvents.set(key, prepared);
+      if (['buildup', 'top-movers'].includes(event.rule.type)) digestState.pending.set(key, prepared);
     }
   }
   if (instant.length) {
@@ -374,8 +451,8 @@ export async function runAlerts(market, {
   return messages;
 }
 
-/** Flush queued build-up/top-mover items at 11:00, 13:00, and 15:45 IST. */
-export async function flushScheduledDigests({ digestState, now = Date.now(), broadcastChatIds = [], send = sendTelegram, log = () => {} } = {}) {
+/** Flush queued build-up/top-mover items and the 15:45 subscriber EOD report. */
+export async function flushScheduledDigests({ digestState, now = Date.now(), broadcastChatIds = [], observations = [], send = sendTelegram, log = () => {} } = {}) {
   if (!digestState) return { sent: 0, skipped: 'no digest state' };
   const dayKey = istDateKey(now);
   prepareDigestState(digestState, dayKey);
@@ -387,7 +464,24 @@ export async function flushScheduledDigests({ digestState, now = Date.now(), bro
   const events = [...digestState.pending.values()];
   digestState.pending.clear();
   const subscribers = recipientsFor(broadcastChatIds);
-  if (!events.length || !subscribers.length) return { sent: 0, skipped: 'empty' };
+  if (!subscribers.length) return { sent: 0, skipped: 'empty' };
+
+  if (dueSlots.includes(15 * 60 + 45)) {
+    const messages = eodBroadcasts(digestState, observations, dayKey, events);
+    for (const chatId of subscribers) {
+      for (const message of messages) {
+        await pause(30);
+        try {
+          safeLogResult(log, `telegram EOD subscriber ${chatId}`, await send(message, { chatId, parseMode: 'HTML', retry: true }));
+        } catch (error) {
+          log(`telegram EOD subscriber ${chatId} not sent (${String(error?.message || error)})`);
+        }
+      }
+    }
+    return { sent: subscribers.length * messages.length, slots: dueSlots, messages: messages.length };
+  }
+
+  if (!events.length) return { sent: 0, skipped: 'empty' };
 
   const message = combinedHtml(events, null, now, true);
   for (const chatId of subscribers) {

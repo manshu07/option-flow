@@ -1051,6 +1051,7 @@ server.listen(PORT, HOST, async () => {
             digestState: alertDigestState,
             now: Date.now(),
             broadcastChatIds: activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)),
+            observations: loadObservations(path.join(DATA_DIR, 'observations.json')),
             send: sendTelegram,
             log,
           });

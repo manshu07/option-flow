@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { evaluateAlerts } from './alerts.mjs';
+import { describe, expect, it, vi } from 'vitest';
+import { createAlertDigestState, evaluateAlerts, flushScheduledDigests } from './alerts.mjs';
 
 const NOW = Date.parse('2026-11-16T04:17:00Z'); // 09:47 IST
 const MINUTE = 60_000;
@@ -91,5 +91,77 @@ describe('evaluateAlerts', () => {
     const state = new Map();
     const messages = evaluateAlerts(market(rows), [{ id: 'x', type: 'level', symbol: 'BANKNIFTY', below: 50_000 }], state, NOW);
     expect(messages).toHaveLength(0);
+  });
+});
+
+describe('15:45 subscriber EOD report', () => {
+  const close = Date.parse('2026-11-16T10:15:00Z'); // 15:45 IST
+
+  it('combines daily movers, build-ups, levels, journal outcomes, and numeric tally', async () => {
+    const digestState = createAlertDigestState();
+    digestState.dayKey = '2026-11-16';
+    digestState.dailyEvents.set('top-movers:movers', {
+      rule: { id: 'movers', type: 'top-movers' },
+      items: ['• 1. <b>POWERINDIA</b> +12.04% OI+2.0M'],
+    });
+    digestState.dailyEvents.set('buildup:tmpv', {
+      rule: { id: 'tmpv', type: 'buildup' },
+      items: ['• <b>TMPV</b> +5.16% · OI +2.9M · long'],
+    });
+    digestState.dailyEvents.set('level:nifty', {
+      rule: { id: 'nifty', type: 'level' },
+      items: ['• <b>NIFTY above Friday high</b> spot 25246'],
+    });
+    const observations = [
+      { date: '2026-11-16', symbol: 'TMPV', strike: 265, side: 'PE', quality: 0.99, outcome: { status: 'tgt1', r: 1.22 } },
+      { date: '2026-11-16', symbol: 'BANKNIFTY', strike: 61600, side: 'CE', quality: 0.88, outcome: { status: 'sl', r: -1 } },
+      { date: '2026-11-16', symbol: 'SONACOMS', strike: 920, side: 'CE', quality: 0.91 },
+    ];
+    const send = vi.fn(async (_text: string, _options?: { chatId: number; parseMode: string; retry: boolean }) => ({ sent: true }));
+
+    const result = await flushScheduledDigests({ digestState, now: close, broadcastChatIds: [456], observations, send });
+
+    expect(result).toMatchObject({ sent: 1, messages: 1 });
+    expect(send).toHaveBeenCalledTimes(1);
+    const [message, options] = send.mock.calls[0];
+    expect(options).toMatchObject({ chatId: 456, parseMode: 'HTML', retry: true });
+    expect(message).toContain('<b>Top movers</b>');
+    expect(message).toContain('<b>Build-ups</b>');
+    expect(message).toContain('<b>Levels touched</b>');
+    expect(message).toContain('<b>Journal outcomes</b>');
+    expect(message).toContain('Cards written 3 · 1 TGT1 · 1 SL · 0 open · 0 ambiguous');
+    expect(message).toContain('<b>Jev tally</b>');
+    expect(message).toContain('not investment advice');
+    expect(message).not.toContain('0.99');
+    expect(message.length).toBeLessThan(900);
+  });
+
+  it('splits a long EOD report into report and journal messages under 900 chars', async () => {
+    const digestState = createAlertDigestState();
+    digestState.dayKey = '2026-11-16';
+    for (let index = 0; index < 12; index++) {
+      const id = `build-${index}`;
+      digestState.dailyEvents.set(`buildup:${id}`, {
+        rule: { id, type: 'buildup' },
+        items: [`• <b>${'SYMBOL'.repeat(5)}${index}</b> +5.16% · OI +2.9M · long`],
+      });
+    }
+    const observations = Array.from({ length: 30 }, (_, index) => ({
+      date: '2026-11-16',
+      symbol: `OBSERVATION${index}`,
+      strike: 100 + index,
+      side: 'CE',
+      outcome: { status: index % 2 ? 'sl' : 'tgt1', r: index % 2 ? -1 : 1.22 },
+    }));
+    const sent: string[] = [];
+    const send = vi.fn(async (text: string) => { sent.push(text); return { sent: true }; });
+
+    const result = await flushScheduledDigests({ digestState, now: close, broadcastChatIds: [457], observations, send });
+
+    expect(result).toMatchObject({ sent: 2, messages: 2 });
+    expect(sent).toHaveLength(2);
+    expect(sent.every(text => text.length < 900 && text.includes('not investment advice'))).toBe(true);
+    expect(sent[0]).toContain('<b>Build-ups</b>');
+    expect(sent[1]).toContain('<b>Journal outcomes</b>');
   });
 });
