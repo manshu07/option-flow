@@ -1,6 +1,8 @@
+import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { marketSnapshot } from '../../../tests/e2e/fixtures/replay-fixture';
-import { fetchMarketMinute, fetchReplayDays, fetchReplayFutures, fetchReplayManifest, sourceForDay } from './feed';
+import { clearFuturesCache, fetchMarketMinute, fetchReplayDays, fetchReplayFutures, fetchReplayManifest, getCachedFutures, putCachedFutures, sourceForDay, useFuturesFeed } from './feed';
+import type { FeedStatus } from './feed';
 
 const DATE = '2026-10-30';
 const jsonResponse = (body: unknown) => ({ ok: true, json: async () => body });
@@ -59,5 +61,75 @@ describe('replay feed routes', () => {
   it('does not issue a live request for an invalid direct source', async () => {
     await expect(fetchReplayManifest(DATE, undefined, 'recorded' as 'live')).rejects.toThrow('Invalid replay source');
     expect(request).not.toHaveBeenCalled();
+  });
+});
+
+describe('futures stale-while-revalidate cache', () => {
+  const session = '2026-11-16';
+  const symbols = ['NIFTY', 'SENSEX'];
+  const status: FeedStatus = { provider: { id: 'dhan', label: 'Dhan', alwaysLive: false }, ready: true, session, lastError: null };
+
+  const future = (symbol: string) => ({
+    symbol,
+    contractDate: '2026-11-19',
+    months: ['2026-11-19'],
+    prevClose: 100,
+    prevOi: 1_000,
+    candles: [{ at: Date.parse('2026-11-16T03:45:00Z'), close: 101, oi: 1_100 }],
+  });
+
+  beforeEach(() => clearFuturesCache());
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    clearFuturesCache();
+  });
+
+  it('isolates cached symbols by session and never stores null', () => {
+    const nifty = future('NIFTY');
+    const sensex = future('SENSEX');
+    putCachedFutures(session, 'NIFTY', nifty);
+    putCachedFutures(session, 'SENSEX', sensex);
+    putCachedFutures(session, 'BANKNIFTY', null);
+
+    expect(getCachedFutures(session, 'NIFTY')).toEqual(nifty);
+    expect(getCachedFutures(session, 'SENSEX')).toEqual(sensex);
+    expect(getCachedFutures(session, 'BANKNIFTY')).toBeNull();
+    expect(getCachedFutures('2026-11-17', 'NIFTY')).toBeNull();
+  });
+
+  it('starts an empty first mount at zero and counts successful futures as they arrive', async () => {
+    const request = vi.fn((input: RequestInfo | URL) => {
+      const symbol = String(input).includes('/SENSEX?') ? 'SENSEX' : 'NIFTY';
+      return Promise.resolve({ ok: true, json: async () => ({ months: [{ date: '2026-11-19', prevClose: 100, prevOi: 1_000, candles: future(symbol).candles }] }) });
+    });
+    vi.stubGlobal('fetch', request);
+
+    const { result, unmount } = renderHook(() => useFuturesFeed(symbols, true, status));
+    expect(result.current.read).toBe(0);
+    await waitFor(() => expect(result.current.read).toBe(2));
+    expect(result.current.series.get('NIFTY')?.candles[0]?.close).toBe(101);
+    expect(result.current.series.get('SENSEX')?.candles[0]?.close).toBe(101);
+    unmount();
+  });
+
+  it('paints all cached series on remount before background refresh resolves, while still refetching every symbol', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const symbol = String(input).includes('/SENSEX?') ? 'SENSEX' : 'NIFTY';
+      return Promise.resolve({ ok: true, json: async () => ({ months: [{ date: '2026-11-19', prevClose: 100, prevOi: 1_000, candles: future(symbol).candles }] }) });
+    }));
+    const first = renderHook(() => useFuturesFeed(symbols, true, status));
+    await waitFor(() => expect(first.result.current.read).toBe(2));
+    first.unmount();
+
+    const pendingFetch = vi.fn(() => new Promise<never>(() => undefined));
+    vi.stubGlobal('fetch', pendingFetch);
+    const second = renderHook(() => useFuturesFeed(symbols, true, status));
+
+    expect(second.result.current.read).toBe(2);
+    expect(second.result.current.series.get('NIFTY')?.candles[0]?.close).toBe(101);
+    expect(second.result.current.series.get('SENSEX')?.candles[0]?.close).toBe(101);
+    await waitFor(() => expect(pendingFetch).toHaveBeenCalledTimes(2));
+    second.unmount();
   });
 });

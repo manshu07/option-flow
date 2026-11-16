@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getLatestTradingSessionDate, isMarketSessionTime } from '@/lib/marketSession';
 import type { Underlying } from '@/lib/underlyings';
 import { combineMonths, type FuturesMonth, type FuturesSeries } from '../options-scanner/futuresModel';
@@ -156,17 +156,61 @@ export function useMarketFeed() {
 
 const WORKERS = 6;
 
+/** Last successful futures per session/symbol; survives page tab unmounts. */
+const futuresCache = new Map<string, FuturesSeries>();
+
+const futuresCacheKey = (session: string, symbol: string) => `${session}|${symbol}`;
+
+export function getCachedFutures(session: string, symbol: string): FuturesSeries | null {
+  return futuresCache.get(futuresCacheKey(session, symbol)) ?? null;
+}
+
+export function putCachedFutures(session: string, symbol: string, series: FuturesSeries | null): void {
+  if (series) futuresCache.set(futuresCacheKey(session, symbol), series);
+}
+
+export function deleteCachedFutures(session: string, symbol: string): void {
+  futuresCache.delete(futuresCacheKey(session, symbol));
+}
+
+export function clearFuturesCache(): void {
+  futuresCache.clear();
+}
+
+function futuresForSession(session: string, symbols: readonly string[]): ReadonlyMap<string, FuturesSeries> {
+  const cached = new Map<string, FuturesSeries>();
+  for (const symbol of symbols) {
+    const series = getCachedFutures(session, symbol);
+    if (series) cached.set(symbol, series);
+  }
+  return cached;
+}
+
+const EMPTY_FUTURES = new Map<string, FuturesSeries | null>();
+
 /** Each underlying's futures: read six at a time, and again every minute or two while the numbers move. */
 export function useFuturesFeed(symbols: readonly string[], enabled: boolean, status: FeedStatus | null) {
-  const [series, setSeries] = useState<ReadonlyMap<string, FuturesSeries | null>>(new Map());
+  const initialSession = status?.session ?? getLatestTradingSessionDate(new Date());
+  const initialKey = symbols.join(',');
+  const initialScopeKey = `${initialSession}|${initialKey}`;
+  const cachedForScope = useMemo(() => futuresForSession(initialSession, symbols), [initialSession, initialKey]);
+  const [seriesState, setSeriesState] = useState<{ key: string; values: ReadonlyMap<string, FuturesSeries | null> }>(() => ({ key: initialScopeKey, values: cachedForScope }));
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
-  const [done, setDone] = useState(0);
+  const [doneState, setDoneState] = useState<{ key: string; value: number }>(() => ({ key: initialScopeKey, value: cachedForScope.size }));
   const [tick, setTick] = useState(0);
   // The provider's session: today's, or the recorded day it replays.
   const session = status?.session ?? getLatestTradingSessionDate(new Date());
   const key = symbols.join(',');
+  const scopeKey = `${session}|${key}`;
   const statusRef = useRef(status);
   statusRef.current = status;
+  const localSeries = seriesState.key === scopeKey ? seriesState.values : EMPTY_FUTURES;
+  const series = useMemo(() => {
+    const visible = new Map<string, FuturesSeries | null>(cachedForScope);
+    for (const [symbol, reading] of localSeries) visible.set(symbol, reading);
+    return visible;
+  }, [cachedForScope, localSeries]);
+  const done = doneState.key === scopeKey ? doneState.value : cachedForScope.size;
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -179,21 +223,46 @@ export function useFuturesFeed(symbols: readonly string[], enabled: boolean, sta
     if (!enabled || !symbols.length) return undefined;
     let cancelled = false;
     let cursor = 0;
-    // A first pass counts up from nothing; a refresh keeps the count full and swaps the readings in place.
-    if (tick === 0) setDone(0);
+    const cachedAtStart = futuresForSession(session, symbols);
+    const cachedSymbols = new Set(cachedAtStart.keys());
+    // A warm remount starts at the cached coverage; only misses count up during this pass.
+    if (tick === 0) {
+      setSeriesState({ key: scopeKey, values: cachedAtStart });
+      setDoneState({ key: scopeKey, value: cachedAtStart.size });
+    }
     const read = async (symbol: string) => {
       let result: FuturesSeries | null = null;
       let ok = true;
       try { result = await fetchFutures(symbol, session); } catch { ok = false; }
       if (cancelled) return;
-      if (ok || tick === 0) setSeries(current => new Map(current).set(symbol, result));
-      setFailed(current => {
-        if (ok ? !current.has(symbol) : current.has(symbol)) return current;
-        const next = new Set(current);
-        if (ok) next.delete(symbol); else next.add(symbol);
-        return next;
-      });
-      if (tick === 0) setDone(value => value + 1);
+      if (ok) {
+        if (result) putCachedFutures(session, symbol, result);
+        else deleteCachedFutures(session, symbol);
+        setSeriesState(current => {
+          const base = current.key === scopeKey ? current.values : cachedAtStart;
+          return { key: scopeKey, values: new Map(base).set(symbol, result) };
+        });
+        setFailed(current => {
+          if (!current.has(symbol)) return current;
+          const next = new Set(current);
+          next.delete(symbol);
+          return next;
+        });
+      } else {
+        // A failed refresh leaves the last good reading visible.
+        setFailed(current => {
+          if (current.has(symbol)) return current;
+          const next = new Set(current);
+          next.add(symbol);
+          return next;
+        });
+      }
+      if (tick === 0 && !cachedSymbols.has(symbol)) {
+        setDoneState(current => {
+          const value = current.key === scopeKey ? current.value : cachedAtStart.size;
+          return { key: scopeKey, value: Math.min(symbols.length, value + 1) };
+        });
+      }
     };
     const worker = async () => { while (cursor < symbols.length && !cancelled) await read(symbols[cursor++]); };
     void Promise.all(Array.from({ length: Math.min(WORKERS, symbols.length) }, worker));
@@ -201,7 +270,8 @@ export function useFuturesFeed(symbols: readonly string[], enabled: boolean, sta
     // `key` stands for the symbol list.
   }, [key, enabled, session, tick]);
 
-  return { series, failed, read: tick === 0 ? Math.min(done, symbols.length) : symbols.length, total: symbols.length, session };
+  const failedForScope = useMemo(() => new Set([...failed].filter(symbol => symbols.includes(symbol))), [failed, key]);
+  return { series, failed: failedForScope, read: tick === 0 ? Math.min(done, symbols.length) : symbols.length, total: symbols.length, session };
 }
 
 export type { Underlying };
