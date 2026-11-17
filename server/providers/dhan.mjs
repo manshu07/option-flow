@@ -227,7 +227,10 @@ export function createDhanProvider(universe) {
     const held = futTicks.get(securityId);
     if (held) {
       const candle = held.get(minute) ?? {};
+      if (candle.open === undefined) candle.open = price;
       candle.close = price;
+      candle.high = Math.max(candle.high ?? price, price);
+      candle.low = Math.min(candle.low ?? price, price);
       if (oi !== undefined) candle.oi = oi;
       else if (candle.oi === undefined) candle.oi = 0;
       held.set(minute, candle);
@@ -280,7 +283,15 @@ export function createDhanProvider(universe) {
           const minute = istMinute(Date.now());
           const candle = held.get(minute) ?? {};
           candle.oi = oi;
-          if (candle.close === undefined) candle.close = live.get(`${seg}:${id}`)?.ltp ?? 0;
+          if (candle.close === undefined) {
+            const ltp = live.get(`${seg}:${id}`)?.ltp ?? 0;
+            if (ltp > 0) {
+              candle.open = candle.open ?? ltp;
+              candle.high = candle.high ?? ltp;
+              candle.low = candle.low ?? ltp;
+            }
+            candle.close = ltp;
+          }
           held.set(minute, candle);
         }
       } else if (code === 8) {
@@ -623,7 +634,7 @@ export function createDhanProvider(universe) {
     const held = futTicks.get(contractId);
     if (!held) return [];
     return [...held.entries()]
-      .map(([at, candle]) => ({ at, close: candle.close, oi: candle.oi ?? 0 }))
+      .map(([at, candle]) => ({ at, open: candle.open ?? candle.close, high: candle.high ?? candle.close, low: candle.low ?? candle.close, close: candle.close, oi: candle.oi ?? 0 }))
       .filter(c => c.close > 0 && Number.isFinite(c.oi))
       .sort((a, b) => a.at - b.at);
   }
@@ -653,7 +664,14 @@ export function createDhanProvider(universe) {
     }
     const stamps = (minute?.timestamp ?? []).map(Number);
     const candles = stamps
-      .map((t, i) => ({ at: t > 1e12 ? t : t * 1000, close: num(minute.close?.[i]), oi: num(minute.open_interest?.[i]) }))
+      .map((t, i) => ({
+        at: t > 1e12 ? t : t * 1000,
+        open: num(minute.open?.[i]),
+        high: num(minute.high?.[i]),
+        low: num(minute.low?.[i]),
+        close: num(minute.close?.[i]),
+        oi: num(minute.open_interest?.[i]),
+      }))
       .filter(c => Number.isFinite(c.at) && c.close != null && c.close > 0 && Number.isFinite(c.oi))
       .sort((a, b) => a.at - b.at);
     return { prevClose, prevOi, candles };
@@ -973,7 +991,21 @@ export function createDhanProvider(universe) {
         }
         const rest = await futRest.get(id);
         const merged = new Map((rest?.candles ?? []).map(c => [c.at, c]));
-        for (const candle of candlesFromFeed(id)) merged.set(candle.at, candle);
+        for (const candle of candlesFromFeed(id)) {
+          const base = merged.get(candle.at);
+          // Field-merge: feed's close/oi are fresher, REST's OHLC is ground
+          // truth when the feed joined mid-minute (its H/L would be partial).
+          merged.set(candle.at, base
+            ? {
+                ...candle,
+                open: base.open ?? candle.open,
+                high: base.high != null ? Math.max(base.high, candle.high) : candle.high,
+                low: base.low != null ? Math.min(base.low, candle.low) : candle.low,
+                close: candle.close,
+                oi: candle.oi,
+              }
+            : candle);
+        }
         const candles = [...merged.values()].sort((a, b) => a.at - b.at);
         const prevClose = feed.prevClose ?? feed.close ?? rest?.prevClose ?? null;
         const prevOi = feed.prevOi ?? rest?.prevOi ?? null;
