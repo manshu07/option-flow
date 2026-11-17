@@ -125,6 +125,23 @@ export function observationCaption(card) {
   return lines.join('\n');
 }
 
+/** Subscriber copy: the same signal, stripped of any model/quality attribution. */
+export function observationSubscriberCaption(card) {
+  const side = card?.side === 'PE' ? 'PE' : 'CE';
+  const symbol = escapeHtml(card?.symbol ?? 'Unknown');
+  const strike = Number.isFinite(card?.strike) ? card.strike : '—';
+  const expiry = expiryText(card?.date, card?.expiry);
+  const price = value => Number.isFinite(value) ? `₹${priceText(value)}` : '—';
+  const lines = [
+    `📌 <b>${symbol} ${strike}${side}</b>${expiry ? ` · ${escapeHtml(expiry)}` : ''}`,
+    `Entry ~${price(card?.entry)} · SL ${price(card?.sl)} · TGT1 ${price(card?.tgt1)} · TGT2 ${price(card?.tgt2)}`,
+  ];
+  const theta = thetaText(daysToExpiry(card?.date, card?.expiry));
+  if (theta) lines.push(escapeHtml(theta));
+  lines.push('🎓 captured-data observation · not investment advice · /stop to opt out');
+  return lines.join('\n');
+}
+
 /** A dependency-free SVG snapshot of the server's Observation card data. */
 export function renderObservationCardSvg(card) {
   const bullish = card?.bias !== 'bearish';

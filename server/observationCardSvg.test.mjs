@@ -106,3 +106,16 @@ describe('Observation card SVG', () => {
     expect(caption).not.toContain('<script>&');
   });
 });
+
+describe('observationSubscriberCaption', () => {
+  it('strips quality and attribution while keeping the call details', async () => {
+    const { observationSubscriberCaption } = await import('./observationCardSvg.mjs');
+    const text = observationSubscriberCaption({ ...card, quality: 0.93, strikePickProbability: 0.8 });
+    expect(text).toContain('NIFTY');
+    expect(text).toContain('Entry ~₹');
+    expect(text).toContain('SL');
+    expect(text).toContain('TGT1');
+    expect(text).toContain('not investment advice');
+    expect(text).not.toMatch(/quality|jev|watch|advisor|model/i);
+  });
+});

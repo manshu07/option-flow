@@ -475,7 +475,7 @@ function recipientsFor(chatIds) {
 }
 
 export function createAlertDigestState() {
-  return { dayKey: null, pending: new Map(), dailyEvents: new Map(), wallBaselines: new Map(), gammaUnwindBaselines: new Map(), gammaUnwindFired: new Set(), personalAlertStates: new Map(), sentSlots: new Set() };
+  return { dayKey: null, pending: new Map(), dailyEvents: new Map(), wallBaselines: new Map(), gammaUnwindBaselines: new Map(), gammaUnwindFired: new Set(), personalAlertStates: new Map(), sentSlots: new Set(), lastDigestAt: 0 };
 }
 
 function prepareDigestState(state, dayKey) {
@@ -486,6 +486,7 @@ function prepareDigestState(state, dayKey) {
   if (!(state.gammaUnwindFired instanceof Set)) state.gammaUnwindFired = new Set();
   if (!(state.personalAlertStates instanceof Map)) state.personalAlertStates = new Map();
   if (!(state.sentSlots instanceof Set)) state.sentSlots = new Set();
+  if (!Number.isFinite(state.lastDigestAt)) state.lastDigestAt = 0;
   if (state.dayKey !== dayKey) {
     state.dayKey = dayKey;
     state.pending.clear();
@@ -494,6 +495,7 @@ function prepareDigestState(state, dayKey) {
     state.gammaUnwindBaselines.clear();
     state.gammaUnwindFired.clear();
     state.sentSlots.clear();
+    state.lastDigestAt = 0;
   }
 }
 
@@ -503,6 +505,58 @@ function istDateKey(now) {
   }).formatToParts(now);
   const part = type => parts.find(item => item.type === type)?.value ?? '';
   return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+const OBSERVATION_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function observationExpiry(card) {
+  if (typeof card?.expiry !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(card.expiry)) return '';
+  const date = Date.parse(`${card.expiry}T12:00:00+05:30`);
+  if (!Number.isFinite(date)) return '';
+  const d = new Date(date);
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = OBSERVATION_MONTHS[d.getUTCMonth()] ?? '';
+  const from = Date.parse(`${String(card?.date ?? card.expiry).slice(0, 10)}T12:00:00+05:30`);
+  const dte = Number.isFinite(from) ? Math.round((Date.parse(`${card.expiry}T12:00:00+05:30`) - from) / 86_400_000) : null;
+  return `${day}-${month}${dte == null ? '' : ` (${dte} DTE)`}`;
+}
+
+const observationPrice = value => Number.isFinite(value) ? `₹${(Math.round(value * 100) / 100).toString()}` : '—';
+
+/**
+ * Subscriber-only observation lines: newest fresh calls since the last digest.
+ * Stripped by design — no quality score, no probability, no model attribution.
+ */
+export function observationDigestLines(observations, sinceAt, max = 3) {
+  return (Array.isArray(observations) ? observations : [])
+    .filter(card => Number.isFinite(card?.at) && card.at > sinceAt && !card?.outcome
+      && typeof card?.symbol === 'string' && Number.isFinite(card?.strike))
+    .sort((a, b) => b.at - a.at)
+    .slice(0, Math.max(1, max))
+    .map(card => {
+      const side = card.side === 'PE' ? 'PE' : 'CE';
+      const expiry = observationExpiry(card);
+      return `• <b>${escapeHtml(card.symbol)} ${card.strike}${side}</b>${expiry ? ` · ${expiry}` : ''} · entry ${observationPrice(card.entry)} · SL ${observationPrice(card.sl)} · TGT1 ${observationPrice(card.tgt1)}`;
+    });
+}
+
+/** Append the Observations section before the broadcast footer, inside the character budget. */
+function appendObservationSection(message, lines, limit = 900) {
+  if (!lines.length) return message;
+  const hasFooter = message.endsWith(BROADCAST_FOOTER);
+  const footerMarker = `\n\n${BROADCAST_FOOTER}`;
+  const body = hasFooter ? message.slice(0, message.length - footerMarker.length) : message;
+  const heading = '📌 <b>Observations</b>';
+  const added = [];
+  for (const line of lines) {
+    const candidate = [...added, line];
+    const next = `${body}\n\n${heading}\n${candidate.join('\n')}${hasFooter ? footerMarker : ''}`;
+    if (next.length > limit) break;
+    added.push(line);
+  }
+  if (!added.length) return message;
+  const section = `${body}\n\n${heading}\n${added.join('\n')}`;
+  return hasFooter ? `${section}${footerMarker}` : section;
 }
 
 function safeLogResult(log, prefix, result) {
@@ -627,9 +681,11 @@ export async function flushScheduledDigests({ digestState, now = Date.now(), bro
   digestState.pending.clear();
   const subscribers = recipientsFor(broadcastChatIds);
   if (!subscribers.length) return { sent: 0, skipped: 'empty' };
+  const observationLines = observationDigestLines(observations, digestState.lastDigestAt ?? 0);
 
   if (dueSlots.includes(15 * 60 + 45)) {
     const messages = eodBroadcasts(digestState, observations, dayKey, events);
+    if (observationLines.length) messages[messages.length - 1] = appendObservationSection(messages[messages.length - 1], observationLines);
     for (const chatId of subscribers) {
       for (const message of messages) {
         await pause(30);
@@ -640,12 +696,12 @@ export async function flushScheduledDigests({ digestState, now = Date.now(), bro
         }
       }
     }
+    digestState.lastDigestAt = now;
     return { sent: subscribers.length * messages.length, slots: dueSlots, messages: messages.length };
   }
 
-  if (!events.length) return { sent: 0, skipped: 'empty' };
-
-  const message = combinedHtml(events, null, now, true);
+  if (!events.length && !observationLines.length) return { sent: 0, skipped: 'empty' };
+  const message = appendObservationSection(combinedHtml(events, null, now, true), observationLines);
   for (const chatId of subscribers) {
     await pause(30);
     try {
@@ -654,5 +710,6 @@ export async function flushScheduledDigests({ digestState, now = Date.now(), bro
       log(`telegram digest subscriber ${chatId} not sent (${String(error?.message || error)})`);
     }
   }
+  digestState.lastDigestAt = now;
   return { sent: subscribers.length, slots: dueSlots };
 }

@@ -285,3 +285,46 @@ describe('gamma unwind digest', () => {
     expect(send[0].options).toMatchObject({ chatId: 711, parseMode: 'HTML', retry: true });
   });
 });
+
+describe('subscriber observation digest section', () => {
+  const cards = [
+    { date: '2026-11-17', at: NOW - 40 * MINUTE, symbol: 'DELHIVERY', strike: 455, side: 'CE', expiry: '2026-11-23', entry: 8.15, sl: 4.48, tgt1: 12.63, tgt2: 15.49, quality: 0.93 },
+    { date: '2026-11-17', at: NOW - 10 * MINUTE, symbol: 'TMPV', strike: 265, side: 'PE', expiry: '2026-11-23', entry: 5.95, sl: 3.27, tgt1: 9.22, tgt2: 11.31, quality: 0.93 },
+    { date: '2026-11-17', at: NOW - 5 * MINUTE, symbol: 'PNB', strike: 151, side: 'CE', expiry: '2026-11-23', entry: 2.09, sl: 1.15, tgt1: 3.24, tgt2: 3.97, quality: 0.9 },
+    { date: '2026-11-17', at: NOW - 2 * MINUTE, symbol: 'ITC', strike: 292.5, side: 'PE', expiry: '2026-11-23', entry: 3, sl: 1.65, tgt1: 4.65, tgt2: 5.7, quality: 0.9 },
+    { date: '2026-11-17', at: NOW - MINUTE, symbol: 'OLD', strike: 100, side: 'CE', expiry: '2026-11-23', entry: 5, sl: 2.75, tgt1: 7.75, tgt2: 9.5, outcome: { status: 'open' } }
+  ];
+
+  it('takes the three newest fresh cards and never leaks attribution', async () => {
+    const { observationDigestLines } = await import('./alerts.mjs');
+    const lines = observationDigestLines(cards, NOW - 60 * MINUTE);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain('ITC 292.5PE');
+    expect(lines[1]).toContain('PNB 151CE');
+    expect(lines[2]).toContain('TMPV 265PE');
+    const text = lines.join('\n');
+    expect(text).not.toMatch(/jev|quality|watch|advisor|model/i);
+    expect(text).toContain('23-Nov (6 DTE)');
+    expect(text).toContain('entry ₹5.95');
+  });
+
+  it('appends an Observations section before the footer in the digest', async () => {
+    const sent: { text: string; chatId?: number }[] = [];
+    const digestState = createAlertDigestState() as any;
+    digestState.lastDigestAt = NOW - 60 * MINUTE;
+    const result = await flushScheduledDigests({
+      digestState,
+      now: Date.parse('2026-11-16T05:35:00Z'), // 11:05 IST — first digest slot
+      broadcastChatIds: [711],
+      observations: cards,
+      send: async (text: string, options?: { chatId?: number }) => { sent.push({ text, chatId: options?.chatId }); return { sent: true }; },
+      log: () => {},
+    });
+    expect(result.sent).toBe(1);
+    expect(sent[0].text).toContain('Observations');
+    expect(sent[0].text).toContain('ITC 292.5PE');
+    expect(sent[0].text).not.toMatch(/jev|quality|watch/i);
+    expect(sent[0].text.trimEnd().endsWith('to opt out')).toBe(true);
+    expect(digestState.lastDigestAt).toBe(Date.parse('2026-11-16T05:35:00Z'));
+  });
+});
