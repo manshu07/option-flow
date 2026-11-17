@@ -59,25 +59,38 @@ New `src/features/market-flow/atrModel.ts`:
 - Additive card fields: `atr: { value, barMinutes, state }` (null when insufficient data).
 - `server/observationCardSvg.mjs` `observationCaption` (owner copy) and the card SVG
   gain ONE line when `atr` is present:
-  `Range: ATR(15m) {value} pts · SL {d}×ATR out · TGT1 {d}×ATR`
-  with `d = |level − entry| / atr` rounded to 1 decimal. No line when atr is null.
+  `Range: Futures ATR(15m) {value} pts · {state}`
+  (state is `compressed`/`normal`/`expanded`). No line when atr is null.
+- **Basis rule (Kilo review r2):** do NOT normalize option SL/TGT premium distances
+  by the futures ATR — premium (₹) and underlying (pts) are different bases, and the
+  same underlying move moves different deltas differently. Futures ATR is context for
+  the UNDERLYING only here. Parked follow-up (separate handoff, not this one): a
+  clearly-labelled `≈` reachability line using the captured per-row delta
+  (legRow[17]) as a first-order conversion, only if the plain ATR line proves useful.
 - **`observationSubscriberCaption` stays byte-identical** — subscriber copy is frozen
   copy (owner-approved), do not touch it.
 - Advisor test: symbol with synthetic 20×15-min bars produces the line; 5 bars
   produces no line and no crash.
 
-## S4 — Journal followThrough gains post-entry spot range (M)
+## S4 — Journal followThrough gains post-entry futures range (M)
 
 `server/journal.mjs` `resolveCard`/followThrough builder:
 
 - The futures candles in the capture window now have high/low. Add to
-  `outcome.followThrough`: `spot: { high, low, from, to }` — max/min of the symbol's
-  futures candle highs/lows from entry minute to session close (same window rules as
-  the existing sampled premium evidence, same missing-minute policy: partial windows
-  report what exists, never invent).
-- Rendered in the existing Post-call verification table as one extra row
-  `Spot after entry: H … / L …` — no change to status/R math (that authority is frozen).
-- Test: card with known candles produces exact high/low; candles missing → `spot: null`.
+  `outcome.followThrough`: `futures: { high, low, from, to }` — max/min of the
+  symbol's FUTURES candle highs/lows from entry to session close.
+- **Window rule (Kilo review r2):** start from the first FULL minute after the
+  call — a call stamped 09:45:23 must NOT count the 09:45 candle (it carries 23
+  seconds of pre-call ticks); the window opens at 09:46. Never invent movement for
+  the skipped partial minute.
+- **Label rule:** the source is futures candles, not cash spot — UI and field say
+  `Futures after entry: H … / L …` (futures–spot basis exists; do not blur it).
+- Same missing-minute policy as the existing sampled premium evidence: partial
+  windows report what exists, never invent.
+- Rendered in the existing Post-call verification table as one extra row — no change
+  to status/R math (that authority is frozen).
+- Test: card at 09:45:23 with known candles proves the 09:45 extreme is excluded;
+  candles missing → `futures: null`.
 
 ---
 
