@@ -60,6 +60,8 @@
  * @property {() => number} [now]                The provider's clock; defaults to Date.now. The demo replays a session outside market hours.
  * @property {(u: Underlying) => Promise<string[]>} expiries         Live option expiries, ascending.
  * @property {(u: Underlying, expiry: string) => Promise<OptionChain>} optionChain
+ * @property {() => Array<{schemaVersion: number, symbol: string, session: string, capturedAt: number, expiry: string, spot: number, strikes: Array}>} [fullChainSnapshots]
+ *           Full chains already received by a provider's existing capture path; reading them must not issue requests.
  * @property {(u: Underlying, session: string) => Promise<FuturesMonth[]>} futures
  *           The futures months listed on or after `session`, nearest first (at most three).
  *           An empty array means the underlying has no future.

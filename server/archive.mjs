@@ -5,6 +5,7 @@ import path from 'node:path';
 import { gzip, gzipSync, gunzip, gunzipSync } from 'node:zlib';
 import { promisify } from 'node:util';
 import { isMarketSessionTime, marketSessionBounds } from '../src/lib/marketSession.ts';
+import { isFullOptionChainSnapshot, isFullOptionChainSnapshotCollection } from './optionChainSnapshots.mjs';
 
 export const ARCHIVE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MINUTE = /^\d{4}$/;
@@ -56,6 +57,29 @@ function readJson(file, code, label) {
   }
   try { return JSON.parse(text); }
   catch { fail(code, `${label} is not valid JSON.`); }
+}
+
+function readChainSnapshots(day, date, sourceFiles) {
+  const dir = path.join(day, 'chains');
+  if (!fs.existsSync(dir)) return {};
+  if (!fs.statSync(dir).isDirectory()) fail('ARCHIVE_CHAIN_INVALID', `Chain storage for ${date} is not a directory.`);
+  const chains = {};
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!entry.name.endsWith('.json')) continue;
+    const symbol = entry.name.slice(0, -5);
+    if (!SYMBOL.test(symbol) || !entry.isFile()) fail('ARCHIVE_CHAIN_INVALID', `Invalid chain file ${entry.name}.`);
+    const file = path.join(dir, entry.name);
+    let bytes;
+    try { bytes = fs.readFileSync(file); }
+    catch { fail('ARCHIVE_MISSING', `Chain snapshot ${symbol} is missing for ${date}.`); }
+    let snapshot;
+    try { snapshot = JSON.parse(bytes.toString('utf8')); }
+    catch { fail('ARCHIVE_JSON_INVALID', `Chain snapshot ${symbol} is not valid JSON.`); }
+    if (!isFullOptionChainSnapshotCollection(snapshot, symbol, date)) fail('ARCHIVE_CHAIN_INVALID', `Chain snapshot ${symbol} is invalid for ${date}.`);
+    chains[symbol] = snapshot.snapshots;
+    sourceFiles.push({ name: `chains/${entry.name}`, bytes });
+  }
+  return chains;
 }
 
 function sourceIndex(scanDir, date) {
@@ -119,11 +143,13 @@ function readSource(scanDir, date) {
     }
   }
 
+  const chains = readChainSnapshots(day, date, sourceFiles);
+
   const fingerprintHash = crypto.createHash('sha256');
   for (const source of sourceFiles.sort((a, b) => a.name.localeCompare(b.name))) {
     fingerprintHash.update(source.name).update('\0').update(source.bytes).update('\0');
   }
-  return { minutesIndex, minutes, futures, sourceFingerprint: `sha256:${fingerprintHash.digest('hex')}` };
+  return { minutesIndex, minutes, futures, chains, sourceFingerprint: `sha256:${fingerprintHash.digest('hex')}` };
 }
 
 function payloadShape(value) {
@@ -151,6 +177,11 @@ function payloadShape(value) {
         if (!candle || !Number.isSafeInteger(candle.at) || !Number.isFinite(candle.close) || !Number.isFinite(candle.oi)) fail('ARCHIVE_SHAPE_INVALID', `Archive futures ${symbol} has an invalid candle.`);
       }
     }
+  }
+  if (value.chains != null && (!value.chains || typeof value.chains !== 'object' || Array.isArray(value.chains))) fail('ARCHIVE_SHAPE_INVALID', 'Archive chains must be an object.');
+  for (const [symbol, snapshots] of Object.entries(value.chains ?? {})) {
+    if (!SYMBOL.test(symbol) || !Array.isArray(snapshots) || !snapshots.length
+      || snapshots.some(snapshot => !isFullOptionChainSnapshot(snapshot, symbol, value.date))) fail('ARCHIVE_SHAPE_INVALID', `Archive chain ${symbol} is invalid.`);
   }
   return value;
 }
@@ -194,6 +225,8 @@ function spotCheckPayload(payload, identity = null) {
   if (minute === undefined || !Object.prototype.hasOwnProperty.call(payload.minutes, minute)) fail('ARCHIVE_VERIFY_FAILED', 'Archive minute spot-check failed.');
   const symbol = Object.keys(payload.futures)[0];
   if (symbol !== undefined && (!payload.futures[symbol] || payload.futures[symbol].symbol !== symbol || payload.futures[symbol].session !== payload.date)) fail('ARCHIVE_VERIFY_FAILED', 'Archive futures spot-check failed.');
+  const chainSymbol = Object.keys(payload.chains ?? {})[0];
+  if (chainSymbol !== undefined && !payload.chains[chainSymbol].every(snapshot => isFullOptionChainSnapshot(snapshot, chainSymbol, payload.date))) fail('ARCHIVE_VERIFY_FAILED', 'Archive chain spot-check failed.');
   if (identity && (payload.providerId !== identity.providerId || payload.date !== identity.date)) fail('ARCHIVE_VERIFY_FAILED', 'Archive identity failed verification.');
 }
 
@@ -202,6 +235,8 @@ function spotCheck(payload, source) {
   if (minute !== undefined && JSON.stringify(payload.minutes[minute]) !== JSON.stringify(source.minutes[minute])) fail('ARCHIVE_VERIFY_FAILED', `Archive minute ${minute} failed verification.`);
   const symbol = Object.keys(source?.futures ?? {})[0];
   if (symbol !== undefined && JSON.stringify(payload.futures[symbol]) !== JSON.stringify(source.futures[symbol])) fail('ARCHIVE_VERIFY_FAILED', `Archive futures ${symbol} failed verification.`);
+  const chainSymbol = Object.keys(source?.chains ?? {})[0];
+  if (chainSymbol !== undefined && JSON.stringify(payload.chains?.[chainSymbol]) !== JSON.stringify(source.chains[chainSymbol])) fail('ARCHIVE_VERIFY_FAILED', `Archive chain ${chainSymbol} failed verification.`);
 }
 
 function verifyArchive(file, source = null, identity = null) {
@@ -225,6 +260,32 @@ async function readJsonAsync(file, code, label) {
   }
   try { return JSON.parse(text); }
   catch { fail(code, `${label} is not valid JSON.`); }
+}
+
+async function readChainSnapshotsAsync(day, date, sourceFiles) {
+  const dir = path.join(day, 'chains');
+  let stat;
+  try { stat = await fsp.stat(dir); }
+  catch (error) { if (error?.code === 'ENOENT') return {}; throw error; }
+  if (!stat.isDirectory()) fail('ARCHIVE_CHAIN_INVALID', `Chain storage for ${date} is not a directory.`);
+  const chains = {};
+  const dirEntries = await fsp.readdir(dir, { withFileTypes: true });
+  for (const entry of dirEntries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!entry.name.endsWith('.json')) continue;
+    const symbol = entry.name.slice(0, -5);
+    if (!SYMBOL.test(symbol) || !entry.isFile()) fail('ARCHIVE_CHAIN_INVALID', `Invalid chain file ${entry.name}.`);
+    const file = path.join(dir, entry.name);
+    let bytes;
+    try { bytes = await fsp.readFile(file); }
+    catch { fail('ARCHIVE_MISSING', `Chain snapshot ${symbol} is missing for ${date}.`); }
+    let snapshot;
+    try { snapshot = JSON.parse(bytes.toString('utf8')); }
+    catch { fail('ARCHIVE_JSON_INVALID', `Chain snapshot ${symbol} is not valid JSON.`); }
+    if (!isFullOptionChainSnapshotCollection(snapshot, symbol, date)) fail('ARCHIVE_CHAIN_INVALID', `Chain snapshot ${symbol} is invalid for ${date}.`);
+    chains[symbol] = snapshot.snapshots;
+    sourceFiles.push({ name: `chains/${entry.name}`, bytes });
+  }
+  return chains;
 }
 
 async function readSourceAsync(scanDir, date) {
@@ -270,9 +331,11 @@ async function readSourceAsync(scanDir, date) {
     if (error?.code !== 'ENOENT') throw error;
   }
 
+  const chains = await readChainSnapshotsAsync(day, date, sourceFiles);
+
   const fingerprintHash = crypto.createHash('sha256');
   for (const source of sourceFiles.sort((a, b) => a.name.localeCompare(b.name))) fingerprintHash.update(source.name).update('\0').update(source.bytes).update('\0');
-  return { minutesIndex, minutes, futures, sourceFingerprint: `sha256:${fingerprintHash.digest('hex')}` };
+  return { minutesIndex, minutes, futures, chains, sourceFingerprint: `sha256:${fingerprintHash.digest('hex')}` };
 }
 
 function sourceIndexValue(value) {
@@ -327,6 +390,7 @@ async function verifyArchiveAsync(file, source = null, identity = null) {
     if (JSON.stringify(payload.minutesIndex) !== JSON.stringify(source.minutesIndex)) fail('ARCHIVE_VERIFY_FAILED', 'Archive minute index failed verification.');
     for (const minute of Object.keys(source.minutes)) if (JSON.stringify(payload.minutes[minute]) !== JSON.stringify(source.minutes[minute])) fail('ARCHIVE_VERIFY_FAILED', `Archive minute ${minute} failed verification.`);
     for (const symbol of Object.keys(source.futures)) if (JSON.stringify(payload.futures[symbol]) !== JSON.stringify(source.futures[symbol])) fail('ARCHIVE_VERIFY_FAILED', `Archive futures ${symbol} failed verification.`);
+    for (const symbol of Object.keys(source.chains ?? {})) if (JSON.stringify(payload.chains?.[symbol]) !== JSON.stringify(source.chains[symbol])) fail('ARCHIVE_VERIFY_FAILED', `Archive chain ${symbol} failed verification.`);
   }
   spotCheckPayload(payload, identity);
   return payload;
@@ -537,7 +601,15 @@ export async function archiveSession(scanDir, providerId, date, options = {}) {
     }
   }
 
-  const payload = { schemaVersion: 1, providerId, date, minutesIndex: source.minutesIndex, minutes: source.minutes, futures: source.futures };
+  const payload = {
+    schemaVersion: 1,
+    providerId,
+    date,
+    minutesIndex: source.minutesIndex,
+    minutes: source.minutes,
+    futures: source.futures,
+    ...(Object.keys(source.chains ?? {}).length ? { chains: source.chains } : {}),
+  };
   await fsp.mkdir(path.dirname(target), { recursive: true });
   const temporary = path.join(path.dirname(target), `.${date}.${process.pid}.${Date.now()}.tmp`);
   try {
@@ -602,6 +674,7 @@ export function archiveSessionSync(scanDir, providerId, date, options = {}) {
     minutesIndex: source.minutesIndex,
     minutes: source.minutes,
     futures: source.futures,
+    ...(Object.keys(source.chains ?? {}).length ? { chains: source.chains } : {}),
   };
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const temporary = path.join(path.dirname(target), `.${date}.${process.pid}.${Date.now()}.tmp`);

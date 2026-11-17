@@ -48,11 +48,13 @@ import { liveErrorMessage, liveSnapshotMessage } from './liveCommand.mjs';
 import { formatJournalMessage } from './journalCommand.mjs';
 import { gapOpenDue, gapOpenMessage } from './gapOpen.mjs';
 import { weeklyReviewDue, weeklyReviewMessage } from './weeklyReview.mjs';
+import { capturePreviousOiBaseline, fillMissingPrevOi } from './oiBaseline.mjs';
+import { isFullOptionChainSnapshot, persistFullOptionChainSnapshots } from './optionChainSnapshots.mjs';
 import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
-import { filterLiveExpiries, getLatestTradingSessionDate, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
+import { filterLiveExpiries, getLatestTradingSessionDate, getPreviousTradingDay, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT) || 8787;
@@ -89,6 +91,9 @@ const state = { ready: false, building: false, latestJson: null, latest: null, l
 const alertState = new Map();
 const alertDigestState = createAlertDigestState();
 const journalMinuteIndexes = new Map();
+let previousOiSessionDate = null;
+let previousOiBaseline = new Map();
+const persistedFullChainCaptures = new Set();
 
 const hhmmOf = at => { const p = marketParts(at); return `${String(Math.floor(p.minuteOfDay / 60)).padStart(2, '0')}${String(p.minuteOfDay % 60).padStart(2, '0')}`; };
 
@@ -106,6 +111,22 @@ function storeMinute(date, at, json) {
   minutes.sort((a, b) => a[1] - b[1]);
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(minutes));
   return minutes;
+}
+
+function persistProviderFullChains() {
+  if (typeof provider.fullChainSnapshots !== 'function') return 0;
+  const pending = provider.fullChainSnapshots().filter(snapshot =>
+    isFullOptionChainSnapshot(snapshot, snapshot?.symbol, snapshot?.session)
+      && !persistedFullChainCaptures.has(`${snapshot.session}:${snapshot.symbol}:${snapshot.capturedAt}`));
+  if (!pending.length) return 0;
+  try {
+    const written = persistFullOptionChainSnapshots(SCAN_DIR, pending);
+    for (const snapshot of pending) persistedFullChainCaptures.add(`${snapshot.session}:${snapshot.symbol}:${snapshot.capturedAt}`);
+    return written;
+  } catch (error) {
+    log('full-chain snapshot persistence failed:', String(error?.message || error));
+    return 0;
+  }
 }
 
 /** Read captured minutes from the existing raw index, falling back to the verified archive. */
@@ -157,6 +178,40 @@ function lastStoredMinuteFile(session) {
   } catch { return null; }
 }
 
+/** Reuse the prior session's captured closing OI when the current row lacks prevOi. */
+async function previousSessionOiBaseline(sessionDate) {
+  if (previousOiSessionDate === sessionDate) return previousOiBaseline;
+  const sessionNoon = Date.parse(`${sessionDate}T12:00:00+05:30`);
+  if (!Number.isFinite(sessionNoon)) return new Map();
+  const previousDate = marketParts(getPreviousTradingDay(1, new Date(sessionNoon))).dateKey;
+  const isClosingCapture = snapshot => {
+    if (!Number.isFinite(snapshot?.t)) return false;
+    const parts = marketParts(snapshot.t);
+    const close = marketCloseMinuteFor(snapshot.t);
+    return parts.dateKey === previousDate && parts.minuteOfDay >= close - 5 && parts.minuteOfDay <= close;
+  };
+  const stored = lastStoredMinuteFile(previousDate)?.file ?? null;
+  let snapshot = isClosingCapture(stored) ? stored : null;
+  if (!snapshot) {
+    const previousNoon = Date.parse(`${previousDate}T12:00:00+05:30`);
+    const closeMinute = Number.isFinite(previousNoon) ? marketCloseMinuteFor(previousNoon) : 15 * 60 + 40;
+    for (let minute = closeMinute; minute >= Math.max(9 * 60 + 15, closeMinute - 5); minute--) {
+      const hhmm = `${String(Math.floor(minute / 60)).padStart(2, '0')}${String(minute % 60).padStart(2, '0')}`;
+      try {
+        const candidate = await readJournalMinute(previousDate, hhmm);
+        if (isClosingCapture(candidate) && Array.isArray(candidate.series)) { snapshot = candidate; break; }
+      } catch (error) {
+        log(`previous OI snapshot read failed for ${previousDate}: ${String(error?.message || error)}`);
+        return new Map();
+      }
+    }
+  }
+  if (!snapshot) return new Map();
+  previousOiBaseline = capturePreviousOiBaseline(snapshot);
+  previousOiSessionDate = sessionDate;
+  return previousOiBaseline;
+}
+
 async function build() {
   if (state.building) return;
   state.building = true;
@@ -175,6 +230,15 @@ async function build() {
       state.lastBuild = { at: stored.at, ms: Date.now() - started, series: stored.count, failed: 0, failedSymbols: [], firstError: null };
       state.lastError = null;
       log(`market file: ${stored.count} series (stored session snapshot — market closed), 0 failed, ${Date.now() - started} ms`);
+      // The journal's gate is 15:40 — by then this fast path owns every build,
+      // so the pass must run here too or outcomes never resolve at all.
+      void runJournal({
+        obsPath: path.join(DATA_DIR, 'observations.json'),
+        readMinute: readJournalMinute,
+        now: clock,
+        log,
+        send: process.env.TELEGRAM_BOT_TOKEN ? sendOwnerAndSubscribers : undefined,
+      }).catch(error => log('journal failed:', String(error?.message || error)));
       state.building = false;
       return;
     }
@@ -208,14 +272,22 @@ async function build() {
   };
   try {
     await Promise.all(Array.from({ length: WORKERS }, worker));
+    const fullChainsWritten = persistProviderFullChains();
+    if (fullChainsWritten) log(`full-chain snapshots: ${fullChainsWritten} persisted`);
     if (!series.length) throw new Error(firstError ? `No underlying answered: ${firstError}` : 'No underlying answered.');
     const at = now();
     const sorted = series.sort((a, b) => a.s.localeCompare(b.s));
+    const rawFile = marketFile({ at, date: session, series: sorted, minutes: [], ladders });
+    let previousOi = new Map();
+    try { previousOi = await previousSessionOiBaseline(session); }
+    catch (error) { log(`previous OI baseline unavailable for ${session}: ${String(error?.message || error)}`); }
+    const enriched = fillMissingPrevOi(rawFile, previousOi);
+    if (enriched.filled) log(`OI baseline: restored ${enriched.filled} captured contract row(s) from the previous session`);
     // Only a reading taken in session is a minute the windows can measure from.
     const minutes = isMarketSessionTime(at)
-      ? storeMinute(session, at, JSON.stringify(marketFile({ at, date: session, series: sorted, minutes: [], ladders })))
+      ? storeMinute(session, at, JSON.stringify(enriched.market))
       : readMinutes(session);
-    const file = marketFile({ at, date: session, series: sorted, minutes, ladders });
+    const file = { ...enriched.market, minutes };
     state.latest = file;
     state.latestJson = JSON.stringify(file);
     fs.mkdirSync(SCAN_DIR, { recursive: true });

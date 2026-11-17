@@ -59,6 +59,7 @@ const {
   archiveRequest,
   archiveRequestAsync,
   archiveSession,
+  archiveSessionSync,
   createArchiveService,
   listReplayDays,
   listArchives,
@@ -94,6 +95,24 @@ function s6WriteDay(scanDir, date) {
   return { minutes, minuteSnapshots, futures, day };
 }
 
+function s6WriteChainSnapshot(scanDir, date) {
+  const chain = {
+    schemaVersion: 1,
+    symbol: 'ALPHA',
+    session: date,
+    capturedAt: Date.parse(`${date}T09:16:00+05:30`),
+    expiry: '2026-12-31',
+    spot: 100,
+    prevClose: 99,
+    atm: null,
+    strikes: [{ strike: 100, call: { ltp: 2, oi: 20, prevOi: 10 }, put: { ltp: 3, oi: 30, prevOi: 15 } }],
+  };
+  const dir = archivePath.join(scanDir, date, 'chains');
+  archiveFs.mkdirSync(dir, { recursive: true });
+  archiveFs.writeFileSync(archivePath.join(dir, 'ALPHA.json'), JSON.stringify({ schemaVersion: 1, symbol: 'ALPHA', session: date, snapshots: [chain] }));
+  return { ALPHA: [chain] };
+}
+
 function s6Paths(root) {
   return { scanDir: archivePath.join(root, S6_PROVIDER), archiveRoot: archivePath.join(root, 'archives') };
 }
@@ -104,6 +123,7 @@ describe('Replay V2 S6 EOD archive', () => {
     try {
       const { scanDir, archiveRoot } = s6Paths(root);
       const source = s6WriteDay(scanDir, S6_DATES[0]);
+      const chains = s6WriteChainSnapshot(scanDir, S6_DATES[0]);
       const metadata = await archiveSession(scanDir, S6_PROVIDER, S6_DATES[0], { archiveRoot, keep: 30 });
       const file = archivePath.join(archiveRoot, S6_PROVIDER, `${S6_DATES[0]}.json.gz`);
       const payload = JSON.parse(gunzipSync(archiveFs.readFileSync(file), { level: 9 }).toString('utf8'));
@@ -114,11 +134,29 @@ describe('Replay V2 S6 EOD archive', () => {
         minutesIndex: source.minutes,
         minutes: source.minuteSnapshots,
         futures: source.futures,
+        chains,
       });
       expect(payload.futures.ALPHA.months[0].candles).toHaveLength(2);
       expect(metadata).toMatchObject({ providerId: S6_PROVIDER, date: S6_DATES[0], minutesCount: 3, futuresSymbols: ['ALPHA', 'BETA'], sizeBytes: expect.any(Number), sourceFingerprint: expect.stringMatching(/^sha256:/) });
       expect(archiveFs.existsSync(source.day)).toBe(false);
       expect(JSON.parse(archiveFs.readFileSync(archivePath.join(archiveRoot, 'index.json'), 'utf8'))).toEqual([metadata]);
+    } finally {
+      archiveFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps full-chain snapshots in the sync archive helper', () => {
+    const root = s6TempDir();
+    try {
+      const { scanDir, archiveRoot } = s6Paths(root);
+      const date = S6_DATES[0];
+      s6WriteDay(scanDir, date);
+      const chains = s6WriteChainSnapshot(scanDir, date);
+      archiveSessionSync(scanDir, S6_PROVIDER, date, { archiveRoot });
+
+      const file = archivePath.join(archiveRoot, S6_PROVIDER, `${date}.json.gz`);
+      const payload = JSON.parse(gunzipSync(archiveFs.readFileSync(file)).toString('utf8'));
+      expect(payload.chains).toEqual(chains);
     } finally {
       archiveFs.rmSync(root, { recursive: true, force: true });
     }

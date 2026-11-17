@@ -25,6 +25,9 @@
  *                warmed up, falls back to POST /optionchain behind the chain
  *                gate (documented: 1 request / 3 s per scrip+expiry, 10 unique
  *                scrips / 8 s — bursts are rejected regardless of the caps).
+ *   full-chain   the existing paced seed/fallback responses are retained as
+ *                timestamped full-expiry snapshots; they do not widen the live
+ *                subscription window or feed stale quotes into alert rules.
  *   futures      today's session: 1-minute candles built from the feed's ticks;
  *                an earlier session: POST /charts/intraday (last 5 trading
  *                days). prevClose/prevOi from the feed's PrevClose packets, or
@@ -55,6 +58,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMarketSessionTime } from '../../src/lib/marketSession.ts';
+import { createFullOptionChainSnapshot, normalizeDhanOptionChain } from '../optionChainSnapshots.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MASTER_CACHE = path.join(ROOT, 'data', '.dhan-master.csv');
 const MASTER_MAX_AGE_MS = 2 * 60 * 60_000;
@@ -123,6 +127,8 @@ export function createDhanProvider(universe) {
    *  the session closes (the feed goes quiet; re-fetching over paced REST turns
    *  every build into an eleven-minute crawl for unchanged data). */
   const lastChain = new Map();
+  /** Full responses already fetched by the paced seed/fallback path, by symbol. */
+  const fullChains = new Map();
   /** symbol+session → underlying's previous close, when neither the feed nor quotes had it. */
   const prevCloseCache = new Map();
   /** Whole-universe quotes (one REST request per refresh): seg → id → { last_price, ohlc }. */
@@ -534,41 +540,15 @@ export function createDhanProvider(universe) {
       (async () => { await chainGate(); return post('/optionchain', { UnderlyingScrip: held.underlyingId, UnderlyingSeg: held.underSeg, Expiry: expiry }); })(),
       ensureQuotes(),
     ]);
-    const oc = data?.oc ?? {};
     const fallback = underlyingQuote(held);
-    let spot = num(data?.last_price);
-    if (!spot && fallback?.spot) spot = fallback.spot;
     let prevClose = fallback?.prevClose || null;
     if (!prevClose) prevClose = await underlyingPrevClose(held, ymdIst(Date.now()));
-    const strikes = Object.entries(oc)
-      .map(([key, sides]) => ({ strike: Number(key), call: restLeg(sides?.ce), put: restLeg(sides?.pe) }))
-      .filter(s => Number.isFinite(s.strike))
-      .sort((a, b) => a.strike - b.strike);
-    return { expiry, at: Date.now(), spot: spot ?? 0, prevClose, atm: null, strikes };
-  }
-
-  function restLeg(side) {
-    if (!side || typeof side !== 'object') return undefined;
-    const g = side.greeks ?? {};
-    const ltp = num(side.last_price) ?? 0;
-    return {
-      ltp,
-      prevClose: num(side.previous_close_price),
-      oi: num(side.oi) ?? 0,
-      prevOi: num(side.previous_oi),
-      volume: num(side.volume) ?? 0,
-      prevVolume: num(side.previous_volume),
-      avgPrice: num(side.average_price) ?? ltp,
-      iv: num(side.implied_volatility),
-      bid: num(side.top_bid_price) ?? 0,
-      ask: num(side.top_ask_price) ?? 0,
-      bidQty: num(side.top_bid_quantity) ?? 0,
-      askQty: num(side.top_ask_quantity) ?? 0,
-      dayHigh: null,
-      dayLow: null,
-      lastTradeAt: null,
-      delta: num(g.delta),
-    };
+    return normalizeDhanOptionChain(data, {
+      expiry,
+      at: Date.now(),
+      spotFallback: fallback?.spot,
+      prevClose,
+    });
   }
 
   /** Prev-day seed, once per underlying per session. The feed does not carry
@@ -576,7 +556,7 @@ export function createDhanProvider(universe) {
    *  overnight subscriptions), and without it the board cannot tell which
    *  positions were OPENED today — so the big cards stay empty. One paced
    *  /optionchain call fills previous OI (plus IV and delta) into the feed
-   *  state for every subscribed strike. */
+   *  state and retains the full response for a timestamped session snapshot. */
   const seeded = new Set();
   async function seedPrevDayOi(held) {
     if (seeded.has(held.symbol) || !held.optionStrikes?.expiry) return;
@@ -587,6 +567,17 @@ export function createDhanProvider(universe) {
     } catch (error) {
       seeded.delete(held.symbol); // retry on a later pass
       return;
+    }
+    const capturedAt = Date.now();
+    const quote = underlyingQuote(held);
+    const chain = normalizeDhanOptionChain(data, {
+      expiry: held.optionStrikes.expiry,
+      at: capturedAt,
+      spotFallback: quote.spot,
+      prevClose: quote.prevClose,
+    });
+    if (chain.strikes.length) {
+      fullChains.set(`${held.symbol}:${capturedAt}`, createFullOptionChainSnapshot(held.symbol, ymdIst(capturedAt), chain));
     }
     const oc = data?.oc ?? {};
     const segByte = SEG_BYTE.NSE_FNO;
@@ -946,6 +937,9 @@ export function createDhanProvider(universe) {
       }
       const rest = await restChain(u, expiry, held);
       if (rest.spot > 0 && rest.strikes.length >= 3) lastChain.set(u.symbol, { expiry, at: Date.now(), chain: rest });
+      if (rest.strikes.length) {
+        fullChains.set(`${u.symbol}:${rest.at}`, createFullOptionChainSnapshot(u.symbol, ymdIst(rest.at), rest));
+      }
       return rest;
     },
 
@@ -1000,6 +994,12 @@ export function createDhanProvider(universe) {
         if (ltp != null && prevClose != null) out[held.symbol] = { ltp, prevClose, at: feed?.t ?? null };
       }
       return out;
+    },
+
+    // Full REST chains already obtained by the seed/fallback path. This does
+    // not issue requests; the server drains persistence by snapshot timestamp.
+    fullChainSnapshots() {
+      return [...fullChains.values()];
     },
 
     // Live tick readings for named contracts: the nearest future per symbol
