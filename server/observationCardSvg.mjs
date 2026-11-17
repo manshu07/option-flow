@@ -10,24 +10,71 @@ const escapeHtml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/
 const priceText = value => Number.isFinite(value) ? value.toFixed(2) : '—';
 const signedPct = value => Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '—';
 const oiText = value => Number.isFinite(value) ? `${(value / 1_000_000).toFixed(1)}M OI` : 'OI unavailable';
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function wallText(wall, side) {
   if (!wall || !Number.isFinite(wall.strike)) return `${side} wall unavailable`;
   return `${wall.strike} ${side} · ${oiText(wall.oi)}${Number.isFinite(wall.changePct) ? ` · ${signedPct(wall.changePct)}` : ''}`;
 }
 
+function calendarDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  const at = Date.UTC(year, month - 1, day);
+  if (!Number.isFinite(at) || new Date(at).toISOString().slice(0, 10) !== value) return null;
+  return { day, month, ordinal: at / DAY_MS };
+}
+
+function daysToExpiry(date, expiry) {
+  const from = calendarDate(date), until = calendarDate(expiry);
+  return from && until ? until.ordinal - from.ordinal : null;
+}
+
+function expiryText(date, expiry) {
+  const parsed = calendarDate(expiry);
+  if (!parsed) return null;
+  const dte = daysToExpiry(date, expiry);
+  return `${String(parsed.day).padStart(2, '0')}-${MONTHS[parsed.month - 1]}${dte == null ? '' : ` (${dte} DTE)`}`;
+}
+
 function timeText(value) {
   if (!Number.isFinite(value)) return '';
-  return new Intl.DateTimeFormat('en-IN', {
-    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(value);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(value));
+  const get = type => parts.find(part => part.type === type)?.value;
+  const day = get('day'), month = get('month'), hour = get('hour'), minute = get('minute');
+  return day && month && hour && minute ? `${day}-${month} ${hour}:${minute} IST` : '';
+}
+
+function dealerFlowText(gamma) {
+  if (!Number.isFinite(gamma?.flipLevel)) return null;
+  const level = Math.round(gamma.flipLevel).toLocaleString('en-US');
+  if (gamma.regime === 'gamma-long') return `📐 Dealer flow: RANGE above ${level} — breakouts likely to fade`;
+  if (gamma.regime === 'gamma-short') return `📐 Dealer flow: TREND below ${level} — moves can accelerate`;
+  return null;
+}
+
+function plainDealerNote(note) {
+  return note.replace(/\bmax-gamma strike\b/gi, 'highest dealer-flow strike')
+    .replace(/\bgamma flip\b/gi, 'dealer-flow level')
+    .replace(/\bgamma pin(?: zone)?\b/gi, 'dealer-flow zone')
+    .replace(/\bgamma\b/gi, 'dealer flow');
+}
+
+function thetaText(dte) {
+  if (dte == null || dte > 7) return null;
+  if (dte <= 2) return `⏳ ${dte} DTE — expiry-week decay is brutal; treat as a same-day trade only.`;
+  return `⏳ ${dte} DTE — theta eats the premium daily; if TGT1 is not hit by 14:30, exit.`;
 }
 
 export function observationCaption(card) {
   const side = card?.side === 'PE' ? 'PE' : 'CE';
   const symbol = escapeHtml(card?.symbol ?? 'Unknown');
   const strike = Number.isFinite(card?.strike) ? card.strike : '—';
-  const at = timeText(card?.sentAt ?? card?.at);
+  const at = timeText(card?.at);
+  const expiry = expiryText(card?.date, card?.expiry);
   const entry = card?.entry;
   const relativePct = value => Number.isFinite(value) && Number.isFinite(entry) && entry > 0
     ? `${value >= entry ? '+' : '−'}${Math.round(Math.abs((value / entry - 1) * 100))}%`
@@ -38,7 +85,7 @@ export function observationCaption(card) {
   const support = Number.isFinite(card?.support?.strike) ? `${card.support.strike} PE` : 'unavailable';
   const resistance = Number.isFinite(card?.resistance?.strike) ? `${card.resistance.strike} CE` : 'unavailable';
   const lines = [
-    `🔍 <b>OBSERVATION</b> · ${symbol} ${strike}${side}${at ? ` · ${at} IST` : ''}`,
+    `🔍 <b>OBSERVATION</b> · ${symbol} ${strike}${side}${expiry ? ` · ${escapeHtml(expiry)}` : ''}${at ? ` · ${escapeHtml(at)}` : ''}`,
     '',
     `Bias: <b>${escapeHtml(String(card?.bias ?? 'neutral').toLowerCase())}</b> · quality <b>${Number.isFinite(card?.quality) ? `${(card.quality * 100).toFixed(0)}%` : 'unavailable'}</b> · strike pick ${Number.isFinite(card?.strikePickProbability) ? `${(card.strikePickProbability * 100).toFixed(0)}%` : 'unavailable'}`,
     '',
@@ -54,14 +101,15 @@ export function observationCaption(card) {
   ];
 
   if (card?.gamma && typeof card.gamma === 'object') {
-    const regime = card.gamma.regime === 'gamma-long' ? 'long' : card.gamma.regime === 'gamma-short' ? 'short' : 'unavailable';
-    const flip = Number.isFinite(card.gamma.flipLevel) ? String(Math.round(card.gamma.flipLevel)) : 'unavailable';
+    const dealerFlow = dealerFlowText(card.gamma);
     const pin = typeof card.gamma.pin === 'string' && card.gamma.pin ? ` · pin ${escapeHtml(card.gamma.pin)}` : '';
-    lines.push('', `Γ regime: ${regime} · flip ${flip}${pin}`);
+    if (dealerFlow) lines.push('', `${escapeHtml(dealerFlow)}${pin}`);
     for (const note of Array.isArray(card.gamma.notes) ? card.gamma.notes : []) {
-      if (typeof note === 'string' && note) lines.push(`• ${escapeHtml(note)}`);
+      if (typeof note === 'string' && note) lines.push(`• ${escapeHtml(plainDealerNote(note))}`);
     }
   }
+  const theta = thetaText(daysToExpiry(card?.date, card?.expiry));
+  if (theta) lines.push('', escapeHtml(theta));
 
   const live = card?.live;
   const liveFields = [];
@@ -83,9 +131,11 @@ export function renderObservationCardSvg(card) {
   const accent = bullish ? '#16834a' : '#bd3e42';
   const pale = bullish ? '#eaf6ef' : '#fbefef';
   const label = escapeXml(`${card?.symbol ?? 'Unknown'} ${Number.isFinite(card?.strike) ? card.strike : '—'}${card?.side === 'PE' ? 'PE' : 'C'}`);
-  const expiry = escapeXml(card?.expiry ?? 'Expiry unavailable');
-  const date = escapeXml(card?.date ?? '');
+  const expiry = escapeXml(expiryText(card?.date, card?.expiry) ?? 'Expiry unavailable');
   const time = escapeXml(timeText(card?.at));
+  const dealerFlow = dealerFlowText(card?.gamma);
+  const pin = dealerFlow && typeof card?.gamma?.pin === 'string' && card.gamma.pin ? ` · pin ${card.gamma.pin}` : '';
+  const theta = thetaText(daysToExpiry(card?.date, card?.expiry));
   const quality = Number.isFinite(card?.quality) ? `${(card.quality * 100).toFixed(0)}%` : '—';
   const pickProbability = Number.isFinite(card?.strikePickProbability) ? `${(card.strikePickProbability * 100).toFixed(0)}%` : '—';
   const spot = priceText(card?.spot);
@@ -99,13 +149,13 @@ export function renderObservationCardSvg(card) {
   const trail = escapeXml(card?.tsl ?? 'Trailing stop unavailable');
   const disclaimer = escapeXml(card?.disclaimer ?? 'Educational observation; not trade advice.');
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="470" viewBox="0 0 760 470" role="img" aria-label="Observation ${label}">
-<rect width="760" height="470" rx="22" fill="#f4f5f8"/>
-<rect x="20" y="18" width="720" height="434" rx="18" fill="#ffffff" stroke="#dfe2e8"/>
-<path d="M38 18h10v434H38a18 18 0 0 1-18-18V36A18 18 0 0 1 38 18Z" fill="${accent}"/>
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="520" viewBox="0 0 760 520" role="img" aria-label="Observation ${label}">
+<rect width="760" height="520" rx="22" fill="#f4f5f8"/>
+<rect x="20" y="18" width="720" height="484" rx="18" fill="#ffffff" stroke="#dfe2e8"/>
+<path d="M38 18h10v484H38a18 18 0 0 1-18-18V36A18 18 0 0 1 38 18Z" fill="${accent}"/>
 <text x="72" y="57" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700" letter-spacing="2">ORDER FLOW · OBSERVATION</text>
 <text x="72" y="99" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="29" font-weight="750">${label}</text>
-<text x="72" y="124" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="13">${expiry} · ${date}${time ? ` · ${time} IST` : ''}</text>
+<text x="72" y="124" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="13">${expiry}${time ? ` · ${time}` : ''}</text>
 <rect x="566" y="38" width="144" height="34" rx="17" fill="${pale}"/>
 <text x="638" y="60" fill="${accent}" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="800" letter-spacing="1">${bullish ? 'BULLISH' : 'BEARISH'}</text>
 <text x="570" y="101" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700">Quality ${quality}</text>
@@ -133,7 +183,9 @@ export function renderObservationCardSvg(card) {
 <text x="68" y="365" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="650">SUPPORT · ${support}</text>
 <text x="68" y="386" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="650">RESISTANCE · ${resistance}</text>
 <text x="68" y="414" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="11">${trail}</text>
-<line x1="68" x2="710" y1="428" y2="428" stroke="#e3e5e9"/>
-<text x="68" y="444" fill="#777d88" font-family="Inter,Arial,sans-serif" font-size="9">${disclaimer}</text>
+${dealerFlow ? `<text x="68" y="438" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="650">${escapeXml(dealerFlow + pin)}</text>` : ''}
+${theta ? `<text x="68" y="461" fill="#80601e" font-family="Inter,Arial,sans-serif" font-size="10">${escapeXml(theta)}</text>` : ''}
+<line x1="68" x2="710" y1="478" y2="478" stroke="#e3e5e9"/>
+<text x="68" y="496" fill="#777d88" font-family="Inter,Arial,sans-serif" font-size="9">${disclaimer}</text>
 </svg>`;
 }

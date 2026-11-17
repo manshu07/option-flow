@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { observationKey, uniqueObservationCards } from './observationModel';
+import { observationKey, paginateObservationCards, sortObservationCards, uniqueObservationCards } from './observationModel';
 
 describe('Observation identity', () => {
   it('uses symbol and session date as the card identity', () => {
@@ -17,5 +17,27 @@ describe('Observation identity', () => {
 
   it('falls back to the persisted id when symbol/date are unavailable', () => {
     expect(uniqueObservationCards([{ id: 'legacy' }, { id: 'legacy' }, { id: 'other' }])).toEqual([{ id: 'legacy' }, { id: 'other' }]);
+  });
+});
+
+describe('Observation ordering and pages', () => {
+  it('sorts newest-first and keeps creation order for equal timestamps', () => {
+    const first = { id: 'first', at: 20 };
+    const second = { id: 'second', at: 20 };
+    const newest = { id: 'newest', at: 30 };
+    const oldest = { id: 'oldest', at: 10 };
+
+    expect(sortObservationCards([first, oldest, second, newest])).toEqual([newest, first, second, oldest]);
+  });
+
+  it('slices ten cards, clamps the page, and reports the range and total pages', () => {
+    const cards = Array.from({ length: 21 }, (_, index) => index);
+    const second = paginateObservationCards(cards, 2, 10);
+    expect(second).toMatchObject({ page: 2, pageSize: 10, total: 21, totalPages: 3, start: 11, end: 20 });
+    expect(second.items).toEqual(cards.slice(10, 20));
+
+    const clamped = paginateObservationCards(cards, 99, 10);
+    expect(clamped).toMatchObject({ page: 3, totalPages: 3, start: 21, end: 21, items: [20] });
+    expect(paginateObservationCards([], 4, 10)).toMatchObject({ page: 1, total: 0, totalPages: 0, start: 0, end: 0, items: [] });
   });
 });

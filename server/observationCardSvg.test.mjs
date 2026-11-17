@@ -31,7 +31,8 @@ describe('Observation card SVG', () => {
 
     expect(svg).toContain('<svg');
     expect(svg).toContain('NIFTY 25150C');
-    expect(svg).toContain('25,291.15');
+    expect(svg).toContain('25291.15');
+    expect(svg).toContain('19-Nov (3 DTE) · 16-Nov 09:45 IST');
     expect(svg).toContain('1003.30');
     expect(svg).toContain('551.81');
     expect(svg).toContain('1555.11');
@@ -49,12 +50,48 @@ describe('Observation card SVG', () => {
 
   it('creates a concise Telegram caption', () => {
     const caption = observationCaption(card);
-    expect(caption).toContain('🔍 <b>OBSERVATION</b> · NIFTY 25150CE · 09:45 IST');
+    expect(caption).toContain('🔍 <b>OBSERVATION</b> · NIFTY 25150CE · 19-Nov (3 DTE) · 16-Nov 09:45 IST');
     expect(caption).toContain('Bias: <b>bullish</b> · quality <b>82%</b> · strike pick 74%');
     expect(caption).toContain('• Entry ~<b>1003.30</b> · spot 25291.15 (+0.6%)');
     expect(caption).toContain('• Support 25100 PE · Resistance 25200 CE');
     expect(caption).toContain('captured-data observation · not advice · final call yours');
     expect(caption).not.toContain('<b>Live</b>');
+    expect(caption).not.toContain('ago');
+  });
+
+  it('adds plain dealer flow and a theta warning to the caption and SVG', () => {
+    const gammaCard = {
+      ...card,
+      expiry: '2026-11-22',
+      gamma: {
+        regime: 'gamma-long', flipLevel: 25_180, pin: '25250CE',
+        notes: ['Wall-based stop sits beyond the gamma flip; dealers may accelerate the move.'],
+      },
+    };
+    const caption = observationCaption(gammaCard);
+    const svg = renderObservationCardSvg(gammaCard);
+    const flow = '📐 Dealer flow: RANGE above 25,180 — breakouts likely to fade · pin 25250CE';
+    const theta = '⏳ 6 DTE — theta eats the premium daily; if TGT1 is not hit by 14:30, exit.';
+
+    expect(caption).toContain('22-Nov (6 DTE)');
+    expect(caption).toContain(flow);
+    expect(caption).toContain(theta);
+    expect(caption).not.toContain('Γ regime');
+    expect(caption.toLowerCase()).not.toContain('gamma');
+    expect(caption).toContain('dealer-flow level');
+    expect(svg).toContain('22-Nov (6 DTE) · 16-Nov 09:45 IST');
+    expect(svg).toContain(flow);
+    expect(svg).toContain(theta);
+  });
+
+  it('uses the stronger theta warning at two DTE and omits dealer flow without a flip', () => {
+    const caption = observationCaption({
+      ...card,
+      expiry: '2026-11-18',
+      gamma: { regime: 'gamma-long', flipLevel: null, pin: null, notes: [] },
+    });
+    expect(caption).toContain('⏳ 2 DTE — expiry-week decay is brutal; treat as a same-day trade only.');
+    expect(caption).not.toContain('Dealer flow:');
   });
 
   it('adds a live line only for readings available at send time', () => {

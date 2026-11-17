@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { CapsuleSegmented, type CapsuleOption } from '@/components/common/CapsuleSegmented';
 import { PageBar } from '@/components/chrome/PageBar';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { applyTheme } from '@/lib/applyTheme';
+import { marketParts } from '@/lib/marketSession';
+import { useRememberedChoice } from '@/lib/remembered';
 import { clockOf } from '../market-flow/marketFlowModel';
-import { uniqueObservationCards } from './observationModel';
+import { paginateObservationCards, sortObservationCards, uniqueObservationCards } from './observationModel';
+import { normalizeLiveTicks } from './liveTicks';
 import './observations.css';
 
 const API = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
@@ -11,8 +15,97 @@ const OBSERVATIONS_URL = `${API}/api/observations`;
 const SPOTS_STREAM_URL = `${API}/api/stream/spots`;
 const MARKET_URL = `${API}/api/market`;
 const POLL_MS = 30_000;
+const PAGE_SIZE = 10;
 const INDEX_SYMBOLS = ['NIFTY', 'BANKNIFTY', 'SENSEX'] as const;
+type ObservationView = 'cards' | 'table';
+const OBSERVATION_VIEWS: readonly CapsuleOption<ObservationView>[] = [
+  { value: 'cards', label: 'Cards' },
+  { value: 'table', label: 'Table' },
+];
 const priceText = (value: number): string => Number.isFinite(value) ? value.toFixed(2) : '—';
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function calendarDate(value: string | null | undefined) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  const at = Date.UTC(year, month - 1, day);
+  if (!Number.isFinite(at) || new Date(at).toISOString().slice(0, 10) !== value) return null;
+  return { day, month, ordinal: at / DAY_MS };
+}
+
+function daysToExpiry(cardDate: string, expiry: string | null): number | null {
+  const from = calendarDate(cardDate), until = calendarDate(expiry);
+  return from && until ? until.ordinal - from.ordinal : null;
+}
+
+function expiryDateLabel(expiry: string | null): string | null {
+  const parsed = calendarDate(expiry);
+  return parsed ? `${String(parsed.day).padStart(2, '0')}-${MONTHS[parsed.month - 1]}` : null;
+}
+
+function expiryLabel(cardDate: string, expiry: string | null): string | null {
+  const date = expiryDateLabel(expiry);
+  if (!date) return null;
+  const dte = daysToExpiry(cardDate, expiry);
+  return `${date}${dte == null ? '' : ` (${dte} DTE)`}`;
+}
+
+function istDateTime(at: number): { date: string; time: string } | null {
+  if (!Number.isFinite(at)) return null;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(at));
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value;
+  const day = get('day'), month = get('month'), hour = get('hour'), minute = get('minute');
+  return day && month && hour && minute ? { date: `${day}-${month}`, time: `${hour}:${minute}` } : null;
+}
+
+function ageLabel(at: number, now: number): string {
+  const elapsed = Math.max(0, now - at);
+  if (elapsed < 60_000) return 'just now';
+  if (elapsed < 60 * 60_000) return `${Math.floor(elapsed / 60_000)}m ago`;
+  if (elapsed < DAY_MS) return `${Math.floor(elapsed / (60 * 60_000))}h ago`;
+  return `${Math.floor(elapsed / DAY_MS)}d ago`;
+}
+
+function dealerFlowSentence(gamma: ObservationCard['gamma']): string | null {
+  if (!gamma || !Number.isFinite(gamma.flipLevel)) return null;
+  const level = Math.round(gamma.flipLevel as number).toLocaleString('en-US');
+  if (gamma.regime === 'gamma-long') return `📐 Dealer flow: RANGE above ${level} — breakouts likely to fade`;
+  if (gamma.regime === 'gamma-short') return `📐 Dealer flow: TREND below ${level} — moves can accelerate`;
+  return null;
+}
+
+function plainDealerNote(note: string): string {
+  return note.replace(/\bmax-gamma strike\b/gi, 'highest dealer-flow strike')
+    .replace(/\bgamma flip\b/gi, 'dealer-flow level')
+    .replace(/\bgamma pin(?: zone)?\b/gi, 'dealer-flow zone')
+    .replace(/\bgamma\b/gi, 'dealer flow');
+}
+
+function thetaWarning(dte: number | null): string | null {
+  if (dte == null || dte > 7) return null;
+  if (dte <= 2) return `⏳ ${dte} DTE — expiry-week decay is brutal; treat as a same-day trade only.`;
+  return `⏳ ${dte} DTE — theta eats the premium daily; if TGT1 is not hit by 14:30, exit.`;
+}
+
+function flowLabel(card: ObservationCard): string {
+  if (!Number.isFinite(card.gamma?.flipLevel)) return '—';
+  if (card.gamma?.regime === 'gamma-long') return 'Range';
+  if (card.gamma?.regime === 'gamma-short') return 'Trend';
+  return '—';
+}
+
+function outcomeLabel(card: ObservationCard): string {
+  switch (card.outcome?.status) {
+    case 'tgt1': return 'TGT1';
+    case 'sl': return 'SL';
+    case 'open': return 'Open';
+    case 'ambiguous': return 'Ambiguous';
+    default: return '—';
+  }
+}
 
 interface ObservationCard {
   id: string;
@@ -43,6 +136,7 @@ interface ObservationCard {
     pin: string | null;
     notes: string[];
   } | null;
+  outcome?: { status?: 'tgt1' | 'sl' | 'open' | 'ambiguous' } | null;
   disclaimer: string;
 }
 
@@ -64,7 +158,7 @@ function useMarketSnapshot(trackedSymbols: string[], trackedOptions: string[]) {
   const symbolsKey = trackedSymbols.join(','), optionsKey = trackedOptions.join(',');
   useEffect(() => {
     let alive = true;
-    const fromBody = (body: { t?: number; spots?: Record<string, { ltp?: number; prevClose?: number }>; futures?: Record<string, { ltp?: number }>; optionTicks?: Record<string, { ltp?: number }> }) => {
+    const fromBody = (body: { t?: number; spots?: Record<string, { ltp?: number; prevClose?: number }>; futures?: unknown; optionTicks?: unknown }) => {
       const map: SpotMap = new Map();
       for (const [symbol, reading] of Object.entries(body.spots ?? {})) {
         const ltp = reading?.ltp;
@@ -74,8 +168,8 @@ function useMarketSnapshot(trackedSymbols: string[], trackedOptions: string[]) {
         }
       }
       if (map.size) { setSpots(map); setAsOf(typeof body.t === 'number' && Number.isFinite(body.t) ? body.t : null); setFailed(false); }
-      if (body.futures) setFuturesTicks(body.futures);
-      if (body.optionTicks) setOptionTicks(body.optionTicks);
+      if (body.futures !== undefined) setFuturesTicks(normalizeLiveTicks(body.futures));
+      if (body.optionTicks !== undefined) setOptionTicks(normalizeLiveTicks(body.optionTicks));
     };
     // Prime once from the built snapshot (covers symbols the stream may not have yet).
     fetch(MARKET_URL, { cache: 'no-store' }).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
@@ -191,13 +285,20 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
   const up = card.bias === 'bullish';
   const closes = useFutures(card.symbol);
   const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
+  const dte = daysToExpiry(card.date, card.expiry);
+  const expiry = expiryLabel(card.date, card.expiry);
+  const stamped = istDateTime(card.at);
+  const dealerFlow = dealerFlowSentence(card.gamma);
+  const theta = thetaWarning(dte);
   return (
     <article className={`obs-card ${up ? 'obs-card--bull' : 'obs-card--bear'}`}>
       <header className="obs-card__head">
         <h3 className="obs-card__symbol">{card.symbol}</h3>
-        <span className={`obs-card__contract ${up ? 'is-up' : 'is-down'}`}>{card.strike} {card.side}</span>
+        <span className={`obs-card__contract ${up ? 'is-up' : 'is-down'}`}>{card.strike}{card.side}{expiry ? ` · ${expiry}` : ''}</span>
         <span className={`obs-card__bias ${up ? 'is-up' : 'is-down'}`}>{up ? 'bullish' : 'bearish'} · quality {(card.quality * 100).toFixed(0)}%</span>
-        <time className="obs-card__time">{clockOf(card.at)}</time>
+        <time className="obs-card__time" dateTime={Number.isFinite(card.at) ? new Date(card.at).toISOString() : undefined}>
+          {stamped ? `${stamped.date} · ${stamped.time} IST · ${ageLabel(card.at, Date.now())}` : 'Timestamp unavailable'}
+        </time>
       </header>
       <CardLive card={card} spots={spots} futuresTick={futuresTicks[card.symbol]} optionTick={optionTicks[optionKey]} closes={closes} />
       <dl className="obs-card__levels">
@@ -212,11 +313,52 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
         <span className="obs-card__tsl">{card.tsl}</span>
       </p>
       {card.gamma && <div className="obs-card__gamma">
-        <p>Γ regime: {card.gamma.regime === 'gamma-long' ? 'long' : card.gamma.regime === 'gamma-short' ? 'short' : 'unavailable'} · flip {card.gamma.flipLevel != null ? Math.round(card.gamma.flipLevel) : 'unavailable'}{card.gamma.pin ? ` · pin ${card.gamma.pin}` : ''}</p>
-        {(card.gamma.notes ?? []).map(note => <small key={note}>{note}</small>)}
+        {dealerFlow && <p>{dealerFlow}{card.gamma.pin ? ` · pin ${card.gamma.pin}` : ''}</p>}
+        {(card.gamma.notes ?? []).map(note => <small key={note}>{plainDealerNote(note)}</small>)}
       </div>}
+      {theta && <p className="obs-card__theta">{theta}</p>}
       <footer className="obs-card__foot">{card.disclaimer}</footer>
     </article>
+  );
+}
+
+function ObservationTable({ cards, optionTicks }: {
+  cards: ObservationCard[];
+  optionTicks: Record<string, { ltp: number }>;
+}) {
+  return (
+    <div className="observations__table-wrap">
+      <table className="observations__table">
+        <thead><tr>
+          <th>Time</th><th>Symbol</th><th>Contract</th><th>Expiry</th><th>DTE</th><th>Bias</th><th>Quality</th>
+          <th>Entry</th><th>SL</th><th>TGT1</th><th>TGT2</th><th>Live opt</th><th>Flow</th><th>Status</th>
+        </tr></thead>
+        <tbody>{cards.map(card => {
+          const stamped = istDateTime(card.at);
+          const dte = daysToExpiry(card.date, card.expiry);
+          const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
+          const liveOption = optionTicks[optionKey]?.ltp;
+          return (
+            <tr key={card.id}>
+              <td>{stamped ? `${stamped.date} ${stamped.time}` : '—'}</td>
+              <td>{card.symbol}</td>
+              <td>{card.strike}{card.side}</td>
+              <td>{expiryDateLabel(card.expiry) ?? '—'}</td>
+              <td className="is-numeric">{dte ?? '—'}</td>
+              <td className={card.bias === 'bullish' ? 'is-up' : 'is-down'}>{card.bias}</td>
+              <td className="is-numeric">{Number.isFinite(card.quality) ? `${(card.quality * 100).toFixed(0)}%` : '—'}</td>
+              <td className="is-numeric">{priceText(card.entry)}</td>
+              <td className="is-numeric">{priceText(card.sl)}</td>
+              <td className="is-numeric">{priceText(card.tgt1)}</td>
+              <td className="is-numeric">{priceText(card.tgt2)}</td>
+              <td className="is-numeric">{Number.isFinite(liveOption) ? priceText(liveOption as number) : '—'}</td>
+              <td>{flowLabel(card)}</td>
+              <td>{outcomeLabel(card)}</td>
+            </tr>
+          );
+        })}</tbody>
+      </table>
+    </div>
   );
 }
 
@@ -245,6 +387,12 @@ function IndexStrip({ spots, futuresTicks, asOf, failed }: { spots: SpotMap; fut
 export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   const [cards, setCards] = useState<ObservationCard[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [view, setView] = useRememberedChoice('observations-view:v1', ['cards', 'table'] as const, 'cards');
+  const [page, setPage] = useState(1);
+  const todayDate = marketParts(Date.now()).dateKey;
+  const todayCount = cards?.filter(card => card.date === todayDate).length ?? 0;
+  const pageData = cards == null ? null : paginateObservationCards(cards, page, PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [cards?.length, view]);
   // Always track the three indices' futures; add every card symbol + its exact option contract.
   const trackedSymbols = useMemo(
     () => [...new Set([...INDEX_SYMBOLS, ...(cards ?? []).map(card => card.symbol)])],
@@ -260,7 +408,8 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
     const read = () => {
       fetch(OBSERVATIONS_URL).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
         if (!alive) return;
-        setCards(uniqueObservationCards(Array.isArray(body?.cards) ? body.cards : []));
+        const ordered = sortObservationCards(Array.isArray(body?.cards) ? body.cards : []);
+        setCards(uniqueObservationCards(ordered));
         setFailed(false);
       }).catch(() => { if (alive) setFailed(true); });
     };
@@ -271,6 +420,14 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   const bar = (
     <>
       {tabs}
+      <CapsuleSegmented
+        options={OBSERVATION_VIEWS}
+        value={view}
+        onChange={next => { setView(next); setPage(1); }}
+        ariaLabel="Observation view"
+        groupId="observations-view"
+        size="page"
+      />
       <span className="ui-flow-spacer" aria-hidden="true" />
       <ThemeToggle onChange={theme => applyTheme(theme)} />
     </>
@@ -284,16 +441,28 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
           ? <span className="is-down">Observations could not be loaded — retrying every 30s.</span>
           : cards == null
             ? <span>Reading observations…</span>
-            : <span><b>{cards.length}</b> card{cards.length === 1 ? '' : 's'} today · advisor re-reads watched symbols every 10 minutes · buy-side only</span>}
+            : <span><b>{todayCount}</b> today · <b>{cards.length - todayCount}</b> saved history · advisor re-reads watched symbols every 10 minutes · buy-side only</span>}
       </div>
-      <div className="observations__list">
-        {cards != null && cards.length === 0 && (
+      {cards != null && cards.length === 0 && (
+        <div className="observations__list">
           <section className="observations__empty" role="status">
             <div><h2>No observations yet</h2><p>When the advisor promotes a build-up to a watch (quality ≥ 70%), its strike observation card appears here — with entry, stop and targets computed from the captured chain.</p></div>
           </section>
-        )}
-        {cards?.map(card => <Card key={card.id} card={card} spots={spots} futuresTicks={futuresTicks} optionTicks={optionTicks} />)}
-      </div>
+        </div>
+      )}
+      {view === 'cards' && pageData && pageData.total > 0 && (
+        <div className="observations__list">
+          {pageData.items.map(card => <Card key={card.id} card={card} spots={spots} futuresTicks={futuresTicks} optionTicks={optionTicks} />)}
+        </div>
+      )}
+      {view === 'table' && pageData && pageData.total > 0 && <ObservationTable cards={pageData.items} optionTicks={optionTicks} />}
+      {pageData && pageData.total > 0 && (
+        <nav className="observations__pagination" aria-label="Observation pagination">
+          <button type="button" onClick={() => setPage(Math.max(1, pageData.page - 1))} disabled={pageData.page <= 1}>‹ Prev</button>
+          <span>{pageData.start}–{pageData.end} of {pageData.total}</span>
+          <button type="button" onClick={() => setPage(Math.min(pageData.totalPages, pageData.page + 1))} disabled={pageData.page >= pageData.totalPages}>Next ›</button>
+        </nav>
+      )}
     </div>
   );
 }
