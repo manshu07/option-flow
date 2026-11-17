@@ -37,9 +37,10 @@ function card(overrides: Record<string, unknown> = {}) {
 type TestRow = Array<number | null>;
 
 function optionRow(strike: number, side: number, premium: number, high = premium, low = premium): TestRow {
-  // Real marketFile row layout: [strike, side, ltp, prevClose, oi, prevOi,
-  // volume, avgPrice, iv, bid, ask, bidQty, askQty, dayHigh(13), dayLow(14), …]
-  return [strike, side, premium, premium, 1_000, 900, 1, 0, 0, null, 0, 0, 0, high, low, null, null];
+  // Real marketFile row layout (18 fields): [strike, side, ltp, prevClose, oi,
+  // prevOi, volume, prevVolume, avgPrice, iv, bid, ask, bidQty, askQty,
+  // dayHigh(14), dayLow(15), lastTradeAt, delta]
+  return [strike, side, premium, premium, 1_000, 900, 1, 0, 0, null, 0, 0, 0, 0, high, low, null, null];
 }
 
 function snapshot(date: string, t: number, rows: TestRow[]) {

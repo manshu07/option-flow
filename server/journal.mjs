@@ -72,11 +72,11 @@ export function resolveCard(card, minutes) {
     const row = rowFor(card, baseline);
     const premium = row?.[2];
     if (Number.isFinite(premium)) {
-      // Option row layout (marketFile.mjs): [strike, side, ltp, prevClose, oi,
-      // prevOi, volume, avgPrice, iv, bid, ask, bidQty, askQty, dayHigh, dayLow,
-      // lastTradeAt, delta] — dayHigh is index 13, dayLow index 14.
-      previousHigh = Math.max(premium, Number.isFinite(row[13]) ? row[13] : premium);
-      previousLow = Math.min(premium, Number.isFinite(row[14]) ? row[14] : premium);
+      // Option row layout (marketFile.mjs, 18 fields): [strike, side, ltp,
+      // prevClose, oi, prevOi, volume, prevVolume, avgPrice, iv, bid, ask,
+      // bidQty, askQty, dayHigh(14), dayLow(15), lastTradeAt, delta].
+      previousHigh = Math.max(premium, Number.isFinite(row[14]) ? row[14] : premium);
+      previousLow = Math.min(premium, Number.isFinite(row[15]) ? row[15] : premium);
     }
   }
 
@@ -96,8 +96,8 @@ export function resolveCard(card, minutes) {
     mfe = Math.max(mfe, favorable);
     mae = Math.max(mae, adverse);
 
-    const high = Math.max(premium, Number.isFinite(row[13]) ? row[13] : premium);
-    const low = Math.min(premium, Number.isFinite(row[14]) ? row[14] : premium);
+    const high = Math.max(premium, Number.isFinite(row[14]) ? row[14] : premium);
+    const low = Math.min(premium, Number.isFinite(row[15]) ? row[15] : premium);
     const stopRangeHit = previousLow != null && previousLow > card.sl && low <= card.sl;
     const targetRangeHit = previousHigh != null && previousHigh < card.tgt1 && high >= card.tgt1;
     const stopHit = premium <= card.sl || stopRangeHit;
