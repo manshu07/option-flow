@@ -408,7 +408,7 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
     const read = () => {
       fetch(OBSERVATIONS_URL).then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))).then(body => {
         if (!alive) return;
-        const ordered = sortObservationCards(Array.isArray(body?.cards) ? body.cards : []);
+        const ordered = sortObservationCards<ObservationCard>(Array.isArray(body?.cards) ? body.cards : []);
         setCards(uniqueObservationCards(ordered));
         setFailed(false);
       }).catch(() => { if (alive) setFailed(true); });
