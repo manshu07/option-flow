@@ -46,6 +46,7 @@ import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { liveErrorMessage, liveSnapshotMessage } from './liveCommand.mjs';
 import { formatJournalMessage } from './journalCommand.mjs';
+import { gapOpenDue, gapOpenMessage } from './gapOpen.mjs';
 import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
@@ -61,6 +62,7 @@ if (AUTH && !/^[^:]+:.{8,}$/.test(AUTH)) throw new Error('MF_BASIC_AUTH must be 
 const DATA_DIR = path.resolve(ROOT, process.env.MF_DATA_DIR || 'server/data');
 const SUBSCRIBERS_PATH = path.join(DATA_DIR, 'subscribers.json');
 const DIST = path.join(ROOT, 'dist');
+const OWNER_DISCLAIMER = '🎓 educational captured market data only · not investment advice';
 const WORKERS = 8;
 /** A futures read is kept this long: the page asks again every two minutes. */
 const FUTURES_KEEP_MS = 60_000;
@@ -120,19 +122,20 @@ async function readJournalMinute(date, hhmm) {
   return readArchiveMinuteFallback(SCAN_DIR, archive, date, hhmm);
 }
 
-async function sendJournalSummary(text) {
+async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
   let sent = false;
-  try { sent = (await sendTelegram(text)).sent === true; }
-  catch (error) { log('journal owner summary failed:', String(error?.message || error)); }
+  const ownerOptions = parseMode ? { parseMode } : undefined;
+  try { sent = (await sendTelegram(`${text}\n\n${OWNER_DISCLAIMER}`, ownerOptions)).sent === true; }
+  catch (error) { log('telegram owner message failed:', String(error?.message || error)); }
   const ownerId = process.env.TELEGRAM_CHAT_ID == null ? null : String(process.env.TELEGRAM_CHAT_ID);
   for (const chatId of activeChatIds(loadSubscribers(SUBSCRIBERS_PATH))) {
     if (String(chatId) === ownerId) continue;
     await new Promise(resolve => setTimeout(resolve, 30));
     try {
-      const result = await sendTelegram(`${text}\n\n${BROADCAST_FOOTER}`, { chatId });
+      const result = await sendTelegram(`${text}\n\n${BROADCAST_FOOTER}`, { chatId, ...(parseMode ? { parseMode } : {}) });
       sent ||= result.sent === true;
     } catch (error) {
-      log(`journal subscriber summary ${chatId} failed:`, String(error?.message || error));
+      log(`telegram subscriber message ${chatId} failed:`, String(error?.message || error));
     }
   }
   return { sent };
@@ -220,6 +223,14 @@ async function build() {
     state.lastBuild = { at, ms: Date.now() - started, series: series.length, failed: failed.length, failedSymbols: failed.slice(0, 20), firstError };
     state.lastError = null;
     log(`market file: ${series.length} series, ${failed.length} failed, ${Date.now() - started} ms${firstError ? ` (first error: ${firstError})` : ''}`);
+    if (process.env.TELEGRAM_BOT_TOKEN) {
+      const gapDate = gapOpenDue(at, alertDigestState.gapOpenDay ?? null);
+      if (gapDate) {
+        alertDigestState.gapOpenDay = gapDate;
+        const gapMessage = gapOpenMessage(file, gapDate);
+        if (gapMessage) void sendOwnerAndSubscribers(gapMessage, { parseMode: 'HTML' }).catch(error => log('gap-open message failed:', String(error?.message || error)));
+      }
+    }
     try {
       const subscriberState = process.env.TELEGRAM_BOT_TOKEN ? loadSubscribers(SUBSCRIBERS_PATH) : { subscribers: [], offset: 0 };
       const broadcastChatIds = activeChatIds(subscriberState);
@@ -274,7 +285,7 @@ async function build() {
       readMinute: readJournalMinute,
       now: at,
       log,
-      send: process.env.TELEGRAM_BOT_TOKEN ? sendJournalSummary : undefined,
+      send: process.env.TELEGRAM_BOT_TOKEN ? sendOwnerAndSubscribers : undefined,
     }).catch(error => log('journal failed:', String(error?.message || error)));
   } catch (error) {
     // The detail (which may quote the provider's own error) stays in this log; the page gets a plain line.
