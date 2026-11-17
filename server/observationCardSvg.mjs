@@ -53,6 +53,16 @@ export function observationCaption(card) {
     `• Support ${escapeHtml(support)} · Resistance ${escapeHtml(resistance)}`,
   ];
 
+  if (card?.gamma && typeof card.gamma === 'object') {
+    const regime = card.gamma.regime === 'gamma-long' ? 'long' : card.gamma.regime === 'gamma-short' ? 'short' : 'unavailable';
+    const flip = Number.isFinite(card.gamma.flipLevel) ? String(Math.round(card.gamma.flipLevel)) : 'unavailable';
+    const pin = typeof card.gamma.pin === 'string' && card.gamma.pin ? ` · pin ${escapeHtml(card.gamma.pin)}` : '';
+    lines.push('', `Γ regime: ${regime} · flip ${flip}${pin}`);
+    for (const note of Array.isArray(card.gamma.notes) ? card.gamma.notes : []) {
+      if (typeof note === 'string' && note) lines.push(`• ${escapeHtml(note)}`);
+    }
+  }
+
   const live = card?.live;
   const liveFields = [];
   if (Number.isFinite(live?.spot) && live.spot > 0) liveFields.push(`spot ${priceText(live.spot)}`);

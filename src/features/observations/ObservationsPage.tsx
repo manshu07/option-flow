@@ -35,6 +35,14 @@ interface ObservationCard {
   quality: number;
   strikePickProbability: number;
   oiChangePct: number | null;
+  gamma?: {
+    gexAtStrike: number | null;
+    distanceToFlip: number | null;
+    regime: 'gamma-long' | 'gamma-short' | null;
+    flipLevel: number | null;
+    pin: string | null;
+    notes: string[];
+  } | null;
   disclaimer: string;
 }
 
@@ -203,6 +211,10 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
         {card.resistance && <span>resistance {card.resistance.strike} CE ({(card.resistance.oi / 1_000_000).toFixed(1)}M{card.resistance.changePct != null ? ` ${card.resistance.changePct >= 0 ? '+' : ''}${card.resistance.changePct.toFixed(2)}%` : ''})</span>}
         <span className="obs-card__tsl">{card.tsl}</span>
       </p>
+      {card.gamma && <div className="obs-card__gamma">
+        <p>Γ regime: {card.gamma.regime === 'gamma-long' ? 'long' : card.gamma.regime === 'gamma-short' ? 'short' : 'unavailable'} · flip {card.gamma.flipLevel != null ? Math.round(card.gamma.flipLevel) : 'unavailable'}{card.gamma.pin ? ` · pin ${card.gamma.pin}` : ''}</p>
+        {(card.gamma.notes ?? []).map(note => <small key={note}>{note}</small>)}
+      </div>}
       <footer className="obs-card__foot">{card.disclaimer}</footer>
     </article>
   );

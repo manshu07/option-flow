@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { sendTelegramObservationCard } from './telegram.mjs';
 import { askTypeSafe, typesafeConfigured } from './typesafe.mjs';
 import { inFireWindow } from './alerts.mjs';
+import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
 
 /**
  * Strike setup advisor — observation cards for watched symbols, buy-side only.
@@ -94,6 +95,48 @@ export function chainWalls(series) {
   return { support, resistance };
 }
 
+function gammaCandidateData(series, candidates, bias, walls, now) {
+  const enabled = new Set(parseGammaSymbols(process.env.GAMMA_SYMBOLS));
+  if (!enabled.has(series?.s)) {
+    return candidates.map(candidate => ({ ...candidate, gammaEnabled: false, gexAtStrike: null, distanceToFlip: null, regime: null, flipLevel: null, maxGammaStrike: null, gammaPin: null, pinNote: null, stopNote: null }));
+  }
+
+  const profile = gammaProfile(series, { lot: series?.lot ?? 1, r: gammaRiskFreeRate(process.env.GAMMA_RISK_FREE) });
+  const maximum = profile.strikes.reduce((best, row) => !best || row.gamma > best.gamma ? row : best, null);
+  const capturedAt = Number.isFinite(series?.t) ? series.t : now;
+  const expiryAt = typeof series?.e === 'string' ? Date.parse(`${series.e}T15:30:00+05:30`) : Number.NaN;
+  const daysToExpiry = Number.isFinite(expiryAt) ? (expiryAt - capturedAt) / (24 * 60 * MINUTE) : null;
+  const wallStop = bias === 'bullish' ? walls?.support?.strike : walls?.resistance?.strike;
+  const stopBeyondFlip = Number.isFinite(wallStop) && profile.flipLevel != null
+    && (bias === 'bullish' ? wallStop < profile.flipLevel : wallStop > profile.flipLevel);
+  const stopNote = stopBeyondFlip ? 'Wall-based stop sits beyond the gamma flip; dealers may accelerate the move.' : null;
+
+  return candidates.map(candidate => {
+    const side = candidate.side === 0 ? 'CE' : 'PE';
+    const atStrike = profile.strikes.find(row => row.K === candidate.strike && row.side === side);
+    const distanceToFlip = profile.flipLevel != null && profile.flipLevel > 0 && Number.isFinite(series?.sp)
+      ? round2(((series.sp - profile.flipLevel) / profile.flipLevel) * 100)
+      : null;
+    const nearMaximum = maximum != null && maximum.K > 0 && Math.abs(candidate.strike - maximum.K) / maximum.K <= 0.003;
+    const gammaPin = daysToExpiry != null && daysToExpiry >= 0 && daysToExpiry <= 2 && nearMaximum
+      ? `${candidate.strike}${side}`
+      : null;
+    const pinNote = gammaPin ? `Gamma pin zone: within 0.3% of max-gamma strike ${gammaPin} with 2 DTE or less.` : null;
+    return {
+      ...candidate,
+      gammaEnabled: true,
+      gexAtStrike: atStrike?.gex ?? null,
+      distanceToFlip,
+      regime: profile.regime,
+      flipLevel: profile.flipLevel,
+      maxGammaStrike: maximum?.K ?? null,
+      gammaPin,
+      pinNote,
+      stopNote,
+    };
+  });
+}
+
 /** The card's numbers — all computed here, never by the model. */
 export function levelsFor(candidate, walls) {
   return {
@@ -153,6 +196,14 @@ export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, p
       strike: chosen.strike,
       expiry: watch.expiry ?? null,
       ...levelsFor(chosen, walls),
+      gamma: chosen.gammaEnabled ? {
+        gexAtStrike: chosen.gexAtStrike ?? null,
+        distanceToFlip: chosen.distanceToFlip ?? null,
+        regime: chosen.regime ?? null,
+        flipLevel: chosen.flipLevel ?? null,
+        pin: chosen.gammaPin ?? null,
+        notes: [chosen.pinNote, chosen.stopNote].filter(Boolean),
+      } : null,
       quality,
       strikePickProbability: pick.probabilities[pick.choice],
       oiChangePct: chosen.oiChangePct,
@@ -222,7 +273,9 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     if (!candidates.length) continue;
     const spot = Number.isFinite(series?.sp) ? series.sp : null;
     const spotChangePct = spot !== null && Number.isFinite(series?.pc) && series.pc > 0 ? round2((spot / series.pc - 1) * 100) : null;
-    prepared.push({ ...watch, at: now, date: sessionDate, expiry: series?.e ?? null, spot, spotChangePct, candidates, walls: chainWalls(series) });
+    const walls = chainWalls(series);
+    const candidatesWithGamma = gammaCandidateData(series, candidates, watch.bias, walls, now);
+    prepared.push({ ...watch, at: now, date: sessionDate, expiry: series?.e ?? null, spot, spotChangePct, candidates: candidatesWithGamma, walls });
   }
   if (!prepared.length) return { skipped: 'no readable chains on watched symbols' };
   try {
@@ -235,7 +288,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
         spot_change_pct: Number.isFinite(s.sp) && Number.isFinite(s.pc) && s.pc > 0 ? round2(((s.sp - s.pc) / s.pc) * 100) : null,
         atm: s.atm,
         bias: p.bias,
-        candidates: p.candidates.map(c => ({ strike: c.strike, side: c.side === 1 ? 'PE' : 'CE', premium: c.ltp, premium_change_pct: c.premiumChangePct == null ? null : round2(c.premiumChangePct), oi_change_pct: c.oiChangePct == null ? null : round2(c.oiChangePct), placement: c.placement })),
+        candidates: p.candidates.map(c => ({ strike: c.strike, side: c.side === 1 ? 'PE' : 'CE', premium: c.ltp, premium_change_pct: c.premiumChangePct == null ? null : round2(c.premiumChangePct), oi_change_pct: c.oiChangePct == null ? null : round2(c.oiChangePct), placement: c.placement, gexAtStrike: c.gexAtStrike, distanceToFlip: c.distanceToFlip, regime: c.regime })),
         walls: p.walls,
       }];
     })) };

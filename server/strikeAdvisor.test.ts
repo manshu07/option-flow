@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { candidateStrikes, chainWalls, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { gammaProfile } from '../src/features/market-flow/gammaModel';
 
 const NOW = Date.parse('2026-11-16T05:00:00Z');
+
+afterEach(() => vi.unstubAllEnvs());
 
 function seriesFixture() {
   const rows: number[][] = [];
@@ -197,6 +200,59 @@ describe('runAdvisor gates', () => {
       expect(events).toEqual(['live', 'send']);
       expect(sentCard).toMatchObject({ sentAt: NOW, live: { spot: 300.5, future: 301, option: 4.2 } });
       expect(loadObservations(obsPath)[0]).not.toHaveProperty('live');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('passes gamma fields as Jev state and adds deterministic pin/stop notes to the card', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-gamma-'));
+    const obsPath = join(dir, 'observations.json');
+    const row = (strike: number, side: number, ltp: number, oi: number, prevOi: number) => [
+      strike, side, ltp, Math.max(0.1, ltp - 1), oi, prevOi, 100, 80, ltp, 20,
+    ];
+    const series = {
+      s: 'NIFTY', sp: 100.4, pc: 99.4, atm: 100, t: NOW, e: '2026-11-17', lot: 50,
+      r: [
+        row(90, 0, 15, 1_000_000, 900_000), row(90, 1, 1, 1_000_000, 900_000),
+        row(95, 0, 10, 1_000_000, 900_000), row(95, 1, 2, 2_000_000, 1_000_000),
+        row(100, 0, 5, 1_000_000, 900_000), row(100, 1, 5, 500_000, 400_000),
+        row(105, 0, 2, 10_000_000, 8_000_000), row(105, 1, 8, 1_000_000, 900_000),
+        row(110, 0, 1, 1_000_000, 900_000), row(110, 1, 12, 1_000_000, 900_000),
+      ],
+    };
+    const expectedProfile = gammaProfile(series, { lot: 50, r: 0.065 });
+    const watches = [{ symbol: 'NIFTY', bias: 'bullish' }];
+    let jevState: any;
+    let sentCard: any;
+
+    try {
+      vi.stubEnv('GAMMA_SYMBOLS', 'NIFTY');
+      vi.stubEnv('GAMMA_RISK_FREE', '0.065');
+      const result = await runAdvisor({ date: '2026-11-16', series: [series] }, {
+        obsPath,
+        watches,
+        now: NOW,
+        configured: () => true,
+        ask: async (state: unknown) => {
+          jevState = state;
+          return { quality_NIFTY: { noul: 0.9 }, strike_NIFTY: { choice: 'c1', probabilities: { c1: 0.9 } } };
+        },
+        send: async (value: unknown) => { sentCard = value; return { sent: true }; },
+      });
+
+      expect(result.written).toBe(1);
+      const firstCandidate = jevState.chain.NIFTY.candidates[0];
+      expect(firstCandidate).toMatchObject({ strike: 100, regime: expectedProfile.regime });
+      expect(firstCandidate.gexAtStrike).toBeGreaterThan(0);
+      expect(firstCandidate.distanceToFlip).toBeTypeOf('number');
+      expect(expectedProfile.flipLevel).toBeGreaterThan(95);
+      expect(sentCard.gamma).toMatchObject({ regime: expectedProfile.regime, flipLevel: expectedProfile.flipLevel, pin: '100CE' });
+      expect(sentCard.gamma.notes).toEqual(expect.arrayContaining([
+        expect.stringContaining('Gamma pin zone'),
+        expect.stringContaining('Wall-based stop sits beyond the gamma flip'),
+      ]));
+      expect(loadObservations(obsPath)[0].gamma).toMatchObject({ gexAtStrike: firstCandidate.gexAtStrike, distanceToFlip: firstCandidate.distanceToFlip });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -66,8 +66,16 @@ const MIN_PREMIUM = 0.5;
 const MIN_TIME_MS = 60 * 60_000;
 const YEAR_MS = 365 * 24 * 60 * 60_000;
 const SQRT_2PI = Math.sqrt(2 * Math.PI);
+export const DEFAULT_GAMMA_SYMBOLS = ['NIFTY', 'BANKNIFTY'] as const;
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+export function parseGammaSymbols(value: unknown): string[] {
+  if (typeof value !== 'string' || value.trim() === '') return [...DEFAULT_GAMMA_SYMBOLS];
+  const symbols = [...new Set(value.split(',').map(symbol => symbol.trim().toUpperCase())
+    .filter(symbol => /^[A-Z0-9&._-]{1,40}$/.test(symbol)))];
+  return symbols.length ? symbols : [...DEFAULT_GAMMA_SYMBOLS];
+}
 
 export function gammaRiskFreeRate(raw: unknown): number {
   const value = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw;

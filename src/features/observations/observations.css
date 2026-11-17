@@ -130,6 +130,9 @@
   color: var(--mf-dim, #6b6b74);
 }
 .obs-card__tsl { margin-left: auto; font-style: italic; }
+.obs-card__gamma { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding-top: 2px; border-top: 1px solid var(--mf-line, #e6e6ea); color: var(--mf-dim, #6b6b74); font-size: 11px; font-variant-numeric: tabular-nums; }
+.obs-card__gamma p { margin: 0; color: var(--mf-text, #171a20); font-weight: 650; }
+.obs-card__gamma small { font-size: 10px; }
 
 .obs-card__foot {
   font-size: 10px;

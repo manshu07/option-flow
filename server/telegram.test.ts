@@ -28,6 +28,14 @@ describe('sendTelegramObservationCard', () => {
       ...card,
       sentAt: Date.parse('2026-11-16T04:22:00Z'),
       live: { spot: 25_291.15, future: 25_300, option: 1_064 },
+      gamma: {
+        gexAtStrike: -12_500,
+        distanceToFlip: 0.44,
+        regime: 'gamma-short',
+        flipLevel: 25_180,
+        pin: '25250CE',
+        notes: ['Gamma pin zone: within 0.3% of max-gamma strike 25250CE with 2 DTE or less.'],
+      },
     });
 
     expect(result).toEqual({ sent: true });
@@ -46,6 +54,8 @@ describe('sendTelegramObservationCard', () => {
     expect(payload.text).toContain('<b>Trade map</b> (premium)');
     expect(payload.text).toContain('• Entry ~<b>1003.30</b> · spot 25291.15 (+0.6%)');
     expect(payload.text).toContain('<b>Chain walls</b>');
+    expect(payload.text).toContain('Γ regime: short · flip 25180 · pin 25250CE');
+    expect(payload.text).toContain('Gamma pin zone');
     expect(payload.text).toContain('<b>Live</b> · spot 25291.15 · fut 25300.00 · opt ₹1064.00 (▲ +6% vs entry)');
     expect(payload.text).toContain('captured-data observation · not advice · final call yours');
   });
