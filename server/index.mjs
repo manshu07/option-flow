@@ -141,11 +141,11 @@ async function readJournalMinute(date, hhmm) {
     try { return JSON.parse(fs.readFileSync(path.join(SCAN_DIR, date, `${hhmm}.json`), 'utf8')); }
     catch (error) { if (error?.code !== 'ENOENT') throw error; }
   }
-  // A minute the archive does not hold is skipped, not an error: the journal
-  // measures what was captured — a missing snapshot never settles a card and
-  // must not abort the whole pass for every other minute.
-  try { return await readArchiveMinuteFallback(SCAN_DIR, archive, date, hhmm); }
-  catch { return null; }
+  // Archived dates are deliberately NOT read here: one day's archive expands
+  // to a ~400 MB JSON payload, and resolving a whole session through it OOMs
+  // the API. The normal pass always runs at 15:40 while the raw minutes still
+  // exist; a missed day is backfilled offline (see docs/JOURNAL_ARCHIVE.md).
+  return null;
 }
 
 async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
