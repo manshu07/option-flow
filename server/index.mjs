@@ -47,6 +47,7 @@ import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs'
 import { liveErrorMessage, liveSnapshotMessage } from './liveCommand.mjs';
 import { formatJournalMessage } from './journalCommand.mjs';
 import { gapOpenDue, gapOpenMessage } from './gapOpen.mjs';
+import { weeklyReviewDue, weeklyReviewMessage } from './weeklyReview.mjs';
 import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
@@ -1038,10 +1039,11 @@ server.listen(PORT, HOST, async () => {
         if (telegramTaskActive) return;
         telegramTaskActive = true;
         try {
+          const pollNow = Date.now();
           await pollCommands({
             token,
             statePath: SUBSCRIBERS_PATH,
-            now: Date.now(),
+            now: pollNow,
             log,
             send: sendTelegram,
             ownerChatId: process.env.TELEGRAM_CHAT_ID,
@@ -1061,14 +1063,21 @@ server.listen(PORT, HOST, async () => {
             ),
             isKnownSymbol: symbol => bySymbol.has(symbol),
           });
+          const observations = loadObservations(path.join(DATA_DIR, 'observations.json'));
           await flushScheduledDigests({
             digestState: alertDigestState,
-            now: Date.now(),
+            now: pollNow,
             broadcastChatIds: activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)),
-            observations: loadObservations(path.join(DATA_DIR, 'observations.json')),
+            observations,
             send: sendTelegram,
             log,
           });
+          const weeklyDate = weeklyReviewDue(pollNow, alertDigestState.weeklyReviewSentDay ?? null);
+          if (weeklyDate) {
+            alertDigestState.weeklyReviewSentDay = weeklyDate;
+            const weeklyMessage = weeklyReviewMessage(observations, pollNow);
+            if (weeklyMessage) await sendOwnerAndSubscribers(weeklyMessage);
+          }
         } catch (error) {
           log('telegram background task failed:', String(error?.message || error));
         } finally {
