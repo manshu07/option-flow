@@ -301,7 +301,7 @@ export function evaluateAlerts(market, rules, state, now = Date.now(), { dailyCa
 }
 
 export const BROADCAST_FOOTER = '📊 educational market-data digest · not investment advice · /stop to opt out';
-const DIGEST_MINUTES = [11 * 60, 13 * 60, 15 * 60 + 45];
+const DIGEST_MINUTES = [15 * 60 + 45];
 const ALERT_SECTIONS = [
   { type: 'level', heading: '🚨 <b>Level</b>' },
   { type: 'buildup', heading: '📈 <b>Build-ups</b>' },
@@ -439,7 +439,8 @@ function eodJournalBody(observations, date, limit) {
     const r = Number.isFinite(card.outcome.r) ? `${card.outcome.r >= 0 ? '+' : '−'}${Math.abs(card.outcome.r).toFixed(2)}` : '—';
     return `• <b>${escapeHtml(card.symbol)} ${escapeHtml(card.strike)}${card.side === 'PE' ? 'PE' : 'CE'}</b> · ${escapeHtml(status)} · R${r}`;
   });
-  lines.push(`🔬 <b>Jev tally</b> · ${counts}`);
+  // Subscriber copy: no model attribution in the heading (owner's audience rule).
+  lines.push(`📓 <b>Decision tally</b> · ${counts}`);
   for (let index = 0; index < items.length; index++) {
     const remaining = items.length - index - 1;
     const marker = remaining ? `• … ${remaining} more cards` : null;
@@ -642,13 +643,20 @@ export async function runAlerts(market, {
   for (const subscriber of Array.isArray(subscriberEntries) ? subscriberEntries : []) {
     const chatId = Number(subscriber?.chatId);
     if (!subscriber?.active || !Number.isSafeInteger(chatId) || !Array.isArray(subscriber.alerts) || !subscriber.alerts.length) continue;
-    const rulesForSubscriber = subscriber.alerts.map(alert => ({
-      id: `subscriber:${chatId}:${alert.id}`,
-      type: 'level',
-      symbol: alert.symbol,
-      ...(alert.direction === 'above' ? { above: alert.level } : { below: alert.level }),
-      label: `${alert.symbol} ${alert.direction} ${alert.level}`,
-    }));
+    const rulesForSubscriber = subscriber.alerts.map(alert => alert.type === 'buildup'
+      ? {
+          id: `subscriber:${chatId}:${alert.id}`,
+          type: 'buildup',
+          symbol: alert.symbol,
+          label: `${alert.symbol} build-up watch`,
+        }
+      : {
+          id: `subscriber:${chatId}:${alert.id}`,
+          type: 'level',
+          symbol: alert.symbol,
+          ...(alert.direction === 'above' ? { above: alert.level } : { below: alert.level }),
+          label: `${alert.symbol} ${alert.direction} ${alert.level}`,
+        });
     const stateForSubscriber = personalStates.get(String(chatId)) ?? new Map();
     personalStates.set(String(chatId), stateForSubscriber);
     const before = new Map(stateForSubscriber);
@@ -668,7 +676,7 @@ export async function runAlerts(market, {
 }
 
 /** Flush queued build-up/top-mover items and the 15:45 subscriber EOD report. */
-export async function flushScheduledDigests({ digestState, now = Date.now(), broadcastChatIds = [], observations = [], send = sendTelegram, log = () => {} } = {}) {
+export async function flushScheduledDigests({ digestState, now = Date.now(), broadcastChatIds = [], observations = [], watchedSymbols = null, send = sendTelegram, log = () => {} } = {}) {
   if (!digestState) return { sent: 0, skipped: 'no digest state' };
   const dayKey = istDateKey(now);
   prepareDigestState(digestState, dayKey);
@@ -681,7 +689,13 @@ export async function flushScheduledDigests({ digestState, now = Date.now(), bro
   digestState.pending.clear();
   const subscribers = recipientsFor(broadcastChatIds);
   if (!subscribers.length) return { sent: 0, skipped: 'empty' };
-  const observationLines = observationDigestLines(observations, digestState.lastDigestAt ?? 0);
+  // Pull-first: the Observations section only carries symbols at least one
+  // subscriber watches; symbols nobody watches stay in observations.json for
+  // /obs and the web page.
+  const digestObservations = Array.isArray(watchedSymbols)
+    ? observations.filter(card => watchedSymbols.includes(card?.symbol))
+    : observations;
+  const observationLines = observationDigestLines(digestObservations, digestState.lastDigestAt ?? 0);
 
   if (dueSlots.includes(15 * 60 + 45)) {
     const messages = eodBroadcasts(digestState, observations, dayKey, events);

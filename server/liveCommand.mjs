@@ -1,4 +1,5 @@
 import { marketMovers } from './alerts.mjs';
+import { observationSubscriberCaption } from './observationCardSvg.mjs';
 
 const DISCLAIMER = '🎓 educational captured-market data only · not investment advice';
 const istClock = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -87,4 +88,56 @@ export function liveSnapshotMessage({ symbol, side = null, market, spotReading, 
     DISCLAIMER,
   ];
   return lines.join('\n');
+}
+
+function oiWallsBySide(series, spot, side, max = 3) {
+  return (Array.isArray(series?.r) ? series.r : [])
+    .filter(row => Array.isArray(row) && row[1] === side
+      && Number.isFinite(row[0]) && Number.isFinite(row[4]) && row[4] > 0
+      && (spot ? (side === 0 ? row[0] >= spot : row[0] <= spot) : true))
+    .sort((a, b) => b[4] - a[4])
+    .slice(0, max);
+}
+
+/** `/oi SYMBOL [STRIKE]` — top OI walls, or one strike's CE/PE rows. */
+export function oiSnapshotMessage({ symbol, strike = null, market } = {}) {
+  const series = (Array.isArray(market?.series) ? market.series : []).find(item => item?.s === symbol);
+  if (!series) return liveErrorMessage(symbol, 'no captured snapshot is available yet.');
+  const asOf = Number.isFinite(market?.t) ? istClock.format(market.t) : null;
+  const spot = Number.isFinite(series?.sp) ? series.sp : null;
+
+  if (Number.isFinite(strike) && strike > 0) {
+    const rows = [0, 1].map(side => (series.r ?? []).find(row => Array.isArray(row) && row[1] === side && row[0] === strike))
+      .filter(row => row);
+    if (!rows.length) return liveErrorMessage(symbol, `no captured rows for strike ${strike}.`);
+    const lines = [`📊 <b>${escapeHtml(symbol)} ${strike}</b>${asOf ? ` · ${asOf} IST` : ''}`];
+    for (const row of rows) {
+      const side = row[1] === 0 ? 'CE' : 'PE';
+      const ltp = price(row[2]);
+      const prevOi = Number.isFinite(row[5]) && row[5] > 0 ? row[5] : null;
+      const oiPct = Number.isFinite(row[4]) && prevOi ? ((row[4] - prevOi) / prevOi) * 100 : null;
+      lines.push(`• ${side}: LTP ${ltp ?? '—'} · OI ${oiAmount(row[4]) ?? '—'}${percent(oiPct) ? ` · day ${percent(oiPct)}` : ''}`);
+    }
+    lines.push('', DISCLAIMER);
+    return lines.join('\n');
+  }
+
+  const wallLines = [0, 1].map(side => {
+    const label = side === 0 ? 'CE' : 'PE';
+    const walls = oiWallsBySide(series, spot, side);
+    if (!walls.length) return null;
+    return `${label} walls: ${walls.map(row => `${row[0]} (${oiAmount(row[4])})`).join(' · ')}`;
+  }).filter(Boolean);
+  if (!wallLines.length) return liveErrorMessage(symbol, 'no captured OI rows are available yet.');
+  return [`📊 <b>${escapeHtml(symbol)} OI walls</b>${asOf ? ` · ${asOf} IST` : ''}`, ...wallLines, '', DISCLAIMER].join('\n');
+}
+
+/** `/obs SYMBOL` — the symbol's newest observation cards, stripped subscriber copy. */
+export function obsSnapshotMessage({ symbol, observations = [], max = 3 } = {}) {
+  const cards = (Array.isArray(observations) ? observations : [])
+    .filter(card => card?.symbol === symbol && Number.isFinite(card?.strike))
+    .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+    .slice(0, Math.max(1, max));
+  if (!cards.length) return `${escapeHtml(symbol)}: no observations yet.\n\n${DISCLAIMER}`;
+  return cards.map(card => observationSubscriberCaption(card)).join('\n\n');
 }

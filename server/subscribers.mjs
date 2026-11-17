@@ -19,6 +19,15 @@ function normalizeAlerts(value) {
   for (const row of Array.isArray(value) ? value : []) {
     const id = String(row?.id ?? '').trim().slice(0, 24);
     const symbol = String(row?.symbol ?? '').trim().toUpperCase();
+    const type = row?.type === 'buildup' ? 'buildup' : null;
+    if (type === 'buildup') {
+      // A /watch subscription: symbol-level buildup rule, no level.
+      if (!id || seen.has(id) || !/^[A-Z0-9&._-]{1,40}$/.test(symbol)) continue;
+      seen.add(id);
+      alerts.push({ id, symbol, type: 'buildup', createdAt: Number.isFinite(row?.createdAt) ? row.createdAt : 0 });
+      if (alerts.length >= MAX_PERSONAL_ALERTS) break;
+      continue;
+    }
     const direction = row?.direction;
     const level = Number(row?.level);
     if (!id || seen.has(id) || !/^[A-Z0-9&._-]{1,40}$/.test(symbol)
@@ -139,7 +148,7 @@ function processCommand(state, message, now, replies, ownerChatId, isKnownSymbol
   }
 
   if (command === 'help') {
-    replies.push({ chatId, text: '/start subscribe · /stop unsubscribe · /help show commands\nFree educational market-data digests only; not investment advice.' });
+    replies.push({ chatId, text: '/start subscribe · /stop unsubscribe · /live SYMBOL [CE|PE] · /obs SYMBOL · /oi SYMBOL [STRIKE] · /watch SYMBOL · /unwatch SYMBOL · /journal · /alert SYMBOL above|below LEVEL · /alerts · /help show commands\nFree educational market-data digests only; not investment advice.' });
     return;
   }
 
@@ -164,6 +173,84 @@ function processCommand(state, message, now, replies, ownerChatId, isKnownSymbol
     return;
   }
 
+  if (command === 'obs' || command === 'oi') {
+    const authorized = subscriber?.active || String(chatId) === String(ownerChatId ?? '');
+    if (!authorized) {
+      replies.push({ chatId, text: `Use /start to subscribe before using /${command}. Educational data only; not investment advice.` });
+      return;
+    }
+    const args = parsed.args.split(/\s+/).filter(Boolean);
+    const symbol = args[0]?.toUpperCase();
+    if (!symbol || args.length > 2 || !/^[A-Z0-9&._-]{1,40}$/.test(symbol)) {
+      replies.push({ chatId, text: command === 'obs'
+        ? 'Usage: /obs SYMBOL. Educational data only; not investment advice.'
+        : 'Usage: /oi SYMBOL [STRIKE]. Educational data only; not investment advice.' });
+      return;
+    }
+    if (!maySendHint(chatId, now)) {
+      replies.push({ chatId, text: `Requests are limited to ${HINT_LIMIT} per hour. Educational data only; not investment advice.` });
+      return;
+    }
+    if (command === 'obs') {
+      replies.push({ chatId, obs: { symbol }, parseMode: 'HTML' });
+    } else {
+      const strike = args[1] != null ? Number(args[1]) : null;
+      if (args[1] != null && (!Number.isFinite(strike) || strike <= 0)) {
+        replies.push({ chatId, text: 'Usage: /oi SYMBOL [STRIKE]. Educational data only; not investment advice.' });
+        return;
+      }
+      replies.push({ chatId, oi: { symbol, strike }, parseMode: 'HTML' });
+    }
+    return;
+  }
+
+  if (command === 'watch' || command === 'unwatch') {
+    const authorized = subscriber?.active || String(chatId) === String(ownerChatId ?? '');
+    if (!authorized) {
+      replies.push({ chatId, text: `Use /start to subscribe before using /${command}. Educational data only; not investment advice.` });
+      return;
+    }
+    const symbol = parsed.args.split(/\s+/).filter(Boolean)[0]?.toUpperCase();
+    if (command === 'watch' && !symbol) {
+      const watched = (subscriber?.alerts ?? []).filter(alert => alert.type === 'buildup');
+      replies.push({ chatId, text: watched.length
+        ? `Watching: ${watched.map(alert => escapeHtml(alert.symbol)).join(', ')}\n\n🎓 Educational data only; not investment advice.`
+        : 'Not watching any symbol. Use /watch SYMBOL to add one.\n\n🎓 Educational data only; not investment advice.', parseMode: 'HTML' });
+      return;
+    }
+    if (!symbol || !/^[A-Z0-9&._-]{1,40}$/.test(symbol) || parsed.args.split(/\s+/).filter(Boolean).length > 1) {
+      replies.push({ chatId, text: `Usage: /${command} SYMBOL. Educational data only; not investment advice.` });
+      return;
+    }
+    if (command === 'watch') {
+      if (typeof isKnownSymbol === 'function' && !isKnownSymbol(symbol)) {
+        replies.push({ chatId, text: `${escapeHtml(symbol)} is unknown or unsupported. Educational data only; not investment advice.`, parseMode: 'HTML' });
+        return;
+      }
+      if ((subscriber?.alerts ?? []).some(alert => alert.type === 'buildup' && alert.symbol === symbol)) {
+        replies.push({ chatId, text: `Already watching ${escapeHtml(symbol)}. Educational data only; not investment advice.` });
+        return;
+      }
+      if ((subscriber?.alerts ?? []).length >= MAX_PERSONAL_ALERTS) {
+        replies.push({ chatId, text: `Watch/alert limit reached (${MAX_PERSONAL_ALERTS}). Use /unwatch or /unalert first. Educational data only; not investment advice.` });
+        return;
+      }
+      let id;
+      do { id = randomBytes(4).toString('hex'); }
+      while (subscriber.alerts.some(alert => alert.id === id));
+      subscriber.alerts.push({ id, symbol, type: 'buildup', createdAt: now });
+      replies.push({ chatId, text: `Now watching <b>${escapeHtml(symbol)}</b>: its build-ups join your alerts and its observations join the EOD report. Educational data only; not investment advice.`, parseMode: 'HTML' });
+      return;
+    }
+    const before = (subscriber?.alerts ?? []).length;
+    if (!subscriber) { replies.push({ chatId, text: `You were not watching ${escapeHtml(symbol)}. Educational data only; not investment advice.` }); return; }
+    subscriber.alerts = subscriber.alerts.filter(alert => !(alert.type === 'buildup' && alert.symbol === symbol));
+    replies.push({ chatId, text: subscriber.alerts.length < before
+      ? `Stopped watching ${escapeHtml(symbol)}. Educational data only; not investment advice.`
+      : `You were not watching ${escapeHtml(symbol)}. Educational data only; not investment advice.`, parseMode: 'HTML' });
+    return;
+  }
+
   if (command === 'journal') {
     const authorized = subscriber?.active || String(chatId) === String(ownerChatId ?? '');
     if (!authorized) {
@@ -181,8 +268,10 @@ function processCommand(state, message, now, replies, ownerChatId, isKnownSymbol
     }
     if (command === 'alerts') {
       const lines = subscriber.alerts.length
-        ? subscriber.alerts.map(alert => `• <b>${escapeHtml(alert.id)}</b> ${escapeHtml(alert.symbol)} ${alert.direction} ${alert.level}`)
-        : ['No personal alerts set. Use /alert SYMBOL above|below LEVEL to add one.'];
+        ? subscriber.alerts.map(alert => alert.type === 'buildup'
+          ? `• <b>${escapeHtml(alert.id)}</b> watch ${escapeHtml(alert.symbol)} (build-up)`
+          : `• <b>${escapeHtml(alert.id)}</b> ${escapeHtml(alert.symbol)} ${alert.direction} ${alert.level}`)
+        : ['No personal alerts or watches set. Use /alert SYMBOL above|below LEVEL or /watch SYMBOL.'];
       replies.push({ chatId, text: `${lines.join('\n')}\n\n🎓 Personal alerts use captured educational data, not investment advice.`, parseMode: 'HTML' });
       return;
     }
@@ -232,7 +321,7 @@ function processCommand(state, message, now, replies, ownerChatId, isKnownSymbol
 }
 
 /** One crash-safe getUpdates pass. `handle` is an injectable fetch transport. */
-export async function pollCommands({ token, statePath, now = Date.now(), log = () => {}, send, handle = globalThis.fetch, ownerChatId, handleLive, handleJournal, isKnownSymbol } = {}) {
+export async function pollCommands({ token, statePath, now = Date.now(), log = () => {}, send, handle = globalThis.fetch, ownerChatId, handleLive, handleJournal, handleObs, handleOi, isKnownSymbol } = {}) {
   if (!token || !statePath || typeof handle !== 'function') return { processed: 0, offset: 0, skipped: 'not configured' };
   try {
     const before = loadSubscribers(statePath);
@@ -300,6 +389,22 @@ export async function pollCommands({ token, statePath, now = Date.now(), log = (
                 : 'No outcomes resolved yet today.\n\n🎓 Observation history is educational only; not investment advice.';
           } catch {
             text = 'Journal outcomes are temporarily unavailable.\n\n🎓 Observation history is educational only; not investment advice.';
+          }
+        }
+        if (reply.obs) {
+          try {
+            const result = await handleObs?.(reply.obs.symbol);
+            text = typeof result === 'string' ? result : `${reply.obs.symbol}: no observations yet.\n\n🎓 Observation history is educational only; not investment advice.`;
+          } catch {
+            text = 'Observations are temporarily unavailable.\n\n🎓 Observation history is educational only; not investment advice.';
+          }
+        }
+        if (reply.oi) {
+          try {
+            const result = await handleOi?.(reply.oi.symbol, reply.oi.strike);
+            text = typeof result === 'string' ? result : `${reply.oi.symbol}: OI snapshot unavailable with this provider.\n\n🎓 Educational data only; not investment advice.`;
+          } catch {
+            text = 'OI data is temporarily unavailable.\n\n🎓 Educational data only; not investment advice.';
           }
         }
         const options = { chatId: reply.chatId, ...(reply.parseMode ? { parseMode: reply.parseMode } : {}) };

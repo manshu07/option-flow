@@ -263,7 +263,7 @@ describe('Telegram subscribers', () => {
     expect(send.mock.calls[1][0]).not.toContain('<b>Build-ups</b>');
     expect(digestState.pending.size).toBe(1);
 
-    const digestAt = Date.parse('2026-11-16T05:30:00Z'); // 11:00 IST
+    const digestAt = Date.parse('2026-11-16T10:15:00Z'); // 15:45 IST
     await flushScheduledDigests({ digestState, now: digestAt, broadcastChatIds: [777], send });
     expect(send).toHaveBeenCalledTimes(3);
     expect(send.mock.calls[2][0]).toContain('<b>Build-ups</b>');
@@ -350,6 +350,46 @@ describe('/journal command dispatch', () => {
     expect(handleJournal).not.toHaveBeenCalled();
     expect(send.mock.calls[0][0]).toContain('Use /start');
     expect(send.mock.calls[0][0]).toContain('not investment advice');
+  });
+
+  it('routes /obs and /oi through injected handlers with rate limits', async () => {
+    const statePath = join(tempDir(), 'subscribers.json');
+    saveSubscribers(statePath, { subscribers: [{ chatId: 661, startedAt: NOW, active: true }], offset: 0 });
+    const handleObs = vi.fn(async () => '<b>TMPV 265PE</b> · entry ₹5.95');
+    const handleOi = vi.fn(async () => 'CE walls: 300 (11.8M)');
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
+    const handle = async () => telegramResponse([
+      update(1, 661, '/obs TMPV'),
+      update(2, 661, '/oi TMPV 265'),
+      update(3, 662, '/obs TMPV'),
+      update(4, 661, '/bogus'),
+    ]);
+
+    await pollCommands({ token: 'test-token', statePath, now: NOW, handle, send, ownerChatId: '999', handleObs, handleOi, isKnownSymbol: () => true });
+
+    expect(handleObs).toHaveBeenCalledTimes(1); // chat 662 is not subscribed → denied
+    expect(handleObs).toHaveBeenCalledWith('TMPV');
+    expect(handleOi).toHaveBeenNthCalledWith(1, 'TMPV', 265);
+    expect(send).toHaveBeenNthCalledWith(1, '<b>TMPV 265PE</b> · entry ₹5.95', { chatId: 661, parseMode: 'HTML' });
+    expect(send).toHaveBeenNthCalledWith(2, 'CE walls: 300 (11.8M)', { chatId: 661, parseMode: 'HTML' });
+    expect(send.mock.calls.at(-1)[0]).toContain('Unknown command');
+  });
+
+  it('watches and unwatches symbols as personal buildup rules', async () => {
+    const statePath = join(tempDir(), 'subscribers.json');
+    saveSubscribers(statePath, { subscribers: [{ chatId: 671, startedAt: NOW, active: true }], offset: 0 });
+    const send = vi.fn(async (_text: string) => ({ sent: true }));
+    const handle = async () => telegramResponse([update(1, 671, '/watch TMPV'), update(2, 671, '/watch'), update(3, 671, '/unwatch TMPV'), update(4, 671, '/watch')]);
+
+    await pollCommands({ token: 'test-token', statePath, now: NOW, handle, send, isKnownSymbol: () => true });
+
+    const afterWatch = loadSubscribers(statePath);
+    // /unwatch already applied by the end of the pass; verify via reply sequence instead.
+    expect(send.mock.calls[0][0]).toContain('Now watching <b>TMPV</b>');
+    expect(send.mock.calls[1][0]).toContain('Watching: TMPV');
+    expect(send.mock.calls[2][0]).toContain('Stopped watching TMPV');
+    expect(send.mock.calls[3][0]).toContain('Not watching any symbol');
+    expect(afterWatch.subscribers[0].alerts).toHaveLength(0);
   });
 });
 

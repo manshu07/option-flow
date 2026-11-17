@@ -44,7 +44,7 @@ import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs'
 import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAlerts } from './alerts.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
-import { liveErrorMessage, liveSnapshotMessage } from './liveCommand.mjs';
+import { liveErrorMessage, liveSnapshotMessage, obsSnapshotMessage, oiSnapshotMessage } from './liveCommand.mjs';
 import { formatJournalMessage } from './journalCommand.mjs';
 import { gapOpenDue, gapOpenMessage } from './gapOpen.mjs';
 import { weeklyReviewDue, weeklyReviewMessage } from './weeklyReview.mjs';
@@ -1137,14 +1137,24 @@ server.listen(PORT, HOST, async () => {
               loadObservations(path.join(DATA_DIR, 'observations.json')),
               marketParts(Date.now()).dateKey,
             ),
+            handleObs: symbol => obsSnapshotMessage({
+              symbol,
+              observations: loadObservations(path.join(DATA_DIR, 'observations.json')),
+            }),
+            handleOi: (symbol, strike) => oiSnapshotMessage({ symbol, strike, market: state.latest }),
             isKnownSymbol: symbol => bySymbol.has(symbol),
           });
           const observations = loadObservations(path.join(DATA_DIR, 'observations.json'));
+          const watchedSymbols = [...new Set(loadSubscribers(SUBSCRIBERS_PATH).subscribers
+            .flatMap(subscriber => (subscriber.alerts ?? []))
+            .filter(alert => alert.type === 'buildup')
+            .map(alert => alert.symbol))];
           await flushScheduledDigests({
             digestState: alertDigestState,
             now: pollNow,
             broadcastChatIds: activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)),
             observations,
+            watchedSymbols,
             send: sendTelegram,
             log,
           });

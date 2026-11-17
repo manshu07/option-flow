@@ -147,7 +147,7 @@ describe('15:45 subscriber EOD report', () => {
     expect(message).toContain('<b>Levels touched</b>');
     expect(message).toContain('<b>Journal outcomes</b>');
     expect(message).toContain('Cards written 3 · 1 TGT1 · 1 SL · 0 open · 0 ambiguous');
-    expect(message).toContain('<b>Jev tally</b>');
+    expect(message).toContain('<b>Decision tally</b>');
     expect(message).toContain('not investment advice');
     expect(message).not.toContain('0.99');
     expect(message.length).toBeLessThan(900);
@@ -222,7 +222,7 @@ describe('OI wall-shift digest', () => {
     expect(sent[0].text).toContain('PE wall OI −30%');
     expect(digestState.pending.size).toBe(1);
 
-    await flushScheduledDigests({ digestState, now: Date.parse('2026-11-16T05:30:00Z'), broadcastChatIds: [701], send });
+    await flushScheduledDigests({ digestState, now: Date.parse('2026-11-16T10:15:00Z'), broadcastChatIds: [701], send });
     expect(send).toHaveBeenCalledTimes(2);
     expect(sent[1].text).toContain('<b>Wall shifts</b>');
     expect(sent[1].options).toMatchObject({ chatId: 701, parseMode: 'HTML', retry: true });
@@ -277,7 +277,7 @@ describe('gamma unwind digest', () => {
     expect(digestState.gammaUnwindFired.size).toBe(1);
     expect(digestState.pending.size).toBe(1);
 
-    await flushScheduledDigests({ digestState, now: Date.parse('2026-11-16T05:30:00Z'), broadcastChatIds: [711], send: sendMock });
+    await flushScheduledDigests({ digestState, now: Date.parse('2026-11-16T10:15:00Z'), broadcastChatIds: [711], send: sendMock });
     expect(sendMock).toHaveBeenCalledTimes(1);
     expect(send[0].text).toContain('Γ unwind: <b>NIFTY');
     expect(send[0].text).toContain('OI');
@@ -314,7 +314,7 @@ describe('subscriber observation digest section', () => {
     digestState.lastDigestAt = NOW - 60 * MINUTE;
     const result = await flushScheduledDigests({
       digestState,
-      now: Date.parse('2026-11-16T05:35:00Z'), // 11:05 IST — first digest slot
+      now: Date.parse('2026-11-16T10:15:00Z'), // 15:45 IST — EOD digest slot
       broadcastChatIds: [711],
       observations: cards,
       send: async (text: string, options?: { chatId?: number }) => { sent.push({ text, chatId: options?.chatId }); return { sent: true }; },
@@ -325,6 +325,6 @@ describe('subscriber observation digest section', () => {
     expect(sent[0].text).toContain('ITC 292.5PE');
     expect(sent[0].text).not.toMatch(/jev|quality|watch/i);
     expect(sent[0].text.trimEnd().endsWith('to opt out')).toBe(true);
-    expect(digestState.lastDigestAt).toBe(Date.parse('2026-11-16T05:35:00Z'));
+    expect(digestState.lastDigestAt).toBe(Date.parse('2026-11-16T10:15:00Z'));
   });
 });
