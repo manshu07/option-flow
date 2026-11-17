@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { sendTelegram } from './telegram.mjs';
+import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
 
 /**
  * The alert engine: evaluates a rules file against each freshly built market
  * file and turns matches into Telegram messages.
  *
  * Rules live in `<DATA_DIR>/alerts.json` and are re-read every evaluation, so
- * editing them needs no restart. Four rule types:
+ * editing them needs no restart. Four market rule types plus digest-only
+ * gamma unwind events:
  *
  *   level    — the underlying's spot crossed a level      { above?, below? }
  *   buildup  — day price move and chain OI added the same way (LONG/SHORT
@@ -123,6 +125,52 @@ function wallShiftMessage(rule, series, baseline, now) {
   }
   if (!changes.length) return null;
   return `🚨 ${rule.label ?? `${rule.symbol} OI wall shift`}: ${changes.join('; ')} · ${clock(now)} IST`;
+}
+
+function gammaUnwindEvents(market, rules, digestState) {
+  const enabled = new Set(parseGammaSymbols(process.env.GAMMA_SYMBOLS));
+  const watched = new Set(['NIFTY', 'BANKNIFTY', 'SENSEX', ...rules
+    .filter(rule => rule?.type === 'buildup' && rule.broadcast === true && typeof rule.symbol === 'string')
+    .map(rule => rule.symbol)]);
+  const events = [];
+  for (const symbol of watched) {
+    if (!enabled.has(symbol)) continue;
+    const series = seriesFor(market, symbol);
+    if (!series) continue;
+    let baseline = digestState.gammaUnwindBaselines.get(symbol);
+    if (!baseline) {
+      const profile = gammaProfile(series, { lot: series.lot ?? 1, r: gammaRiskFreeRate(process.env.GAMMA_RISK_FREE) });
+      const top = profile.strikes.slice().sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex)).slice(0, 3);
+      if (top.length) digestState.gammaUnwindBaselines.set(symbol, top.map(row => ({ strike: row.K, side: row.side, oi: row.oi })));
+      continue;
+    }
+
+    for (const wall of baseline) {
+      const key = `${symbol}|${wall.strike}|${wall.side}`;
+      if (digestState.gammaUnwindFired.has(key) || !(wall.oi > 0)) continue;
+      const sideCode = wall.side === 'CE' ? 0 : 1;
+      const row = (series.r ?? []).find(item => Array.isArray(item) && item[0] === wall.strike && item[1] === sideCode);
+      if (!Number.isFinite(row?.[4])) continue;
+      const shedPct = ((wall.oi - row[4]) / wall.oi) * 100;
+      if (shedPct < 25) continue;
+      digestState.gammaUnwindFired.add(key);
+      const rule = {
+        id: `gamma-unwind:${key}`,
+        type: 'gamma-unwind',
+        symbol,
+        strike: wall.strike,
+        side: wall.side,
+        changePct: shedPct,
+        broadcast: true,
+      };
+      events.push({
+        rule,
+        text: `Γ unwind: ${symbol} ${wall.strike}${wall.side} −${Math.round(shedPct)}% OI`,
+        items: [`• Γ unwind: <b>${escapeHtml(symbol)} ${wall.strike}${wall.side}</b> −${Math.round(shedPct)}% OI`],
+      });
+    }
+  }
+  return events;
 }
 
 function levelMessage(rule, series, now) {
@@ -259,6 +307,7 @@ const ALERT_SECTIONS = [
   { type: 'buildup', heading: '📈 <b>Build-ups</b>' },
   { type: 'oi-spike', heading: '⚡ <b>OI spikes</b>' },
   { type: 'wall-shift', heading: '🧱 <b>Wall shifts</b>' },
+  { type: 'gamma-unwind', heading: 'Γ <b>Gamma unwinds</b>' },
   { type: 'top-movers', heading: '📊 <b>Digest</b>' },
 ];
 
@@ -305,6 +354,9 @@ function alertItems({ rule, text }, market) {
     const detail = colon >= 0 ? plain.slice(colon + 1).trim() : plain;
     return [`• <b>${escapeHtml(rule.symbol)}</b> ${escapeHtml(detail)}`];
   }
+  if (rule.type === 'gamma-unwind') {
+    return [`• Γ unwind: <b>${escapeHtml(rule.symbol)} ${escapeHtml(rule.strike)}${rule.side === 'PE' ? 'PE' : 'CE'}</b> −${Math.round(rule.changePct)}% OI`];
+  }
   if (rule.type === 'top-movers') {
     return String(text).split('\n').slice(1).map(line => {
       const content = line.replace(/^[🟢🔴]\s*/, '');
@@ -344,6 +396,7 @@ const EOD_SECTIONS = [
   { type: 'top-movers', heading: '📊 <b>Top movers</b>' },
   { type: 'buildup', heading: '📈 <b>Build-ups</b>' },
   { type: 'wall-shift', heading: '🧱 <b>Wall shifts</b>' },
+  { type: 'gamma-unwind', heading: 'Γ <b>Gamma unwinds</b>' },
   { type: 'level', heading: '🚨 <b>Levels touched</b>' },
 ];
 
@@ -422,13 +475,15 @@ function recipientsFor(chatIds) {
 }
 
 export function createAlertDigestState() {
-  return { dayKey: null, pending: new Map(), dailyEvents: new Map(), wallBaselines: new Map(), personalAlertStates: new Map(), sentSlots: new Set() };
+  return { dayKey: null, pending: new Map(), dailyEvents: new Map(), wallBaselines: new Map(), gammaUnwindBaselines: new Map(), gammaUnwindFired: new Set(), personalAlertStates: new Map(), sentSlots: new Set() };
 }
 
 function prepareDigestState(state, dayKey) {
   if (!(state.pending instanceof Map)) state.pending = new Map();
   if (!(state.dailyEvents instanceof Map)) state.dailyEvents = new Map();
   if (!(state.wallBaselines instanceof Map)) state.wallBaselines = new Map();
+  if (!(state.gammaUnwindBaselines instanceof Map)) state.gammaUnwindBaselines = new Map();
+  if (!(state.gammaUnwindFired instanceof Set)) state.gammaUnwindFired = new Set();
   if (!(state.personalAlertStates instanceof Map)) state.personalAlertStates = new Map();
   if (!(state.sentSlots instanceof Set)) state.sentSlots = new Set();
   if (state.dayKey !== dayKey) {
@@ -436,6 +491,8 @@ function prepareDigestState(state, dayKey) {
     state.pending.clear();
     state.dailyEvents.clear();
     state.wallBaselines.clear();
+    state.gammaUnwindBaselines.clear();
+    state.gammaUnwindFired.clear();
     state.sentSlots.clear();
   }
 }
@@ -507,6 +564,11 @@ export async function runAlerts(market, {
       const prepared = { ...event, items: alertItems(event, market) };
       digestState.dailyEvents.set(key, prepared);
       if (['buildup', 'top-movers', 'wall-shift'].includes(event.rule.type)) digestState.pending.set(key, prepared);
+    }
+    for (const event of gammaUnwindEvents(market, rules, digestState)) {
+      const key = event.rule.id;
+      digestState.dailyEvents.set(key, event);
+      digestState.pending.set(key, event);
     }
   }
   if (instant.length) {

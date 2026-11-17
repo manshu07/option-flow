@@ -31,6 +31,7 @@ function tempRules() {
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  vi.unstubAllEnvs();
 });
 
 const rules = [
@@ -226,5 +227,61 @@ describe('OI wall-shift digest', () => {
     expect(sent[1].text).toContain('<b>Wall shifts</b>');
     expect(sent[1].options).toMatchObject({ chatId: 701, parseMode: 'HTML', retry: true });
     expect(sent[1].text).toContain('not investment advice');
+  });
+});
+
+describe('gamma unwind digest', () => {
+  it('baselines the first top-three gamma strikes and emits a once-only 25% OI shed line', async () => {
+    vi.stubEnv('GAMMA_SYMBOLS', 'NIFTY');
+    vi.stubEnv('GAMMA_RISK_FREE', '0.065');
+    vi.stubEnv('TELEGRAM_CHAT_ID', '999999');
+    const rulesPath = tempRules();
+    const digestState = createAlertDigestState();
+    const state = new Map();
+    const send: Array<{ text: string; options?: { chatId?: number; parseMode?: string; retry?: boolean } }> = [];
+    const sendMock = vi.fn(async (text: string, options?: { chatId?: number; parseMode?: string; retry?: boolean }) => {
+      send.push({ text, options });
+      return { sent: true };
+    });
+    const spot = 25_000;
+    const strikeList = [24_000, 24_500, 24_950, 25_000, 25_050, 25_500, 26_000];
+    const baseRows = strikeList.flatMap(strike => [0, 1].map(side => {
+      const intrinsic = side === 0 ? Math.max(0, spot - strike) : Math.max(0, strike - spot);
+      const premium = intrinsic + Math.max(5, intrinsic * 0.05);
+      const oi = strike === 25_000 && side === 0 ? 500_000
+        : strike === 25_000 && side === 1 ? 400_000
+          : (strike === 24_000 && side === 1) || (strike === 26_000 && side === 0) ? 1_000_000
+            : 100_000;
+      return [strike, side, premium, Math.max(0.1, premium - 1), oi, oi * 0.9, 1000, 900, premium, 20];
+    }));
+    const marketAt = (t: number, rows: number[][]) => ({
+      date: '2026-11-16',
+      t,
+      series: [{ s: 'NIFTY', t, sp: spot, pc: 24_900, atm: 25_000, e: '2026-11-19', lot: 50, r: rows }],
+    });
+    const baseMarket = marketAt(NOW, baseRows);
+
+    await runAlerts(baseMarket, { rulesPath, state, digestState, now: NOW, send: sendMock, broadcastChatIds: [711] });
+    const baseline = digestState.gammaUnwindBaselines.get('NIFTY');
+    expect(baseline).toHaveLength(3);
+    const target = baseline.find((row: { strike: number; side: string }) => !(row.strike === 24_000 && row.side === 'PE') && !(row.strike === 26_000 && row.side === 'CE'));
+    expect(target).toBeTruthy();
+
+    const currentRows = baseRows.map(row => row[0] === target.strike && row[1] === (target.side === 'CE' ? 0 : 1)
+      ? [row[0], row[1], row[2], row[3], Math.floor(target.oi * 0.69), row[5], row[6], row[7], row[8], row[9]]
+      : row);
+    await runAlerts(marketAt(NOW + 60_000, currentRows), { rulesPath, state, digestState, now: NOW + 60_000, send: sendMock, broadcastChatIds: [711] });
+    expect(sendMock).not.toHaveBeenCalled(); // unwind is digest-only, not instant
+    expect(digestState.pending.size).toBe(1);
+    await runAlerts(marketAt(NOW + 2 * 60_000, currentRows), { rulesPath, state, digestState, now: NOW + 2 * 60_000, send: sendMock, broadcastChatIds: [711] });
+    expect(digestState.gammaUnwindFired.size).toBe(1);
+    expect(digestState.pending.size).toBe(1);
+
+    await flushScheduledDigests({ digestState, now: Date.parse('2026-11-16T05:30:00Z'), broadcastChatIds: [711], send: sendMock });
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(send[0].text).toContain('Γ unwind: <b>NIFTY');
+    expect(send[0].text).toContain('OI');
+    expect(send[0].text).toContain('not investment advice');
+    expect(send[0].options).toMatchObject({ chatId: 711, parseMode: 'HTML', retry: true });
   });
 });
