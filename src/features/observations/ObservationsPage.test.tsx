@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ObservationsPage } from './ObservationsPage';
+import type { ObservationFollowThrough } from './observationModel';
 
 const card = {
   id: 'obs-nifty-25150',
@@ -35,9 +36,26 @@ const card = {
 
 type TestCard = Omit<typeof card, 'gamma'> & {
   gamma?: { gexAtStrike: number | null; distanceToFlip: number | null; regime: 'gamma-long' | 'gamma-short' | null; flipLevel: number | null; pin: string | null; notes: string[] } | null;
-  outcome?: { status?: 'tgt1' | 'sl' | 'open' | 'ambiguous' };
+  outcome?: { status?: 'tgt1' | 'sl' | 'open' | 'ambiguous'; followThrough?: ObservationFollowThrough | null };
 };
 let responseCards: TestCard[];
+
+const evidence = (overrides: Partial<ObservationFollowThrough> = {}): ObservationFollowThrough => ({
+  version: 1,
+  source: 'raw',
+  from: Date.parse('2026-11-16T04:15:00Z'),
+  sessionCloseAt: Date.parse('2026-11-16T10:10:00Z'),
+  firstAt: Date.parse('2026-11-16T04:16:00Z'),
+  lastAt: Date.parse('2026-11-16T10:10:00Z'),
+  sampleCount: 355,
+  expectedMinutes: 355,
+  missingMinutes: 0,
+  coverage: 'complete',
+  range: { open: 100, high: 220, low: 80, close: 180 },
+  touches: { sl: null, tgt1: null, tgt2: null },
+  sequence: 'none-observed',
+  ...overrides,
+});
 
 class MockEventSource {
   onmessage: ((event: MessageEvent) => void) | null = null;
@@ -90,6 +108,63 @@ describe('ObservationsPage cards and table', () => {
     expect(container.textContent?.toLowerCase()).not.toContain('gamma');
     expect(screen.queryByText(/1003\.2999877929688/)).not.toBeInTheDocument();
     expect(container.querySelector('.observations__status')).toHaveTextContent('0 today · 1 saved history');
+    expect(screen.getByText('Post-call verification').parentElement).toHaveTextContent('Recorded journal status: —');
+    expect(screen.getByText('Post-call evidence unavailable; no sampled verification is attached.')).toBeInTheDocument();
+  });
+
+  it('renders complete evidence, TGT2, and the post-SL disclaimer without changing journal status', async () => {
+    responseCards = [{ ...card, outcome: {
+      status: 'sl',
+      followThrough: evidence({
+        touches: {
+          sl: { at: Date.parse('2026-11-16T05:00:00Z'), after: Date.parse('2026-11-16T05:00:00Z'), source: 'ltp' },
+          tgt1: { at: Date.parse('2026-11-16T06:00:00Z'), after: Date.parse('2026-11-16T06:00:00Z'), source: 'ltp' },
+          tgt2: { at: Date.parse('2026-11-16T07:00:00Z'), after: Date.parse('2026-11-16T06:30:00Z'), source: 'day-range' },
+        },
+        sequence: 'sl-first',
+      }),
+    } }];
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+
+    expect(await screen.findByText('Post-call sampled O/H/L/C')).toBeInTheDocument();
+    expect(screen.getByText('100.00 / 220.00 / 80.00 / 180.00')).toBeInTheDocument();
+    expect(screen.getByText(/Highest target observed: TGT2/)).toBeInTheDocument();
+    expect(screen.getByText(/Later target touches are post-SL price movement, not a successful trade/)).toBeInTheDocument();
+    expect(screen.getByText(/Touch observed · capture 16-Nov 10:30 IST/)).toBeInTheDocument();
+    expect(screen.getByText(/Touch observed · capture 16-Nov 11:30 IST/)).toBeInTheDocument();
+    expect(screen.getByText(/Touch observed · range interval \(16-Nov 12:00 IST–16-Nov 12:30 IST\]/)).toBeInTheDocument();
+    expect(screen.getByText('Post-call verification').parentElement).toHaveTextContent('Recorded journal status: SL');
+  });
+
+  it('labels partial and missing coverage as insufficient rather than a no-hit result', async () => {
+    responseCards = [{ ...card, outcome: { status: 'open', followThrough: evidence({ coverage: 'partial', missingMinutes: 3, sampleCount: 352 }) } }];
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    expect(await screen.findAllByText('Insufficient data')).toHaveLength(3);
+    expect(screen.getByText(/Coverage is partial; 3 minute samples are missing/)).toBeInTheDocument();
+
+    cleanup();
+    responseCards = [{ ...card, outcome: { status: 'ambiguous', followThrough: evidence({ coverage: 'missing', missingMinutes: 355, sampleCount: 0, firstAt: null, lastAt: null }) } }];
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    expect(await screen.findAllByText('Insufficient data')).toHaveLength(3);
+    expect(screen.getByText(/Coverage is missing; 355 minute samples are missing/)).toBeInTheDocument();
+  });
+
+  it('states when SL and target order is ambiguous', async () => {
+    responseCards = [{ ...card, outcome: { status: 'ambiguous', followThrough: evidence({
+      touches: {
+        sl: { at: card.at + 120_000, after: card.at + 60_000, source: 'day-range' },
+        tgt1: { at: card.at + 120_000, after: card.at + 60_000, source: 'day-range' }, tgt2: null,
+      },
+      sequence: 'ambiguous',
+    }) } }];
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    expect(await screen.findByText('SL/target order unknown; do not infer trade outcome from touch order.')).toBeInTheDocument();
+  });
+
+  it('renders a safe fallback for invalid persisted capture times', async () => {
+    responseCards = [{ ...card, outcome: { status: 'open', followThrough: evidence({ firstAt: 1e30 }) } }];
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    expect(await screen.findByText('Post-call evidence unavailable; the saved report is invalid.')).toBeInTheDocument();
   });
 
   it('strengthens the theta line at two DTE and omits it at twenty DTE', async () => {
@@ -149,5 +224,17 @@ describe('ObservationsPage cards and table', () => {
     unmount();
     render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
     expect(await screen.findByRole('table')).toBeInTheDocument();
+  });
+
+  it('exposes the same verification in the existing Status table cell', async () => {
+    responseCards = [{ ...card, outcome: { status: 'tgt1', followThrough: evidence({ touches: { sl: null, tgt1: { at: card.at + 120_000, after: card.at + 120_000, source: 'ltp' }, tgt2: null } }) } }];
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('radio', { name: 'Table' }));
+    const table = await screen.findByRole('table');
+    const statusCell = within(table).getAllByRole('cell').at(-1);
+    const details = statusCell?.querySelector('details');
+    expect(details).not.toBeNull();
+    fireEvent.click(details!.querySelector('summary')!);
+    expect(details!.querySelector('.obs-verification__highest')).toHaveTextContent('Highest target observed: TGT1 (legacy journal status is unchanged).');
   });
 });

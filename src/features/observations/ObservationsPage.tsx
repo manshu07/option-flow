@@ -6,7 +6,16 @@ import { applyTheme } from '@/lib/applyTheme';
 import { marketParts } from '@/lib/marketSession';
 import { useRememberedChoice } from '@/lib/remembered';
 import { clockOf } from '../market-flow/marketFlowModel';
-import { paginateObservationCards, sortObservationCards, uniqueObservationCards } from './observationModel';
+import {
+  highestObservedTarget,
+  normalizeFollowThrough,
+  paginateObservationCards,
+  sortObservationCards,
+  uniqueObservationCards,
+  type ObservationCard,
+  type ObservationFollowThrough,
+  type ObservationTouch,
+} from './observationModel';
 import { normalizeLiveTicks } from './liveTicks';
 import './observations.css';
 
@@ -22,7 +31,7 @@ const OBSERVATION_VIEWS: readonly CapsuleOption<ObservationView>[] = [
   { value: 'cards', label: 'Cards' },
   { value: 'table', label: 'Table' },
 ];
-const priceText = (value: number): string => Number.isFinite(value) ? value.toFixed(2) : '—';
+const priceText = (value: number | null | undefined): string => Number.isFinite(value) ? value!.toFixed(2) : '—';
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -107,37 +116,67 @@ function outcomeLabel(card: ObservationCard): string {
   }
 }
 
-interface ObservationCard {
-  id: string;
-  at: number;
-  date: string;
-  symbol: string;
-  spot?: number | null;
-  spotChangePct?: number | null;
-  bias: 'bullish' | 'bearish';
-  side: 'CE' | 'PE';
-  strike: number;
-  expiry: string | null;
-  entry: number;
-  sl: number;
-  tgt1: number;
-  tgt2: number;
-  tsl: string;
-  support: { strike: number; oi: number; changePct: number | null } | null;
-  resistance: { strike: number; oi: number; changePct: number | null } | null;
-  quality: number;
-  strikePickProbability: number;
-  oiChangePct: number | null;
-  gamma?: {
-    gexAtStrike: number | null;
-    distanceToFlip: number | null;
-    regime: 'gamma-long' | 'gamma-short' | null;
-    flipLevel: number | null;
-    pin: string | null;
-    notes: string[];
-  } | null;
-  outcome?: { status?: 'tgt1' | 'sl' | 'open' | 'ambiguous' } | null;
-  disclaimer: string;
+function captureTime(at: number | null): string {
+  if (typeof at !== 'number' || !Number.isFinite(at)) return 'time unavailable';
+  const stamped = istDateTime(at);
+  return stamped ? `${stamped.date} ${stamped.time} IST` : 'time unavailable';
+}
+
+function touchText(touch: ObservationTouch | null, report: ObservationFollowThrough): string {
+  if (!touch) return report.coverage === 'complete' ? 'Not observed' : 'Insufficient data';
+  if (touch.source === 'day-range') return `Touch observed · range interval (${captureTime(touch.after)}–${captureTime(touch.at)}]`;
+  return `Touch observed · capture ${captureTime(touch.at)}`;
+}
+
+function verificationBody(report: ObservationFollowThrough | null, rawReport: unknown) {
+  if (!rawReport) return <p className="obs-verification__fallback">Post-call evidence unavailable; no sampled verification is attached.</p>;
+  if (!report) return <p className="obs-verification__fallback">Post-call evidence unavailable; the saved report is invalid.</p>;
+
+  const target = highestObservedTarget(report);
+  const incomplete = report.coverage !== 'complete';
+  return (
+    <>
+      <p className="obs-verification__notice">
+        Captured observations only — not exchange OHLC and not execution fills.
+        {incomplete && ` Coverage is ${report.coverage}; ${report.missingMinutes} minute sample${report.missingMinutes === 1 ? '' : 's'} are missing, so absence does not prove a level was not hit.`}
+      </p>
+      <dl className="obs-verification__stats">
+        <div><dt>Post-call sampled O/H/L/C</dt><dd>{[report.range.open, report.range.high, report.range.low, report.range.close].map(priceText).join(' / ')}</dd></div>
+        <div><dt>Captures</dt><dd>{captureTime(report.firstAt)} → {captureTime(report.lastAt)}</dd></div>
+        <div><dt>Samples</dt><dd>{report.sampleCount}/{report.expectedMinutes} minutes · {report.source}</dd></div>
+      </dl>
+      <ul className="obs-verification__touches">
+        <li><b>SL</b> {touchText(report.touches.sl, report)}</li>
+        <li><b>TGT1</b> {touchText(report.touches.tgt1, report)}</li>
+        <li><b>TGT2</b> {touchText(report.touches.tgt2, report)}</li>
+      </ul>
+      {target && <p className="obs-verification__highest">Highest target observed: {target.toUpperCase()} (legacy journal status is unchanged).</p>}
+      {report.sequence === 'sl-first' && (report.touches.tgt1 || report.touches.tgt2) && (
+        <p className="obs-verification__warning">SL was observed first. Later target touches are post-SL price movement, not a successful trade.</p>
+      )}
+      {report.sequence === 'ambiguous' && <p className="obs-verification__warning">SL/target order unknown; do not infer trade outcome from touch order.</p>}
+    </>
+  );
+}
+
+function OutcomeVerification({ card, table = false }: { card: ObservationCard; table?: boolean }) {
+  const rawReport = card.outcome?.followThrough;
+  const report = normalizeFollowThrough(rawReport);
+  const content = verificationBody(report, rawReport);
+  if (table) {
+    return (
+      <details className="obs-verification obs-verification--table">
+        <summary>{outcomeLabel(card)}</summary>
+        <div className="obs-verification__body"><p className="obs-verification__journal">Recorded journal status: <b>{outcomeLabel(card)}</b></p>{content}</div>
+      </details>
+    );
+  }
+  return (
+    <section className="obs-verification" aria-label="Post-call verification">
+      <div className="obs-verification__title"><b>Post-call verification</b><span>Recorded journal status: <b>{outcomeLabel(card)}</b></span></div>
+      {content}
+    </section>
+  );
 }
 
 interface SpotReading { sp: number; pc: number; changePct: number | null }
@@ -317,6 +356,7 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
         {(card.gamma.notes ?? []).map(note => <small key={note}>{plainDealerNote(note)}</small>)}
       </div>}
       {theta && <p className="obs-card__theta">{theta}</p>}
+      <OutcomeVerification card={card} />
       <footer className="obs-card__foot">{card.disclaimer}</footer>
     </article>
   );
@@ -353,7 +393,7 @@ function ObservationTable({ cards, optionTicks }: {
               <td className="is-numeric">{priceText(card.tgt2)}</td>
               <td className="is-numeric">{Number.isFinite(liveOption) ? priceText(liveOption as number) : '—'}</td>
               <td>{flowLabel(card)}</td>
-              <td>{outcomeLabel(card)}</td>
+              <td><OutcomeVerification card={card} table /></td>
             </tr>
           );
         })}</tbody>

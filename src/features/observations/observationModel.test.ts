@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { observationKey, paginateObservationCards, sortObservationCards, uniqueObservationCards } from './observationModel';
+import {
+  highestObservedTarget,
+  normalizeFollowThrough,
+  observationKey,
+  paginateObservationCards,
+  sortObservationCards,
+  uniqueObservationCards,
+  type ObservationFollowThrough,
+} from './observationModel';
 
 describe('Observation identity', () => {
   it('uses symbol and session date as the card identity', () => {
@@ -39,5 +47,46 @@ describe('Observation ordering and pages', () => {
     const clamped = paginateObservationCards(cards, 99, 10);
     expect(clamped).toMatchObject({ page: 3, totalPages: 3, start: 21, end: 21, items: [20] });
     expect(paginateObservationCards([], 4, 10)).toMatchObject({ page: 1, total: 0, totalPages: 0, start: 0, end: 0, items: [] });
+  });
+});
+
+describe('Post-call follow-through evidence', () => {
+  const report: ObservationFollowThrough = {
+    version: 1,
+    source: 'raw',
+    from: 1_000,
+    sessionCloseAt: 2_000,
+    firstAt: 1_060,
+    lastAt: 1_960,
+    sampleCount: 16,
+    expectedMinutes: 16,
+    missingMinutes: 0,
+    coverage: 'complete',
+    range: { open: 100, high: 220, low: 80, close: 180 },
+    touches: {
+      sl: { at: 1_200, after: 1_200, source: 'ltp' },
+      tgt1: { at: 1_500, after: 1_500, source: 'ltp' },
+      tgt2: { at: 1_800, after: 1_700, source: 'day-range' },
+    },
+    sequence: 'sl-first',
+  };
+
+  it('normalizes the exact schema and recognizes the highest observed target', () => {
+    const normalized = normalizeFollowThrough(report);
+    expect(normalized).toEqual(report);
+    expect(highestObservedTarget(normalized!)).toBe('tgt2');
+  });
+
+  it('returns no evidence for malformed reports instead of throwing', () => {
+    expect(normalizeFollowThrough({ version: 1, coverage: 'partial' })).toBeNull();
+    expect(normalizeFollowThrough(null)).toBeNull();
+    expect(normalizeFollowThrough({ ...report, firstAt: 1e30 })).toBeNull();
+    expect(normalizeFollowThrough({ ...report, touches: { ...report.touches, sl: { at: 900, after: 900, source: 'ltp' } } })).toBeNull();
+    expect(normalizeFollowThrough({ ...report, touches: { ...report.touches, sl: { at: 1_200, after: 1_300, source: 'day-range' } } })).toBeNull();
+  });
+
+  it('keeps a target-first sequence distinct from ambiguous ordering', () => {
+    expect(normalizeFollowThrough({ ...report, sequence: 'target-first', touches: { ...report.touches, sl: null } })?.sequence).toBe('target-first');
+    expect(normalizeFollowThrough({ ...report, sequence: 'ambiguous' })?.sequence).toBe('ambiguous');
   });
 });

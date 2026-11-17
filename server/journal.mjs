@@ -1,8 +1,9 @@
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isTradingDay, marketCloseMinuteFor, marketParts } from '../src/lib/marketSession.ts';
 
 const FIRST_MINUTE = 9 * 60 + 15;
+const MINUTE_MS = 60_000;
 const completedSessions = new Set();
 const sentSummaries = new Set();
 
@@ -117,6 +118,109 @@ export function resolveCard(card, minutes) {
   return outcome('open', { mfe, mae, minutes: snapshots.length, computedAt: snapshots.at(-1).t });
 }
 
+/** Evidence through close, separate from the journal's first-exit result/R. */
+export function trackCardFollowThrough(card, minutes, { source = 'raw' } = {}) {
+  if (!validCard(card) || !(card.sl > 0 && card.sl < card.entry && card.tgt1 > card.entry && card.tgt2 >= card.tgt1)) return null;
+  const closeAt = sessionCloseAt(card.date);
+  const openAt = Date.parse(`${card.date}T09:15:00+05:30`);
+  if (closeAt == null || card.at < openAt || card.at >= closeAt + MINUTE_MS
+    || !belongsToDate({ date: card.date, t: card.at }, card.date)) return null;
+
+  const firstMinute = Math.floor(card.at / MINUTE_MS);
+  const expectedMinutes = Math.floor(closeAt / MINUTE_MS) - firstMinute + 1;
+  const records = [];
+  for (const snapshot of Array.isArray(minutes) ? minutes : []) {
+    // The session gate includes its closing minute (e.g. the 15:40:03 capture).
+    if (!belongsToDate(snapshot, card.date) || snapshot.t < openAt || snapshot.t >= closeAt + MINUTE_MS) continue;
+    const series = (Array.isArray(snapshot.series) ? snapshot.series : []).find(item => item?.s === card.symbol && typeof card.expiry === 'string' && item?.e === card.expiry);
+    const row = (Array.isArray(series?.r) ? series.r : []).find(item => Array.isArray(item) && item[0] === card.strike && item[1] === (card.side === 'CE' ? 0 : 1));
+    if (!row || !Number.isFinite(row[2]) || row[2] <= 0) continue;
+    const at = Number.isFinite(series.t) ? series.t : snapshot.t;
+    if (at < openAt || at > snapshot.t || at >= closeAt + MINUTE_MS) continue;
+    records.push({ at, row });
+  }
+  records.sort((a, b) => a.at - b.at);
+
+  let previousHigh = null, previousLow = null;
+  let firstAt = null, lastAt = null;
+  const range = { open: null, high: null, low: null, close: null };
+  const touches = { sl: null, tgt1: null, tgt2: null };
+  const observedMinutes = new Set();
+  for (const { at, row } of records) {
+    const premium = row[2];
+    const high = Number.isFinite(row[14]) && row[14] >= premium ? row[14] : null;
+    const low = Number.isFinite(row[15]) && row[15] > 0 && row[15] <= premium ? row[15] : null;
+    if (at >= card.at) {
+      observedMinutes.add(Math.floor(at / MINUTE_MS));
+      if (firstAt == null) { firstAt = at; range.open = premium; }
+      lastAt = at;
+      range.close = premium;
+      range.high = Math.max(range.high ?? premium, premium);
+      range.low = Math.min(range.low ?? premium, premium);
+
+      // A cumulative extreme proves a post-call move only when it increases
+      // beyond an extreme actually observed at/after the call, not before it.
+      const newHigh = high != null && previousHigh != null && previousHigh.at >= card.at && previousHigh.at < at && high > previousHigh.value;
+      const newLow = low != null && previousLow != null && previousLow.at >= card.at && previousLow.at < at && low < previousLow.value;
+      if (newHigh) range.high = Math.max(range.high, high);
+      if (newLow) range.low = Math.min(range.low, low);
+      for (const [key, level] of [['sl', card.sl], ['tgt1', card.tgt1], ['tgt2', card.tgt2]]) {
+        if (touches[key]) continue;
+        const quoteHit = key === 'sl' ? premium <= level : premium >= level;
+        const rangeHit = key === 'sl' ? newLow && low <= level : newHigh && high >= level;
+        if (quoteHit || rangeHit) {
+          touches[key] = {
+            at,
+            after: quoteHit ? at : (key === 'sl' ? previousLow.at : previousHigh.at),
+            source: quoteHit ? 'ltp' : 'day-range',
+          };
+        }
+      }
+    }
+    if (high != null) previousHigh = { value: high, at };
+    if (low != null) previousLow = { value: low, at };
+  }
+
+  const target = touches.tgt1 ?? touches.tgt2;
+  const stop = touches.sl;
+  let sequence = 'none-observed';
+  if (stop && target) {
+    const before = (first, next) => next.source === 'day-range' ? first.at <= next.after : first.at < next.after;
+    sequence = before(stop, target) ? 'sl-first' : before(target, stop) ? 'target-first' : 'ambiguous';
+  } else if (stop) sequence = 'sl-first';
+  else if (target) sequence = 'target-first';
+  const sampleCount = observedMinutes.size;
+  const missingMinutes = Math.max(0, expectedMinutes - sampleCount);
+  return {
+    version: 1,
+    source,
+    from: card.at,
+    sessionCloseAt: closeAt,
+    firstAt,
+    lastAt,
+    sampleCount,
+    expectedMinutes,
+    missingMinutes,
+    coverage: sampleCount === 0 ? 'missing' : missingMinutes ? 'partial' : 'complete',
+    range: Object.fromEntries(Object.entries(range).map(([key, value]) => [key, value == null ? null : round2(value)])),
+    touches,
+    sequence,
+  };
+}
+
+function journalCardKey(card) {
+  return JSON.stringify([card.symbol, card.date, card.at, card.expiry, card.strike, card.side, card.entry, card.sl, card.tgt1, card.tgt2]);
+}
+
+/** Both EOD and offline writers use the same exclusive lock; never wait/retry. */
+export function withJournalStoreLock(path, update) {
+  const lockPath = `${path}.journal.lock`;
+  mkdirSync(dirname(path), { recursive: true });
+  const lock = openSync(lockPath, 'wx');
+  try { return update(); }
+  finally { closeSync(lock); unlinkSync(lockPath); }
+}
+
 function readCards(path) {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8'));
@@ -128,11 +232,11 @@ function readCards(path) {
   }
 }
 
-function writeCards(path, cards) {
+function writeCards(path, cards, store = {}) {
   mkdirSync(dirname(path), { recursive: true });
   const temp = `${path}.tmp`;
   try {
-    writeFileSync(temp, JSON.stringify({ cards }, null, 2));
+    writeFileSync(temp, JSON.stringify({ ...store, cards }, null, 2));
     renameSync(temp, path);
   } catch (error) {
     try { unlinkSync(temp); } catch { /* nothing was staged */ }
@@ -187,7 +291,7 @@ export async function runJournal({ obsPath, readMinute, now = Date.now(), log = 
   }
 
   const pendingDates = [...new Set(cards
-    .filter(card => validCard(card) && !card.outcome && card.date <= sessionDate)
+    .filter(card => validCard(card) && (card.outcome?.followThrough?.version !== 1 || card.outcome.followThrough.coverage === 'missing') && card.date <= sessionDate)
     .map(card => card.date))].sort();
   const snapshotsByDate = new Map();
   const mismatchedSnapshotDates = new Set();
@@ -213,23 +317,43 @@ export async function runJournal({ obsPath, readMinute, now = Date.now(), log = 
 
   const resolvedByDate = new Map();
   let written = 0;
+  const updates = new Map();
   const updated = cards.map(card => {
-    if (!validCard(card) || card.outcome || card.date > sessionDate) return card;
+    if (!validCard(card) || (card.outcome?.followThrough?.version === 1 && card.outcome.followThrough.coverage !== 'missing') || card.date > sessionDate) return card;
     const snapshots = snapshotsByDate.get(card.date);
     if (!snapshots) return card;
+    // Enrich archived history offline, never replace a saved result using an
+    // empty raw reader or load a whole archive in the API process.
+    if (card.outcome && !snapshots.length) return card;
     if (!snapshots.length && mismatchedSnapshotDates.has(card.date)) return card;
-    const result = resolveCard(card, snapshots) ?? emptyOpen(card, snapshots, now);
+    const result = card.outcome ?? resolveCard(card, snapshots) ?? emptyOpen(card, snapshots, now);
+    const followThrough = trackCardFollowThrough(card, snapshots);
+    const enriched = followThrough ? { ...result, followThrough } : result;
     written++;
-    if (result.status !== 'open') {
+    if (!card.outcome && result.status !== 'open') {
       const dateCards = resolvedByDate.get(card.date) ?? [];
       dateCards.push({ ...card, outcome: result });
       resolvedByDate.set(card.date, dateCards);
     }
-    return { ...card, outcome: result };
+    updates.set(journalCardKey(card), enriched);
+    return { ...card, outcome: enriched };
   });
 
   if (written) {
-    try { writeCards(obsPath, updated); }
+    try {
+      // The minute reads yield; retain cards/outcomes written by another pass
+      // during that work rather than replacing the observations store wholesale.
+      withJournalStoreLock(obsPath, () => {
+        const store = JSON.parse(readFileSync(obsPath, 'utf8'));
+        if (!Array.isArray(store?.cards)) throw new Error('Observations store has no cards array.');
+        const latest = store.cards.map(card => {
+          const enriched = updates.get(journalCardKey(card));
+          if (!enriched || (card.outcome?.followThrough?.version === 1 && card.outcome.followThrough.coverage !== 'missing')) return card;
+          return { ...card, outcome: card.outcome ? { ...card.outcome, followThrough: enriched.followThrough } : enriched };
+        });
+        writeCards(obsPath, latest, store);
+      });
+    }
     catch (error) {
       log(`journal observations save failed: ${String(error?.message || error)}`);
       return { skipped: 'save failed', date: sessionDate };
