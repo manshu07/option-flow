@@ -141,7 +141,11 @@ async function readJournalMinute(date, hhmm) {
     try { return JSON.parse(fs.readFileSync(path.join(SCAN_DIR, date, `${hhmm}.json`), 'utf8')); }
     catch (error) { if (error?.code !== 'ENOENT') throw error; }
   }
-  return readArchiveMinuteFallback(SCAN_DIR, archive, date, hhmm);
+  // A minute the archive does not hold is skipped, not an error: the journal
+  // measures what was captured — a missing snapshot never settles a card and
+  // must not abort the whole pass for every other minute.
+  try { return await readArchiveMinuteFallback(SCAN_DIR, archive, date, hhmm); }
+  catch { return null; }
 }
 
 async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
