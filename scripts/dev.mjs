@@ -7,6 +7,12 @@ const run = (cmd, args) => spawn(cmd, args, { stdio: 'inherit', shell: process.p
 // would silently beat the fresh .env value. The .env file is the source of
 // truth for provider keys, so drop the inherited one first.
 delete process.env.TYPESAFE_API_KEY;
+// The market-open burst (boot warm pass + REST backfills + browser refresh
+// hammering) once blew past Node's ~2GB default heap and killed the API
+// mid-session; give it room unless the operator chose a size.
+if (!String(process.env.NODE_OPTIONS ?? '').includes('max-old-space-size')) {
+  process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=4096`.trim();
+}
 // `npm run dev:recorded` replays a recorded real session instead of the demo market.
 const api = run(process.execPath, ['--env-file-if-exists=.env', 'server/index.mjs', ...process.argv.slice(2)]);
 // VITE_PORT lets a second dev tree run beside the live one (default: Vite's own 5195).
