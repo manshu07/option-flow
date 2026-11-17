@@ -2,7 +2,7 @@ const API = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
 
 export type StrikeSide = 'CE' | 'PE';
 export type StrikeSpotPoint = readonly [at: number, spot: number];
-export type StrikeSeriesPoint = readonly [at: number, ltp: number, oi: number | null, volume: number | null];
+export type StrikeSeriesPoint = readonly [at: number, ltp: number, oi: number | null, volume: number | null, iv?: number | null];
 
 export interface StrikeFlowContract {
   symbol: string;
@@ -14,6 +14,8 @@ export interface StrikeFlowContract {
   ltp: number | null;
   oi: number | null;
   volume: number | null;
+  /** Captured vendor IV in percent at the latest point (schema row index 9). */
+  iv?: number | null;
   spotDistancePct: number | null;
   series: StrikeSeriesPoint[];
 }
@@ -61,8 +63,8 @@ function isSpotPoint(value: unknown): value is StrikeSpotPoint {
 }
 
 function isSeriesPoint(value: unknown): value is StrikeSeriesPoint {
-  return Array.isArray(value) && value.length === 4 && isFiniteNumber(value[0]) && isFiniteNumber(value[1]) && value[1] >= 0 &&
-    isNullableNonNegative(value[2]) && isNullableNonNegative(value[3]);
+  return Array.isArray(value) && (value.length === 4 || value.length === 5) && isFiniteNumber(value[0]) && isFiniteNumber(value[1]) && value[1] >= 0 &&
+    isNullableNonNegative(value[2]) && isNullableNonNegative(value[3]) && (value.length === 4 || isNullableFinite(value[4]));
 }
 
 const CACHE_TTL_MS = 20_000;
@@ -119,6 +121,7 @@ function parseStrikeContract(value: unknown, symbol: string, fallbackExpiry: str
     ltp: nullableClose(value.ltp) ?? last[1],
     oi: nullableClose(value.oi) ?? last[2],
     volume: nullableClose(value.volume) ?? last[3],
+    iv: isNullableFinite(value.iv) ? value.iv : last[4] ?? null,
     spotDistancePct: isNullableFinite(value.spotDistancePct) ? value.spotDistancePct : null,
     series,
   };

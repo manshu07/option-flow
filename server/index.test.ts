@@ -49,14 +49,14 @@ describe('stored session snapshot (post-close fast path)', () => {
 });
 
 describe('strike flow extraction', () => {
-  // Schema-1 row contract: strike, side(0=CE,1=PE), ltp, prevClose, oi, prevOi, volume, ...
+  // Schema-1 row contract: strike, side, ltp, prevClose, oi, prevOi, volume, prevVolume, avgPrice, iv, ...
   const minute = (t: number, spot: number, rows: number[][]) => ({
     t, date: '2026-11-13', series: [{ s: 'NIFTY', k: 'index', e: '2026-11-26', t, sp: spot, pc: 24_900, r: rows }],
   });
   const files = [
-    minute(1_000, 25_000, [[24_500, 0, 100, 90, 1_000, 900, 50], [25_500, 1, 80, 75, 800, 700, 40], [30_000, 0, 5, 4, 10, 8, 1]]),
-    minute(2_000, 25_100, [[24_500, 0, 110, 90, 1_100, 900, 60], [25_500, 1, 78, 75, 850, 700, 41], [30_000, 0, 4, 4, 10, 8, 1]]),
-    minute(3_000, 25_200, [[24_500, 0, 125, 90, 1_300, 900, 70], [25_500, 1, 76, 75, 900, 700, 42]]),
+    minute(1_000, 25_000, [[24_500, 0, 100, 90, 1_000, 900, 50, 40, 100, 17.5], [25_500, 1, 80, 75, 800, 700, 40, 30, 80, 18.5], [30_000, 0, 5, 4, 10, 8, 1, 1, 5, 19.5]]),
+    minute(2_000, 25_100, [[24_500, 0, 110, 90, 1_100, 900, 60, 50, 110, 18.5], [25_500, 1, 78, 75, 850, 700, 41, 31, 78, 19.5], [30_000, 0, 4, 4, 10, 8, 1, 1, 4, 20.5]]),
+    minute(3_000, 25_200, [[24_500, 0, 125, 90, 1_300, 900, 70, 60, 125, 19.5], [25_500, 1, 76, 75, 900, 700, 42, 32, 76, 20.5]]),
   ];
 
   it('builds ascending per-strike series with the schema row order (oi before prevOi)', () => {
@@ -67,11 +67,12 @@ describe('strike flow extraction', () => {
     expect(flow.spot.NIFTY).toEqual([[1_000, 25_000], [2_000, 25_100], [3_000, 25_200]]);
     expect(flow.spotPrevClose.NIFTY).toBe(24_900);
     const ce = flow.strikes['NIFTY|24500|CE'];
-    expect(ce.series).toEqual([[1_000, 100, 1_000, 50], [2_000, 110, 1_100, 60], [3_000, 125, 1_300, 70]]);
+    expect(ce.series).toEqual([[1_000, 100, 1_000, 50, 17.5], [2_000, 110, 1_100, 60, 18.5], [3_000, 125, 1_300, 70, 19.5]]);
     expect(ce.prevClose).toBe(90);
     expect(ce.prevOi).toBe(900);
     expect(ce.ltp).toBe(125);
     expect(ce.oi).toBe(1_300);
+    expect(ce.iv).toBe(19.5);
     const pe = flow.strikes['NIFTY|25500|PE'];
     expect(pe.side).toBe('PE');
     expect(pe.spotDistancePct).toBeCloseTo(((25_500 - 25_200) / 25_200) * 100, 5);
@@ -87,8 +88,9 @@ describe('strike flow extraction', () => {
   it('truncates every series at the replay cursor — no lookahead', () => {
     const flow = truncateStrikeFlow(strikeFlowFromFiles(files, ['NIFTY']), 2_000);
     expect(flow.spot.NIFTY).toEqual([[1_000, 25_000], [2_000, 25_100]]);
-    expect(flow.strikes['NIFTY|24500|CE'].series).toEqual([[1_000, 100, 1_000, 50], [2_000, 110, 1_100, 60]]);
+    expect(flow.strikes['NIFTY|24500|CE'].series).toEqual([[1_000, 100, 1_000, 50, 17.5], [2_000, 110, 1_100, 60, 18.5]]);
     expect(flow.strikes['NIFTY|24500|CE'].ltp).toBe(110);
+    expect(flow.strikes['NIFTY|24500|CE'].iv).toBe(18.5);
   });
 
   it('merges two underlyings into one payload with per-symbol spot', () => {

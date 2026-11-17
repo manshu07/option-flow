@@ -9,8 +9,11 @@ import { applyTheme } from '@/lib/applyTheme';
 import { getLatestTradingSessionDate } from '@/lib/marketSession';
 import type { Underlying } from '@/lib/underlyings';
 import { clockOf, type FlowWindow } from '../market-flow/marketFlowModel';
+import { gammaProfile, type GammaSeries } from '../market-flow/gammaModel';
+import { GAMMA_RISK_FREE, GAMMA_SYMBOLS } from '../market-flow/gammaConfig';
 import { fetchStrikeFlows, type StrikeFlowPayload } from './feed';
 import { optionBoardFlow } from './optionBoardFlow';
+import { GammaOverlay, GammaRegimeChips, type GammaProfileView } from './GammaOverlay';
 import '@/styles/oi-design-tokens.css';
 import '../market-flow/market-flow.css';
 import '../underlying/pages-finish.css';
@@ -128,6 +131,36 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
       unread: board.unread.filter(stock => keep(stock)),
     };
   }, [board, side]);
+  const gammaProfiles = useMemo(() => {
+    const allowed = new Set(GAMMA_SYMBOLS);
+    const seen = new Set<string>();
+    const output: GammaProfileView[] = [];
+    for (const payload of payloads ?? []) {
+      const symbol = payload.symbol;
+      if (!allowed.has(symbol) || seen.has(symbol)) continue;
+      const spotPoint = payload.spot[symbol]?.at(-1);
+      const contracts = Object.values(payload.strikes).filter(contract => contract.symbol === symbol);
+      if (!spotPoint || !contracts.length) continue;
+      seen.add(symbol);
+      const series: GammaSeries = {
+        symbol,
+        at: spotPoint[0],
+        expiry: payload.expiry?.[symbol] ?? undefined,
+        spot: spotPoint[1],
+        lot: universe.find(item => item.symbol === symbol)?.lot ?? 1,
+        quotes: contracts.map(contract => ({
+          strike: contract.strike,
+          side: contract.side,
+          ltp: contract.ltp ?? contract.series.at(-1)?.[1] ?? 0,
+          oi: contract.oi ?? contract.series.at(-1)?.[2] ?? 0,
+          iv: contract.iv ?? contract.series.at(-1)?.[4] ?? null,
+        })),
+      };
+      const profile = gammaProfile(series, { lot: series.lot, r: GAMMA_RISK_FREE });
+      if (profile.strikes.length) output.push({ symbol, spot: spotPoint[1], profile });
+    }
+    return output;
+  }, [payloads, universe]);
   const hasChain = Boolean(payloads && payloads.length > 0);
   const noChain = !loading && !failed && !hasChain;
 
@@ -146,6 +179,7 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
       )}
       <span className="strike-flow__spacer" />
       <CapsuleSegmented options={MODES} value={side} onChange={setSide} ariaLabel="Option Board mode" groupId="option-mode" size="page" className="strike-flow__sides" />
+      {subTab === 'option-board' && <GammaRegimeChips profiles={gammaProfiles} />}
       <button className="ui-flow-replay" type="button" aria-disabled="true" title="Replay is coming to Option Board soon">Replay</button>
       <ThemeToggle onChange={theme => applyTheme(theme)} size="md" className="ui-flow-theme" />
     </>
@@ -155,6 +189,7 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
     <div className="ui-flow oi-design ui-strike-flow" data-window={window} data-layout={phone ? 'phone' : fits ? 'desktop' : 'tablet'} data-fit={fits ? 'true' : undefined} ref={pageRef}>
       <h1 className="is-visually-hidden">Option Board · Momentum Flow</h1>
       <PageBar current="Option Board" crumbs={false} className="oi-design ui-flow-pagebar">{bar}</PageBar>
+      {subTab === 'option-board' && !loading && !failed && <GammaOverlay profiles={gammaProfiles} />}
 
       {subTab === 'contracts-screener' ? (
         <section className="strike-flow__empty" role="status">

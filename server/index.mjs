@@ -418,7 +418,7 @@ export function strikeFlowFromFiles(files, symbols, { windowPct = 0.05, cap = 64
         const sideCode = side === 0 ? 'CE' : 'PE';
         const key = `${symbol}|${strike}|${sideCode}`;
         const held = strikes.get(key) ?? { symbol, strike, side: sideCode, series: [], prevClose: null, prevOi: null };
-        held.series.push([file.t, ltp, Number.isFinite(oi) ? oi : null, Number.isFinite(volume) ? volume : null]);
+        held.series.push([file.t, ltp, Number.isFinite(oi) ? oi : null, Number.isFinite(volume) ? volume : null, Number.isFinite(row[9]) ? row[9] : null]);
         if (held.prevClose == null && Number.isFinite(prevClose) && prevClose > 0) held.prevClose = prevClose;
         if (held.prevOi == null && Number.isFinite(prevOi) && prevOi >= 0) held.prevOi = prevOi;
         strikes.set(key, held);
@@ -440,7 +440,7 @@ export function strikeFlowFromFiles(files, symbols, { windowPct = 0.05, cap = 64
         symbol: item.symbol, strike: item.strike, side: item.side,
         expiry: expiries[item.symbol] ?? null,
         prevClose: item.prevClose, prevOi: item.prevOi,
-        ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null,
+        ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null, iv: last?.[4] ?? null,
         spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null,
         series: item.series,
       };
@@ -462,7 +462,7 @@ export function truncateStrikeFlow(payload, cursor) {
       const last = series.at(-1);
       const lastSpot = spot[item.symbol]?.at(-1)?.[1] ?? null;
       return [key, { ...item, series, ltp: last?.[1] ?? null, oi: last?.[2] ?? null, volume: last?.[3] ?? null,
-        spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null }];
+        iv: last?.[4] ?? null, spotDistancePct: lastSpot ? ((item.strike - lastSpot) / lastSpot) * 100 : null }];
     })),
   };
 }

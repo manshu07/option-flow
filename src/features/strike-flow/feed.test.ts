@@ -55,10 +55,10 @@ describe('fetchStrikeFlow', () => {
   });
 
   it('keeps valid contracts when one strike row is malformed', async () => {
-    const series: StrikeSeriesPoint[] = [[1_794_543_900_000, 100, 1_000, 10], [1_794_543_960_000, 105, 1_100, 20]];
+    const series: StrikeSeriesPoint[] = [[1_794_543_900_000, 100, 1_000, 10, 14.2], [1_794_543_960_000, 105, 1_100, 20, 14.8]];
     const valid: StrikeFlowContract = {
       symbol: 'NIFTY', strike: 25_150, side: 'CE', expiry: '2026-11-19', prevClose: 100, prevOi: 900,
-      ltp: 105, oi: 1_100, volume: 20, spotDistancePct: 0.4, series,
+      ltp: 105, oi: 1_100, volume: 20, iv: 14.8, spotDistancePct: 0.4, series,
     };
     const malformed = { ...valid, strike: Number.NaN, series: [[1_794_543_900_000, 'bad', null, null]] };
     const fetchMock = vi.fn().mockResolvedValue(response(200, {
@@ -69,8 +69,24 @@ describe('fetchStrikeFlow', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await fetchStrikeFlow('NIFTY', { date: '2026-11-13' });
+    const result = await fetchStrikeFlow('NIFTY', { date: '2026-11-13', force: true });
 
     expect(result?.strikes).toEqual({ 'NIFTY|25150|CE': valid });
+  });
+
+  it('remains compatible with older four-field premium series lacking captured IV', async () => {
+    const oldContract = {
+      symbol: 'NIFTY', strike: 25_150, side: 'CE', expiry: '2026-11-19', prevClose: 100, prevOi: 900,
+      ltp: 105, oi: 1_100, volume: 20, spotDistancePct: 0.4,
+      series: [[1_794_543_960_000, 105, 1_100, 20]],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, {
+      ...payload,
+      strikes: { 'NIFTY|25150|CE': oldContract },
+    })));
+
+    const result = await fetchStrikeFlow('NIFTY', { date: '2026-11-13', force: true });
+
+    expect(result?.strikes['NIFTY|25150|CE']?.iv).toBeNull();
   });
 });

@@ -37,6 +37,26 @@
   font: 650 12px/1.15 var(--font-sans); letter-spacing: .04em; white-space: nowrap;
 }
 
+.gamma-overlay__regimes { display: inline-flex; flex: none; align-items: center; gap: 5px; }
+.gamma-overlay__regime { padding: 6px 9px; border: 1px solid var(--flow-hair); border-radius: 999px; color: var(--text-muted); background: var(--surface-raised); font: 650 9.5px/1 var(--font-sans); white-space: nowrap; }
+.gamma-overlay__regime.is-long { border-color: color-mix(in srgb, var(--flow-up-ink) 38%, var(--flow-hair)); color: var(--flow-up-ink); }
+.gamma-overlay__regime.is-short { border-color: color-mix(in srgb, var(--flow-down-ink) 38%, var(--flow-hair)); color: var(--flow-down-ink); }
+.gamma-overlay__regime.is-unknown { color: var(--text-muted); }
+.gamma-overlay { flex: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 8px; margin: 0 8px; padding: 8px; border: 1px solid var(--flow-hair); border-radius: 10px; background: var(--surface-raised); }
+.gamma-overlay__profile { min-width: 0; margin: 0; padding: 3px 6px; }
+.gamma-overlay__profile figcaption { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.gamma-overlay__profile figcaption b { color: var(--text); font-size: 10.5px; letter-spacing: .05em; }
+.gamma-overlay__chart { display: block; width: 100%; height: auto; overflow: visible; }
+.gamma-overlay__zero { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.gamma-overlay__flip { stroke: var(--text); stroke-width: 1.25; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.gamma-overlay__flip-label { fill: var(--text); font: 700 8px var(--font-sans); }
+.gamma-overlay__bar { opacity: .8; }
+.gamma-overlay__bar.is-positive { fill: var(--flow-up); }
+.gamma-overlay__bar.is-negative { fill: var(--flow-down); }
+.gamma-overlay__strike-label { fill: var(--text); stroke: var(--surface-raised); stroke-width: 2px; paint-order: stroke; font: 650 8px var(--font-sans); font-variant-numeric: tabular-nums; }
+.gamma-overlay__axis-label { fill: var(--text-muted); font: 7.5px var(--font-sans); font-variant-numeric: tabular-nums; }
+.gamma-overlay__disclaimer { grid-column: 1 / -1; margin: 0; padding: 0 6px 2px; color: var(--text-muted); font-size: 9px; line-height: 1.3; }
+
 .strike-flow__status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; min-height: 30px; padding: 0 14px; color: var(--text-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .strike-flow__status strong { color: var(--text); font-weight: 650; }
 .strike-flow__status .is-up { color: var(--flow-up-ink); }

@@ -38,7 +38,7 @@ function chainSnapshots(flow: StrikeFlowPayload): Map<string, ChainSnapshot> {
       rows.push({
         strike: contract.strike, side: contract.side, ltp,
         prevClose: contract.prevClose, oi: oi ?? 0, prevOi: contract.prevOi,
-        volume: volume ?? 0, prevVolumeLots: null, avgPrice: 0, iv: null,
+        volume: volume ?? 0, prevVolumeLots: null, avgPrice: 0, iv: contract.iv ?? last[4] ?? null,
         bid: 0, ask: 0, bidQty: 0, askQty: 0, dayHigh: null, dayLow: null,
         lastTradeAt: null, delta: null,
       });

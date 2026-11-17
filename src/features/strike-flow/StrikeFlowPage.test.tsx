@@ -42,6 +42,7 @@ function contract(strike: number, side: StrikeSide, prices: number[], oi: number
     ltp: last?.[1] ?? null,
     oi: last?.[2] ?? null,
     volume: last?.[3] ?? null,
+    iv: 18,
     spotDistancePct: 0,
     series,
   };
@@ -91,6 +92,8 @@ describe('StrikeFlowPage (Option Board)', () => {
     const diagram = await screen.findByTestId('flow-board');
     expect(diagram).toHaveTextContent('NIFTY25150CE');
     expect(diagram).toHaveTextContent('NIFTY25000PE');
+    expect(screen.getByRole('img', { name: 'NIFTY net gamma exposure by strike' })).toBeInTheDocument();
+    expect(screen.getByText(/NIFTY Gamma/)).toBeInTheDocument();
   });
 
   it('fetches a single chain for a single-index scope', async () => {
