@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/lib/marketSession', () => ({
   getLatestTradingSessionDate: () => '2026-11-13',
   marketSessionBounds: () => ({ open: Date.parse('2026-11-13T03:45:00Z'), close: Date.parse('2026-11-13T10:10:00Z') }),
-  isExpirySettled: () => false,
+  isExpirySettled: (_expiry: string, at: number) => {
+    if (!Number.isFinite(at)) throw new RangeError('Invalid time value');
+    return false;
+  },
 }));
 import { buildMarketFlow } from '../market-flow/marketFlowModel';
 import { optionBoardFlow } from './optionBoardFlow';
@@ -40,6 +43,7 @@ describe("optionBoardFlow — the Option Board through Order Flow's pipeline", (
     expect(flow!.bearish.length).toBe(1);
     expect(flow!.featured.bullish.length).toBe(1);
     expect(flow!.window).toBe('day');
+    expect(flow!.asOf).toBe(Date.parse('2026-11-13T10:00:00Z'));
 
     // Direct buildMarketFlow probe with the same synthetic inputs
     const rows = [
@@ -72,5 +76,20 @@ describe("optionBoardFlow — the Option Board through Order Flow's pipeline", (
       console.log('direct THREW:', (error as Error).message);
       throw error;
     }
+  });
+
+  it('passes a valid capture timestamp into expiry-day market selection', () => {
+    const expiryDate = '2026-11-13';
+    const expiryPayload: StrikeFlowPayload = {
+      ...fixture,
+      expiry: { NIFTY: expiryDate },
+      strikes: Object.fromEntries(Object.entries(fixture.strikes).map(([key, value]) => [key, { ...value, expiry: expiryDate }])),
+    };
+    const atClose = Date.parse('2026-11-13T10:10:00Z');
+
+    const flow = optionBoardFlow({ payloads: [expiryPayload], window: 'day', now: atClose });
+
+    expect(flow).not.toBeNull();
+    expect(flow?.asOf).toBe(atClose);
   });
 });

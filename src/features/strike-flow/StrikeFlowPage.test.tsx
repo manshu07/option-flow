@@ -168,4 +168,13 @@ describe('StrikeFlowPage (Option Board)', () => {
     expect(await screen.findByRole('heading', { name: 'Option chain could not be loaded' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
+
+  it('shows an honest client-side state when a captured chain lacks flow history', async () => {
+    feed.fetch.mockResolvedValue(payload([contract(25_150, 'CE', [100], [1_000])]));
+    page();
+
+    expect(await screen.findByTestId('option-board-flow-unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'NIFTY net gamma exposure by strike' })).toBeInTheDocument();
+    expect(screen.getByText(/Educational captured market data only/)).toBeInTheDocument();
+  });
 });

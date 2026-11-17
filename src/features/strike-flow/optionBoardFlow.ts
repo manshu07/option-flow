@@ -116,7 +116,7 @@ export function optionBoardFlow({ payloads, window, now }: OptionBoardInput): Ma
   }
   if (!series.length) return null;
 
-  const market = { schema: 1, t: now, date, series, minutes: [] };
+  const market = { schema: 1, at: now, date, series, minutes: [] };
   return buildMarketFlow(
     market as never,
     futures as never,

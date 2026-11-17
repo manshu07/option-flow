@@ -136,28 +136,39 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
     const seen = new Set<string>();
     const output: GammaProfileView[] = [];
     for (const payload of payloads ?? []) {
-      const symbol = payload.symbol;
+      const symbol = typeof payload?.symbol === 'string' ? payload.symbol : '';
       if (!allowed.has(symbol) || seen.has(symbol)) continue;
-      const spotPoint = payload.spot[symbol]?.at(-1);
-      const contracts = Object.values(payload.strikes).filter(contract => contract.symbol === symbol);
-      if (!spotPoint || !contracts.length) continue;
+      const spotSeries = payload?.spot?.[symbol];
+      const spotPoint = Array.isArray(spotSeries) ? spotSeries.at(-1) : null;
+      const strikes = payload?.strikes && typeof payload.strikes === 'object' ? payload.strikes : {};
+      const contracts = Object.values(strikes).filter(contract => contract?.symbol === symbol && Number.isFinite(contract.strike));
+      if (!spotPoint || !Number.isFinite(spotPoint[0]) || !Number.isFinite(spotPoint[1]) || !contracts.length) continue;
       seen.add(symbol);
+      const underlying = universe.find(item => item.symbol === symbol);
       const series: GammaSeries = {
         symbol,
         at: spotPoint[0],
         expiry: payload.expiry?.[symbol] ?? undefined,
         spot: spotPoint[1],
-        lot: universe.find(item => item.symbol === symbol)?.lot ?? 1,
-        quotes: contracts.map(contract => ({
-          strike: contract.strike,
-          side: contract.side,
-          ltp: contract.ltp ?? contract.series.at(-1)?.[1] ?? 0,
-          oi: contract.oi ?? contract.series.at(-1)?.[2] ?? 0,
-          iv: contract.iv ?? contract.series.at(-1)?.[4] ?? null,
-        })),
+        lot: underlying?.lot ?? 1,
+        quotes: contracts.map(contract => {
+          const history = Array.isArray(contract.series) ? contract.series : [];
+          const last = history.at(-1);
+          return {
+            strike: contract.strike,
+            side: contract.side,
+            ltp: contract.ltp ?? last?.[1] ?? 0,
+            oi: contract.oi ?? last?.[2] ?? 0,
+            iv: contract.iv ?? last?.[4] ?? null,
+          };
+        }),
       };
-      const profile = gammaProfile(series, { lot: series.lot, r: GAMMA_RISK_FREE });
-      if (profile.strikes.length) output.push({ symbol, spot: spotPoint[1], profile });
+      try {
+        const profile = gammaProfile(series, { lot: series.lot, r: GAMMA_RISK_FREE });
+        if (profile.strikes.length) output.push({ symbol, spot: spotPoint[1], profile });
+      } catch {
+        // A malformed/partial captured chain hides the overlay rather than breaking the board.
+      }
     }
     return output;
   }, [payloads, universe]);
@@ -205,10 +216,14 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
         <section className="strike-flow__empty" role="status">
           <div><h2>No captured chain for {symbols.join(' + ')} on {date}</h2><p>No chain is available yet, or the archive could not be read. Retry to check the local archive again.</p>{unavailableSymbols.length > 0 && <p>Awaiting capture: {unavailableSymbols.join(', ')}</p>}<button className="ui-flow-replay" type="button" onClick={() => setRetry(value => value + 1)}>Retry archive</button></div>
         </section>
-      ) : viewed ? (
+      ) : viewed?.stocks.length ? (
         <FlowBoard key={hasChain ? 'loaded' : 'empty'} flow={viewed} settings={{ named: null, lines: 'all' }} layout={layout}
           status={<StatusLine board={viewed} />} />
-      ) : null}
+      ) : (
+        <section className="strike-flow__empty" role="status" data-testid="option-board-flow-unavailable">
+          <div><h2>No flow profile in this capture</h2><p>The chain is available, but the board has no qualifying flow signals yet. It will fill as new captured minute data arrives.</p><p>Educational captured market data only; not investment advice.</p></div>
+        </section>
+      )}
     </div>
   );
 }
