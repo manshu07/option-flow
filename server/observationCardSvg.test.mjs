@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { observationCaption, renderObservationCardSvg } from './observationCardSvg.mjs';
+import { observationCaption, observationSubscriberCaption, renderObservationCardSvg } from './observationCardSvg.mjs';
 
 const card = {
   id: 'NIFTY|2026-11-16',
@@ -100,6 +100,20 @@ describe('Observation card SVG', () => {
     expect(observationCaption({ ...card, live: {} })).not.toContain('<b>Live</b>');
   });
 
+  it('adds one owner-only range line for valid ATR, including zero, and omits invalid or legacy values', () => {
+    const range = { value: 0, barMinutes: 15, state: 'compressed' };
+    const caption = observationCaption({ ...card, atr: range });
+    const svg = renderObservationCardSvg({ ...card, atr: range });
+    expect(caption).toContain('Range: Futures ATR(15m) 0.00 pts · compressed');
+    expect(svg).toContain('Range: Futures ATR(15m) 0.00 pts · compressed');
+    expect(observationCaption(card)).not.toContain('Futures ATR');
+    expect(renderObservationCardSvg(card)).not.toContain('Futures ATR');
+    expect(observationCaption({ ...card, atr: { value: 12, barMinutes: 5, state: 'normal' } })).not.toContain('Futures ATR');
+    expect(observationCaption({ ...card, atr: { value: '12', barMinutes: 15, state: 'normal' } })).not.toContain('Futures ATR');
+    expect(observationCaption({ ...card, atr: { value: 12, barMinutes: 15, state: 'unknown' } })).not.toContain('Futures ATR');
+    expect(renderObservationCardSvg({ ...card, atr: null })).toBe(renderObservationCardSvg(card));
+  });
+
   it('escapes dynamic fields in the HTML caption', () => {
     const caption = observationCaption({ ...card, symbol: '<script>&' });
     expect(caption).toContain('&lt;script&gt;&amp;');
@@ -109,7 +123,6 @@ describe('Observation card SVG', () => {
 
 describe('observationSubscriberCaption', () => {
   it('strips quality and attribution while keeping the call details', async () => {
-    const { observationSubscriberCaption } = await import('./observationCardSvg.mjs');
     const text = observationSubscriberCaption({ ...card, quality: 0.93, strikePickProbability: 0.8 });
     expect(text).toContain('NIFTY');
     expect(text).toContain('Entry ~₹');
@@ -117,5 +130,11 @@ describe('observationSubscriberCaption', () => {
     expect(text).toContain('TGT1');
     expect(text).toContain('not investment advice');
     expect(text).not.toMatch(/quality|jev|watch|advisor|model/i);
+  });
+
+  it('keeps the frozen subscriber output exact and independent of ATR', () => {
+    const expected = '📌 <b>NIFTY 25150CE</b> · 19-Nov (3 DTE)\nEntry ~₹1003.30 · SL ₹551.81 · TGT1 ₹1555.11 · TGT2 ₹1906.27\n⏳ 3 DTE — theta eats the premium daily; if TGT1 is not hit by 14:30, exit.\n🎓 captured-data observation · not investment advice · /stop to opt out';
+    expect(observationSubscriberCaption(card)).toBe(expected);
+    expect(observationSubscriberCaption({ ...card, atr: { value: 0, barMinutes: 15, state: 'compressed' } })).toBe(expected);
   });
 });

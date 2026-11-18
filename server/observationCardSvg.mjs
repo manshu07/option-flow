@@ -10,6 +10,9 @@ const escapeHtml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/
 const priceText = value => Number.isFinite(value) ? value.toFixed(2) : '—';
 const signedPct = value => Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '—';
 const oiText = value => Number.isFinite(value) ? `${(value / 1_000_000).toFixed(1)}M OI` : 'OI unavailable';
+const atrText = atr => atr && atr.barMinutes === 15 && Number.isFinite(atr.value) && atr.value >= 0
+  && ['compressed', 'normal', 'expanded'].includes(atr.state)
+  ? `Range: Futures ATR(15m) ${atr.value.toFixed(2)} pts · ${atr.state}` : null;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -100,6 +103,9 @@ export function observationCaption(card) {
     `• Support ${escapeHtml(support)} · Resistance ${escapeHtml(resistance)}`,
   ];
 
+  const range = atrText(card?.atr);
+  if (range) lines.splice(7, 0, escapeHtml(range));
+
   if (card?.gamma && typeof card.gamma === 'object') {
     const dealerFlow = dealerFlowText(card.gamma);
     const pin = typeof card.gamma.pin === 'string' && card.gamma.pin ? ` · pin ${escapeHtml(card.gamma.pin)}` : '';
@@ -165,11 +171,14 @@ export function renderObservationCardSvg(card) {
   const resistance = escapeXml(wallText(card?.resistance, 'CE'));
   const trail = escapeXml(card?.tsl ?? 'Trailing stop unavailable');
   const disclaimer = escapeXml(card?.disclaimer ?? 'Educational observation; not trade advice.');
+  const range = atrText(card?.atr);
+  const shift = range ? 23 : 0;
+  const height = range ? 545 : 520;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="520" viewBox="0 0 760 520" role="img" aria-label="Observation ${label}">
-<rect width="760" height="520" rx="22" fill="#f4f5f8"/>
-<rect x="20" y="18" width="720" height="484" rx="18" fill="#ffffff" stroke="#dfe2e8"/>
-<path d="M38 18h10v484H38a18 18 0 0 1-18-18V36A18 18 0 0 1 38 18Z" fill="${accent}"/>
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="${height}" viewBox="0 0 760 ${height}" role="img" aria-label="Observation ${label}">
+<rect width="760" height="${height}" rx="22" fill="#f4f5f8"/>
+<rect x="20" y="18" width="720" height="${height - 36}" rx="18" fill="#ffffff" stroke="#dfe2e8"/>
+<path d="M38 18h10v${height - 36}H38a18 18 0 0 1-18-18V36A18 18 0 0 1 38 18Z" fill="${accent}"/>
 <text x="72" y="57" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700" letter-spacing="2">ORDER FLOW · OBSERVATION</text>
 <text x="72" y="99" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="29" font-weight="750">${label}</text>
 <text x="72" y="124" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="13">${expiry}${time ? ` · ${time}` : ''}</text>
@@ -181,28 +190,29 @@ export function renderObservationCardSvg(card) {
 <text x="84" y="167" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1">UNDERLYING SPOT</text>
 <text x="84" y="188" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="750">${spot}</text>
 <text x="700" y="181" fill="${accent}" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="750">${spotChange}</text>
-<text x="68" y="226" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1">PREMIUM PLAN</text>
+${range ? `<text x="68" y="219" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="11">${escapeXml(range)}</text>` : ''}
+<text x="68" y="${226 + shift}" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1">PREMIUM PLAN</text>
 <g font-family="Inter,Arial,sans-serif">
-  <rect x="68" y="238" width="148" height="74" rx="10" fill="#f6f7f9" stroke="#e3e5e9"/>
-  <text x="82" y="260" fill="#737887" font-size="10" font-weight="700">ENTRY</text>
-  <text x="82" y="290" fill="#171a20" font-size="21" font-weight="750">₹${entry}</text>
-  <rect x="230" y="238" width="148" height="74" rx="10" fill="#fbefef" stroke="#f0dddd"/>
-  <text x="244" y="260" fill="#9b5052" font-size="10" font-weight="700">STOP · -45%</text>
-  <text x="244" y="290" fill="#bd3e42" font-size="21" font-weight="750">₹${stop}</text>
-  <rect x="392" y="238" width="148" height="74" rx="10" fill="#eaf6ef" stroke="#d4eadb"/>
-  <text x="406" y="260" fill="#477c5a" font-size="10" font-weight="700">TARGET 1 · +55%</text>
-  <text x="406" y="290" fill="#16834a" font-size="21" font-weight="750">₹${target1}</text>
-  <rect x="554" y="238" width="156" height="74" rx="10" fill="#eaf6ef" stroke="#d4eadb"/>
-  <text x="568" y="260" fill="#477c5a" font-size="10" font-weight="700">TARGET 2 · +90%</text>
-  <text x="568" y="290" fill="#16834a" font-size="21" font-weight="750">₹${target2}</text>
+  <rect x="68" y="${238 + shift}" width="148" height="74" rx="10" fill="#f6f7f9" stroke="#e3e5e9"/>
+  <text x="82" y="${260 + shift}" fill="#737887" font-size="10" font-weight="700">ENTRY</text>
+  <text x="82" y="${290 + shift}" fill="#171a20" font-size="21" font-weight="750">₹${entry}</text>
+  <rect x="230" y="${238 + shift}" width="148" height="74" rx="10" fill="#fbefef" stroke="#f0dddd"/>
+  <text x="244" y="${260 + shift}" fill="#9b5052" font-size="10" font-weight="700">STOP · -45%</text>
+  <text x="244" y="${290 + shift}" fill="#bd3e42" font-size="21" font-weight="750">₹${stop}</text>
+  <rect x="392" y="${238 + shift}" width="148" height="74" rx="10" fill="#eaf6ef" stroke="#d4eadb"/>
+  <text x="406" y="${260 + shift}" fill="#477c5a" font-size="10" font-weight="700">TARGET 1 · +55%</text>
+  <text x="406" y="${290 + shift}" fill="#16834a" font-size="21" font-weight="750">₹${target1}</text>
+  <rect x="554" y="${238 + shift}" width="156" height="74" rx="10" fill="#eaf6ef" stroke="#d4eadb"/>
+  <text x="568" y="${260 + shift}" fill="#477c5a" font-size="10" font-weight="700">TARGET 2 · +90%</text>
+  <text x="568" y="${290 + shift}" fill="#16834a" font-size="21" font-weight="750">₹${target2}</text>
 </g>
-<text x="68" y="341" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1">OPEN-INTEREST WALLS</text>
-<text x="68" y="365" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="650">SUPPORT · ${support}</text>
-<text x="68" y="386" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="650">RESISTANCE · ${resistance}</text>
-<text x="68" y="414" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="11">${trail}</text>
-${dealerFlow ? `<text x="68" y="438" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="650">${escapeXml(dealerFlow + pin)}</text>` : ''}
-${theta ? `<text x="68" y="461" fill="#80601e" font-family="Inter,Arial,sans-serif" font-size="10">${escapeXml(theta)}</text>` : ''}
-<line x1="68" x2="710" y1="478" y2="478" stroke="#e3e5e9"/>
-<text x="68" y="496" fill="#777d88" font-family="Inter,Arial,sans-serif" font-size="9">${disclaimer}</text>
+<text x="68" y="${341 + shift}" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1">OPEN-INTEREST WALLS</text>
+<text x="68" y="${365 + shift}" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="650">SUPPORT · ${support}</text>
+<text x="68" y="${386 + shift}" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="650">RESISTANCE · ${resistance}</text>
+<text x="68" y="${414 + shift}" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="11">${trail}</text>
+${dealerFlow ? `<text x="68" y="${438 + shift}" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="650">${escapeXml(dealerFlow + pin)}</text>` : ''}
+${theta ? `<text x="68" y="${461 + shift}" fill="#80601e" font-family="Inter,Arial,sans-serif" font-size="10">${escapeXml(theta)}</text>` : ''}
+<line x1="68" x2="710" y1="${478 + shift}" y2="${478 + shift}" stroke="#e3e5e9"/>
+<text x="68" y="${496 + shift}" fill="#777d88" font-family="Inter,Arial,sans-serif" font-size="9">${disclaimer}</text>
 </svg>`;
 }

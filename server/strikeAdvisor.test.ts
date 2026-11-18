@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { candidateStrikes, chainWalls, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { observationCaption } from './observationCardSvg.mjs';
 import { gammaProfile } from '../src/features/market-flow/gammaModel';
 
 const NOW = Date.parse('2026-11-16T05:00:00Z');
@@ -255,6 +256,99 @@ describe('runAdvisor gates', () => {
       expect(loadObservations(obsPath)[0].gamma).toMatchObject({ gexAtStrike: firstCandidate.gexAtStrike, distanceToFlip: firstCandidate.distanceToFlip });
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds a futures ATR range line to a card without putting ATR in Jev state', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-atr-'));
+    const obsPath = join(dir, 'observations.json');
+    const now = Date.parse('2026-11-16T09:00:00Z'); // 14:30 IST: after the synthetic bars
+    const series = { ...seriesFixture(), s: 'ATRTEST' };
+    const candles = Array.from({ length: 20 }, (_, index) => {
+      const close = 100 + index;
+      return { at: now - (20 - index) * 15 * 60_000, open: close - 0.5, high: close + 2, low: close - 1, close, oi: 1_000 + index };
+    });
+    let jevState: any;
+    let sentCard: any;
+    try {
+      const result = await runAdvisor({ date: '2026-11-16', series: [series] }, {
+        obsPath,
+        watches: [{ symbol: 'ATRTEST', bias: 'bullish' }],
+        now,
+        configured: () => true,
+        ask: async (state: unknown) => {
+          jevState = state;
+          return { quality_ATRTEST: { noul: 0.9 }, strike_ATRTEST: { choice: 'c1', probabilities: { c1: 0.9 } } };
+        },
+        readFuturesSnapshot: async (symbol, session) => ({ symbol, session, months: [{ date: '2026-11-26', candles }] }),
+        send: async card => { sentCard = card; return { sent: true }; },
+      });
+
+      expect(result.written).toBe(1);
+      expect(jevState.chain.ATRTEST).not.toHaveProperty('atr');
+      expect(sentCard.atr).toMatchObject({ barMinutes: 15, state: expect.stringMatching(/^(compressed|normal|expanded)$/) });
+      expect(sentCard.atr.value).toBeGreaterThanOrEqual(0);
+      expect(observationCaption(sentCard)).toContain(`Range: Futures ATR(15m) ${sentCard.atr.value.toFixed(2)} pts · ${sentCard.atr.state}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('omits the range line, without blocking the card, when only five bars exist', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-atr-short-'));
+    const obsPath = join(dir, 'observations.json');
+    const now = Date.parse('2026-11-16T09:00:00Z');
+    const series = { ...seriesFixture(), s: 'SHORTATR' };
+    const candles = Array.from({ length: 5 }, (_, index) => {
+      const close = 100 + index;
+      return { at: now - (5 - index) * 15 * 60_000, open: close - 0.5, high: close + 2, low: close - 1, close };
+    });
+    let sentCard: any;
+    try {
+      const result = await runAdvisor({ date: '2026-11-16', series: [series] }, {
+        obsPath,
+        watches: [{ symbol: 'SHORTATR', bias: 'bullish' }],
+        now,
+        configured: () => true,
+        ask: async () => ({ quality_SHORTATR: { noul: 0.9 }, strike_SHORTATR: { choice: 'c1', probabilities: { c1: 0.9 } } }),
+        readFuturesSnapshot: (symbol, session) => ({ symbol, session, months: [{ date: '2026-11-26', candles }] }),
+        send: async card => { sentCard = card; return { sent: true }; },
+      });
+
+      expect(result.written).toBe(1);
+      expect(sentCard.atr).toBeNull();
+      expect(observationCaption(sentCard)).not.toContain('Futures ATR');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps an eligible card when futures data is missing, corrupt, cross-symbol, or future-dated', async () => {
+    const cases = [
+      ['missing', () => null],
+      ['corrupt', () => { throw new Error('unavailable'); }],
+      ['cross-symbol', () => ({ symbol: 'OTHER', session: '2026-11-16', months: [] })],
+      ['future-candle', () => ({ symbol: 'SAFEATR', session: '2026-11-16', months: [{ date: '2026-11-26', candles: [{ at: NOW + 60_000, close: 101 }] }] })],
+    ] as const;
+    for (const [label, readFuturesSnapshot] of cases) {
+      const dir = mkdtempSync(join(tmpdir(), `obs-atr-${label}-`));
+      const obsPath = join(dir, 'observations.json');
+      const series = { ...seriesFixture(), s: 'SAFEATR' };
+      try {
+        const result = await runAdvisor({ date: '2026-11-16', series: [series] }, {
+          obsPath,
+          watches: [{ symbol: 'SAFEATR', bias: 'bullish' }],
+          now: NOW,
+          configured: () => true,
+          ask: async () => ({ quality_SAFEATR: { noul: 0.9 }, strike_SAFEATR: { choice: 'c1', probabilities: { c1: 0.9 } } }),
+          readFuturesSnapshot,
+          send: async () => ({ sent: true }),
+        });
+        expect(result.written, label).toBe(1);
+        expect(loadObservations(obsPath)[0].atr, label).toBeNull();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 });

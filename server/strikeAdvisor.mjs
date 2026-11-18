@@ -4,6 +4,7 @@ import { sendTelegramObservationCard } from './telegram.mjs';
 import { askTypeSafe, typesafeConfigured } from './typesafe.mjs';
 import { inFireWindow } from './alerts.mjs';
 import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
+import { atrSummary } from '../src/features/market-flow/atrModel.ts';
 
 /**
  * Strike setup advisor — observation cards for watched symbols, buy-side only.
@@ -207,6 +208,7 @@ export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, p
       quality,
       strikePickProbability: pick.probabilities[pick.choice],
       oiChangePct: chosen.oiChangePct,
+      atr: null,
       disclaimer: DISCLAIMER,
     });
   }
@@ -256,11 +258,36 @@ function saveObservations(path, cards) {
 
 const notified = new Set(); // `symbol|sessionDate` — one Telegram note per card per day
 
+function futuresAtr(snapshot, symbol, sessionDate, now) {
+  if (typeof symbol !== 'string' || typeof sessionDate !== 'string' || !snapshot || snapshot.symbol !== symbol || snapshot.session !== sessionDate || !Array.isArray(snapshot.months)) return null;
+  const month = snapshot.months
+    .filter(item => item && typeof item === 'object' && typeof item.date === 'string' && Array.isArray(item.candles))
+    .sort((left, right) => left.date.localeCompare(right.date))[0];
+  if (!month) return null;
+  const candles = month.candles.filter(candle => candle && Number.isFinite(candle.at) && candle.at + MINUTE <= now);
+  const summary = atrSummary(candles, { period: 14, barMinutes: 15 });
+  if (!summary || !Number.isFinite(summary.atr) || !['compressed', 'normal', 'expanded'].includes(summary.state)) return null;
+  return { value: summary.atr, barMinutes: 15, state: summary.state };
+}
+
+async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, now, log }) {
+  if (typeof readFuturesSnapshot !== 'function') return cards;
+  return Promise.all(cards.map(async card => {
+    try {
+      const snapshot = await readFuturesSnapshot(card.symbol, sessionDate);
+      return { ...card, atr: futuresAtr(snapshot, card.symbol, sessionDate, now) };
+    } catch (error) {
+      log(`advisor ATR unavailable for ${card.symbol}: ${String(error?.message || error)}`);
+      return card;
+    }
+  }));
+}
+
 /**
  * One advisor pass over the triage's watch list. Never throws; every failure
  * is logged and the observations file keeps its previous content.
  */
-export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null } = {}) {
+export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null, readFuturesSnapshot = () => null } = {}) {
   const sessionDate = typeof market?.date === 'string' ? market.date : null;
   if (!configured()) return { skipped: 'not configured' };
   if (!inFireWindow(now)) return { skipped: 'outside fire window' };
@@ -294,7 +321,9 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     })) };
     for (const p of prepared) Object.assign(questions, advisorQuestions(p.symbol, p.bias, p.candidates));
     const answers = await ask(state, questions);
-    const { cards, skipped } = advisorDecisions(prepared, answers);
+    const decisions = advisorDecisions(prepared, answers);
+    const cards = await enrichWithFuturesAtr(decisions.cards, { readFuturesSnapshot, sessionDate, now, log });
+    const { skipped } = decisions;
     if (cards.length) {
       const freshCards = dedupeObservations(cards);
       const existing = loadObservations(obsPath);
