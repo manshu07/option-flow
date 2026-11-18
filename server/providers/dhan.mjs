@@ -937,21 +937,23 @@ export function createDhanProvider(universe) {
       const session = ymdIst(Date.now());
       let { coreKeys, optionKeys } = buildWindows(session);
       let nextEachSide = NEXT_EXPIRY_ENABLED ? NEXT_EXPIRY_STRIKES_EACH_SIDE : null;
-      // Capacity guard: December trims ±7 → ±5 → ±3 to stay under the instrument
-      // cap; if even ±3 busts it, December drops entirely and the near chain is
-      // protected (a rejected subscribe would silently lose instruments).
-      if (nextEachSide != null && coreKeys.length + optionKeys.length > FEED_INSTRUMENT_CAP) {
+      // Capacity guard: December trims ±7 → ±5 → ±3 to keep every connection
+      // under Dhan's per-connection cap (5,000), and the total under the 5-conn
+      // budget; if even ±3 busts it, December drops entirely and the near chain
+      // is protected (a rejected subscribe would silently lose instruments).
+      const optionCap = (conns.length - 1) * 5_000;
+      if (nextEachSide != null && (optionKeys.length > optionCap || coreKeys.length + optionKeys.length > FEED_INSTRUMENT_CAP)) {
         for (const candidate of [5, 3]) {
           ({ coreKeys, optionKeys } = buildWindows(session, candidate));
           nextEachSide = candidate;
-          if (coreKeys.length + optionKeys.length <= FEED_INSTRUMENT_CAP) break;
+          if (optionKeys.length <= optionCap && coreKeys.length + optionKeys.length <= FEED_INSTRUMENT_CAP) break;
         }
-        if (coreKeys.length + optionKeys.length > FEED_INSTRUMENT_CAP) {
+        if (optionKeys.length > optionCap || coreKeys.length + optionKeys.length > FEED_INSTRUMENT_CAP) {
           ({ coreKeys, optionKeys } = buildWindows(session, null));
           nextEachSide = null;
-          console.warn(`dhan: instrument budget ${coreKeys.length + optionKeys.length} busts the ${FEED_INSTRUMENT_CAP} cap even at ±3 — December capture disabled, near chain protected`);
+          console.warn(`dhan: instrument budget busts the caps even at ±3 (option cap ${optionCap}) — December capture disabled, near chain protected`);
         } else {
-          console.warn(`dhan: December window trimmed to ±${nextEachSide} to fit the ${FEED_INSTRUMENT_CAP} instrument cap`);
+          console.warn(`dhan: December window trimmed to ±${nextEachSide} to fit the per-connection cap of 5,000`);
         }
       }
       let nextLegCount = 0;
