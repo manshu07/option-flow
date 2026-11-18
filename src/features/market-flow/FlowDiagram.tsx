@@ -7,6 +7,7 @@ import { useFlowFocus, type FocusState } from './flowFocus';
 import { BuildMark, buildUpText, ChangeText, DotMeter, heatStyle, pctText, TickFlash, signedText, Spark, toneOf, windowCandles, shortSector } from './FlowParts';
 import { SymbolMark } from '@/components/common/SymbolMark';
 import { FlowPopup } from './FlowPopup';
+import { useRememberedChoice } from '@/lib/remembered';
 import { levelText, type FlowSector, type FlowSettings, type FlowStock, type MarketFlow } from './marketFlowModel';
 import { useBox } from './useBox';
 
@@ -729,9 +730,14 @@ const TallTile = memo(function TallTile({ stock, side, box, demo = false }: { st
   );
 });
 
+/** Timeframe choices shared with the popup chart (same remembered key). */
+const CARD_TFS = ['auto', 1, 5, 15, 30] as const;
+type CardTf = 'auto' | 1 | 5 | 15 | 30;
+
 /** A large card: side badge, conviction ring, the move, price, support / zone / resistance, the range bar, and 5-minute candles with the levels. */
 const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false }: { stock: FlowStock; side: 'bullish' | 'bearish'; box: Box; demo?: boolean }) {
   const focus = useFlowFocus();
+  const [tf] = useRememberedChoice<CardTf>('marketFlow.miniChart.tf:v1', CARD_TFS, 'auto');
   const held = stock.checks.filter(check => check.pass).length;
   const counted = stock.checks.filter(check => check.pass != null).length;
   const chartW = Math.round(box.w * (box.w < 300 ? 0.46 : 0.54));
@@ -755,7 +761,7 @@ const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false }
           <span className="mf-dgcard__price">₹{fmtPrice(stock.fut?.price ?? stock.spot)} <span className={`mf-tone is-${side}`}>{signedText(stock.fut?.priceChange)}</span></span>
           {!compact && <RangeBar stock={stock} />}
         </span>
-        <span className="mf-dgcard__chart"><CandleChart stock={stock} width={chartW} height={chartH} /></span>
+        <span className="mf-dgcard__chart"><CandleChart stock={stock} width={chartW} height={chartH} tf={tf} /></span>
         <span className="mf-dgcard__levels">
           <span><i>Support</i><b>{stock.support ? levelText(stock.support.strike) : '—'}</b></span>
           <span><i>Zone</i><b>{stock.zone ? `${fmtPrice(stock.zone.low)}–${fmtPrice(stock.zone.high)}` : '—'}</b></span>
@@ -795,17 +801,21 @@ function RangeBar({ stock }: { stock: FlowStock }) {
 }
 
 /** 5-minute candles from the minute closes, with the base (previous close or window start), the zone and S1/R1. */
-export function CandleChart({ stock, width, height, levels = true }: { stock: FlowStock; width: number; height: number; levels?: boolean }) {
-  const minute = windowCandles(stock);
-  if (minute.length < 3) return <span className="mf-candles is-empty">{stock.futures === 'pending' ? 'Loading future…' : stock.futures === 'failed' ? 'Could not load future' : 'No line yet'}</span>;
-  const span = minute.length > 120 ? 5 : minute.length > 30 ? 2 : 1;
-  const candles = candlesFromCloses(minute, span);
+export function CandleChart({ stock, width, height, levels = true, tf = 'auto' }: { stock: FlowStock; width: number; height: number; levels?: boolean; tf?: CardTf }) {
+  // Use the whole session (not just the window) so the zone and level lines
+  // always fall inside the axis, and cap the bucket so >=30 bars render.
+  const full = stock.candles.length ? stock.candles : windowCandles(stock);
+  if (full.length < 3) return <span className="mf-candles is-empty">{stock.futures === 'pending' ? 'Loading future…' : stock.futures === 'failed' ? 'Could not load future' : 'No line yet'}</span>;
+  const desired = tf === 'auto' ? (full.length > 120 ? 5 : full.length > 30 ? 2 : 1) : tf;
+  const span = Math.max(1, Math.min(desired, Math.floor(full.length / 30) || 1));
+  const candles = candlesFromCloses(full, span);
   const right = levels ? 46 : 4;
   const pad = { top: 6, bottom: 6, left: 2 };
   let low = Math.min(...candles.map(c => c.low));
   let high = Math.max(...candles.map(c => c.high));
   const base = stock.fut?.priceFrom ?? null;
   if (base != null) { low = Math.min(low, base); high = Math.max(high, base); }
+  if (stock.zone) { low = Math.min(low, stock.zone.low); high = Math.max(high, stock.zone.high); }
   const range = Math.max(high - low, (stock.fut?.price ?? stock.spot) * 0.002);
   const lv: Array<[string, number, string]> = [];
   if (levels) {
@@ -816,12 +826,11 @@ export function CandleChart({ stock, width, height, levels = true }: { stock: Fl
   const m = (high - low) * 0.06 || range * 0.06;
   low -= m; high += m;
   const w = width - right - pad.left;
-  const cw = w / candles.length;
-  const y = (p: number) => pad.top + (1 - (p - low) / (high - low)) * (height - pad.top - pad.bottom);
-  const x = (i: number) => pad.left + i * cw + cw / 2;
   const t0 = candles[0].at;
   const t1 = candles[candles.length - 1].at + span * MINUTE;
   const xt = (t: number) => pad.left + ((t - t0) / Math.max(1, t1 - t0)) * w;
+  const cw = Math.max(1.2, (w / Math.max(1, candles.length)) * 0.62);
+  const y = (p: number) => pad.top + (1 - (p - low) / (high - low)) * (height - pad.top - pad.bottom);
   return (
     <svg className="mf-candles" width={width} height={height} aria-hidden="true">
       {stock.zone && stock.zone.to > t0 && (
@@ -834,16 +843,17 @@ export function CandleChart({ stock, width, height, levels = true }: { stock: Fl
           <text className="mf-candles__tag" x={pad.left + w + 7} y={y(price) + 3.5}>{name} {levelText(price)}</text>
         </g>
       ))}
-      {candles.map((c, i) => {
+      {candles.map(c => {
+        const cx = xt(c.at + (span * MINUTE) / 2);
         const upC = c.close >= c.open;
         return (
           <g key={c.at} className={upC ? 'is-up' : 'is-down'}>
-            <line className="mf-candles__wick" x1={x(i)} x2={x(i)} y1={y(c.high)} y2={y(c.low)} />
-            <rect className="mf-candles__body" x={x(i) - Math.max(0.6, cw * 0.32)} width={Math.max(1.2, cw * 0.64)} y={y(Math.max(c.open, c.close))} height={Math.max(1, Math.abs(y(c.open) - y(c.close)))} />
+            <line className="mf-candles__wick" x1={cx} x2={cx} y1={y(c.high)} y2={y(c.low)} />
+            <rect className="mf-candles__body" x={cx - cw / 2} width={cw} y={y(Math.max(c.open, c.close))} height={Math.max(1, Math.abs(y(c.open) - y(c.close)))} />
           </g>
         );
       })}
-      <circle className="mf-candles__last" cx={x(candles.length - 1)} cy={y(candles[candles.length - 1].close)} r="2.5" />
+      <circle className="mf-candles__last" cx={xt(candles[candles.length - 1].at + (span * MINUTE) / 2)} cy={y(candles[candles.length - 1].close)} r="2.5" />
     </svg>
   );
 }
