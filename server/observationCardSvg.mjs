@@ -105,6 +105,8 @@ export function observationCaption(card) {
 
   const range = atrText(card?.atr);
   if (range) lines.splice(7, 0, escapeHtml(range));
+  const strategy = typeof card?.strategy?.label === 'string' && card.strategy.label ? card.strategy.label : null;
+  if (strategy) lines.splice(range ? 8 : 7, 0, escapeHtml(strategy));
 
   if (card?.gamma && typeof card.gamma === 'object') {
     const dealerFlow = dealerFlowText(card.gamma);
@@ -144,6 +146,8 @@ export function observationSubscriberCaption(card) {
   ];
   const theta = thetaText(daysToExpiry(card?.date, card?.expiry));
   if (theta) lines.push(escapeHtml(theta));
+  // Owner's playbook line (educational, no model words) — same on both copies.
+  if (typeof card?.strategy?.label === 'string' && card.strategy.label) lines.push(escapeHtml(card.strategy.label));
   lines.push('🎓 captured-data observation · not investment advice · /stop to opt out');
   return lines.join('\n');
 }
@@ -172,8 +176,9 @@ export function renderObservationCardSvg(card) {
   const trail = escapeXml(card?.tsl ?? 'Trailing stop unavailable');
   const disclaimer = escapeXml(card?.disclaimer ?? 'Educational observation; not trade advice.');
   const range = atrText(card?.atr);
-  const shift = range ? 23 : 0;
-  const height = range ? 545 : 520;
+  const strategy = typeof card?.strategy?.label === 'string' && card.strategy.label ? card.strategy.label : null;
+  const shift = (range ? 23 : 0) + (strategy ? 23 : 0);
+  const height = 520 + shift;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="${height}" viewBox="0 0 760 ${height}" role="img" aria-label="Observation ${label}">
 <rect width="760" height="${height}" rx="22" fill="#f4f5f8"/>
@@ -191,6 +196,7 @@ export function renderObservationCardSvg(card) {
 <text x="84" y="188" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="750">${spot}</text>
 <text x="700" y="181" fill="${accent}" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="750">${spotChange}</text>
 ${range ? `<text x="68" y="219" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="11">${escapeXml(range)}</text>` : ''}
+${strategy ? `<text x="68" y="${219 + (range ? 23 : 0)}" fill="${card.strategy.qualifies ? '#16834a' : '#737887'}" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="${card.strategy.qualifies ? '700' : '500'}">${escapeXml(strategy)}</text>` : ''}
 <text x="68" y="${226 + shift}" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1">PREMIUM PLAN</text>
 <g font-family="Inter,Arial,sans-serif">
   <rect x="68" y="${238 + shift}" width="148" height="74" rx="10" fill="#f6f7f9" stroke="#e3e5e9"/>

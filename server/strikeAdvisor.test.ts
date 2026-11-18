@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { candidateStrikes, chainWalls, chooseChain, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { candidateStrikes, chainWalls, chooseChain, orbStrategy, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { observationCaption } from './observationCardSvg.mjs';
 import { gammaProfile } from '../src/features/market-flow/gammaModel';
 
@@ -21,6 +21,24 @@ function seriesFixture() {
 }
 
 describe('candidateStrikes', () => {
+  it('tags a card with the owner ORB playbook at build time', () => {
+    const open = Date.parse('2026-11-16T09:15:00+05:30');
+    const candles = [0, 1, 2, 3, 4].map(minute => ({
+      at: open + minute * 60_000, close: 293 + minute, high: 295, low: 292.5, open: 293,
+    }));
+    const snapshot = { symbol: 'MANAPPURAM', session: '2026-11-16', months: [{ candles }] };
+    const card = { spot: 296, bias: 'bullish', oiChangePct: 11.7 };
+    expect(orbStrategy(snapshot, card, NOW)).toMatchObject({ qualifies: true });
+    expect(orbStrategy(snapshot, card, NOW).label).toContain('ORB ✓');
+    expect(orbStrategy(snapshot, { ...card, spot: 294 }, NOW).label).toContain('no breakout yet');
+    expect(orbStrategy(snapshot, { ...card, spot: 307 }, NOW).label).toContain('VWAP');
+    expect(orbStrategy(snapshot, { ...card, oiChangePct: 3 }, NOW).label).toContain('<5% needed');
+    expect(orbStrategy(snapshot, { ...card, oiChangePct: null }, NOW).label).toContain('unknown');
+    const thin = { ...snapshot, months: [{ candles: candles.slice(0, 2) }] };
+    expect(orbStrategy(thin, card, NOW).label).toContain('range pending');
+    expect(orbStrategy(null, card, NOW)).toBeNull();
+  });
+
   it('switches to the next-expiry block only when the near expiry is inside the DTE threshold', () => {
     const next = { e: '2026-12-31', sp: 300.9, pc: 308.2, atm: 300, r: [[300, 0, 12, 11, 2_000_000, 1_800_000, 50_000]] };
     // Exactly 3 DTE (expiry 15:30 IST − same clock time) → the December block wins.

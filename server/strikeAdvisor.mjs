@@ -288,12 +288,46 @@ function futuresAtr(snapshot, symbol, sessionDate, now) {
   return { value: summary.atr, barMinutes: 15, state: summary.state };
 }
 
+/**
+ * Owner's ORB playbook, checked against the card at build time: the 09:15–09:20
+ * opening range from today's futures candles, breakout beyond it on the bias
+ * side, chain OI ≥ 5% confirming participation, and the 4% extended-opener
+ * rule (wait for a VWAP touch instead of chasing).
+ */
+export function orbStrategy(snapshot, card, now) {
+  if (!snapshot || !Array.isArray(snapshot.months)) return null;
+  const month = snapshot.months[0];
+  const candles = Array.isArray(month?.candles) ? month.candles : [];
+  const openAt = Date.parse(`${snapshot.session}T09:15:00+05:30`);
+  const rangeCandles = candles.filter(candle => Number.isFinite(candle?.at) && candle.at >= openAt && candle.at < openAt + 5 * 60_000);
+  if (rangeCandles.length < 3) return { qualifies: false, label: 'Strategy: ORB — opening range pending (need the 09:20 candle)' };
+  const high = Math.max(...rangeCandles.map(candle => Number.isFinite(candle.high) ? candle.high : candle.close));
+  const low = Math.min(...rangeCandles.map(candle => Number.isFinite(candle.low) ? candle.low : candle.close));
+  const spot = Number.isFinite(card?.spot) ? card.spot : null;
+  if (!spot) return { qualifies: false, label: `Strategy: ORB — range ${low}–${high}, spot unavailable` };
+  const bullish = card.bias !== 'bearish';
+  const level = bullish ? high : low;
+  const broke = bullish ? spot > level : spot < level;
+  const extendedPct = bullish ? (spot - high) / high * 100 : (low - spot) / low * 100;
+  const oiPct = Number.isFinite(card?.oiChangePct) ? card.oiChangePct : null;
+  if (extendedPct >= 4) {
+    return { qualifies: false, label: `Strategy: ORB ⏳ — extended +${extendedPct.toFixed(1)}% opener — wait for a VWAP touch` };
+  }
+  if (!broke) {
+    return { qualifies: false, label: `Strategy: ORB ✗ — no breakout yet (range ${low}–${high})` };
+  }
+  if (oiPct == null || oiPct < 5) {
+    return { qualifies: false, label: `Strategy: ORB ✗ — broke ${level} but OI ${oiPct == null ? 'unknown' : `+${oiPct.toFixed(1)}%`} (<5% needed)` };
+  }
+  return { qualifies: true, label: `Strategy: ORB ✓ — broke ${level} · OI +${oiPct.toFixed(1)}% · SL zone ${bullish ? low : high}` };
+}
+
 async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, now, log }) {
   if (typeof readFuturesSnapshot !== 'function') return cards;
   return Promise.all(cards.map(async card => {
     try {
       const snapshot = await readFuturesSnapshot(card.symbol, sessionDate);
-      return { ...card, atr: futuresAtr(snapshot, card.symbol, sessionDate, now) };
+      return { ...card, atr: futuresAtr(snapshot, card.symbol, sessionDate, now), strategy: orbStrategy(snapshot, card, now) };
     } catch (error) {
       log(`advisor ATR unavailable for ${card.symbol}: ${String(error?.message || error)}`);
       return card;
