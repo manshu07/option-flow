@@ -648,7 +648,7 @@ export function createDhanProvider(universe) {
     let dirs = [];
     try {
       dirs = fs.readdirSync(dataDir, { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name) && entry.name < session)
+        .filter(entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name) && entry.name <= session)
         .map(entry => entry.name)
         .sort()
         .reverse();
