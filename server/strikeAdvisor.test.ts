@@ -107,7 +107,7 @@ describe('advisorQuestions / advisorDecisions', () => {
     expect(questions.strike_MANAPPURAM.criteria.c1.strike).toBe(300);
   });
 
-  it('writes a card at quality ≥0.7 with a decisive pick', () => {
+  it('writes a card at quality ≥0.65 with a decisive pick', () => {
     const answers = { quality_MANAPPURAM: { noul: 0.8 }, strike_MANAPPURAM: { choice: 'c1', probabilities: { c1: 0.75, c2: 0.15, c3: 0.1 } } };
     const { cards, skipped } = advisorDecisions([watch], answers);
     expect(skipped).toHaveLength(0);

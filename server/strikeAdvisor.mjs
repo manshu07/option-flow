@@ -18,7 +18,7 @@ import { atrSummary } from '../src/features/market-flow/atrModel.ts';
  *      walls (heaviest PE below spot, heaviest CE above spot);
  *   2. Jev judges (one request for the whole pass): does premium + OI confirm
  *      this setup, and which candidate fits a short-horizon momentum trade;
- *   3. code routes: quality ≥ 0.7 and a decisive strike pick → an observation
+ *   3. code routes: quality ≥ 0.65 and a decisive strike pick → an observation
  *      card in <DATA_DIR>/observations.json plus one Telegram note per symbol
  *      per session date. Below the gate → nothing is written.
  *
@@ -31,7 +31,7 @@ const STOP_FRACTION = 0.45;   // stop at −45% of entry premium (user's −40�
 const TGT1_FRACTION = 0.55;   // first target +55%
 const TGT2_FRACTION = 0.9;    // second target +90%
 const MIN_ENTRY_PREMIUM = 0.5; // skip near-zero premiums — no lottery strikes
-const QUALITY_YES = 0.7;
+const QUALITY_YES = 0.65;
 const PICK_MIN = 0.5;
 const MAX_CARDS = 50;
 
