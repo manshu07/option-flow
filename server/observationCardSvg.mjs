@@ -103,6 +103,19 @@ export function observationCaption(card) {
     `• Support ${escapeHtml(support)} · Resistance ${escapeHtml(resistance)}`,
   ];
 
+  // The stock price each premium level needs, decay included — the owner's
+  // rule: a target is only real if the underlying can reach that price.
+  const needs = card?.needs;
+  if (needs?.tgt1 && Number.isFinite(needs.tgt1.level)) {
+    const dir = side === 'PE' ? '≤' : '≥';
+    const days = Number.isFinite(card?.holdDays) ? `${card.holdDays} day${card.holdDays > 1 ? 's' : ''}` : 'the hold';
+    const decay = Number.isFinite(card?.thetaDay) ? ` · decay ${priceText(Math.abs(card.thetaDay))}/day` : '';
+    lines.push('', `🎯 TGT1 needs <b>${escapeHtml(symbol)} ${dir} ${priceText(needs.tgt1.level)}</b> (${needs.tgt1.pct?.toFixed?.(1) ?? '?'}% move) in ${days}${decay}`);
+    if (needs.sl && Number.isFinite(needs.sl.level)) lines.push(`🛑 SL if ${escapeHtml(symbol)} ${side === 'PE' ? '≥' : '≤'} ${priceText(needs.sl.level)}`);
+  } else if (card?.levelsBasis === 'decay-too-heavy') {
+    lines.push('', '⚠️ Decay on this expiry eats an ATR-sized target — no premium target quoted.');
+  }
+
   const range = atrText(card?.atr);
   if (range) lines.splice(7, 0, escapeHtml(range));
   const strategy = typeof card?.strategy?.label === 'string' && card.strategy.label ? card.strategy.label : null;
@@ -144,6 +157,12 @@ export function observationSubscriberCaption(card) {
     `📌 <b>${symbol} ${strike}${side}</b>${expiry ? ` · ${escapeHtml(expiry)}` : ''}`,
     `Entry ~${price(card?.entry)} · SL ${price(card?.sl)} · TGT1 ${price(card?.tgt1)} · TGT2 ${price(card?.tgt2)}`,
   ];
+  // Same required-level line as the owner's copy: plain prices, no greeks.
+  if (card?.needs?.tgt1 && Number.isFinite(card.needs.tgt1.level)) {
+    const dir = side === 'PE' ? 'at or below' : 'at or above';
+    const days = Number.isFinite(card?.holdDays) ? ` in ${card.holdDays} day${card.holdDays > 1 ? 's' : ''}` : '';
+    lines.push(`TGT1 needs ${symbol} ${dir} ${price(card.needs.tgt1.level)}${days}`);
+  }
   const theta = thetaText(daysToExpiry(card?.date, card?.expiry));
   if (theta) lines.push(escapeHtml(theta));
   // Owner's playbook line (educational, no model words) — same on both copies.

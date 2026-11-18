@@ -7,6 +7,7 @@ import { inFireWindow, marketMovers } from './alerts.mjs';
 import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
 import { atrSummary } from '../src/features/market-flow/atrModel.ts';
 import { openingRange, sessionVwap } from './orbModel.mjs';
+import { greeks, optionIv, premiumForMove, requiredMove, levelFor, yearsToExpiry } from './optionMath.mjs';
 
 /**
  * Strike setup advisor — observation cards for watched symbols, buy-side only.
@@ -95,6 +96,7 @@ export function candidateStrikes(series, bias) {
       id: `c${candidates.length + 1}`,
       strike, side, ltp: row[2], prevClose: row[3], premiumChangePct, oi: row[4], prevOi: row[5], oiChangePct,
       delta: Number.isFinite(row[17]) ? row[17] : null,
+      iv: Number.isFinite(row[9]) && row[9] > 0 ? row[9] : null,
       placement: itm ? 'in-the-money — moves faster, costs more' : otm ? 'out-of-the-money — cheaper, needs a bigger move' : 'at-the-money — the default pick',
     });
     if (candidates.length === 3) break;
@@ -259,6 +261,7 @@ export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, p
       strikePickProbability: pick.probabilities[pick.choice],
       oiChangePct: chosen.oiChangePct,
       delta: Number.isFinite(chosen.delta) ? chosen.delta : null,
+      iv: Number.isFinite(chosen.iv) ? chosen.iv : null,
       atr: null,
       disclaimer: DISCLAIMER,
     });
@@ -309,6 +312,7 @@ export function earlyCards(market, date, now, existing = [], { max = 2 } = {}) {
       strikePickProbability: null,
       oiChangePct: candidate.oiChangePct,
       delta: candidate.delta ?? null,
+      iv: candidate.iv ?? null,
       early: strong ? 'build-fast' : 'momentum',
       atr: null,
       disclaimer: DISCLAIMER,
@@ -418,20 +422,70 @@ export function orbStrategy(snapshot, card, now) {
  * sits one such move away and targets 1.5× / 2.5× it. Falls back to the fixed
  * premium fractions (levelsBasis 'fixed') when either number is unavailable.
  */
-export function adaptiveLevels(card) {
+export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now() } = {}) {
   const atr = card?.atr?.value;
   const delta = card?.delta;
   const entry = card?.entry;
   if (!(Number.isFinite(atr) && atr > 0 && Number.isFinite(delta) && Math.abs(delta) > 0 && Number.isFinite(entry) && entry > 0)) {
     return { ...card, levelsBasis: 'fixed' };
   }
-  const move = Math.max(atr * Math.abs(delta), entry * 0.08);
+  const spot = card?.spot;
+  const years = yearsToExpiry(card?.expiry, now);
+  const iv = years && spot > 0 ? optionIv({ premium: entry, spot, strike: card.strike, years, side: card.side, captured: card.iv }) : null;
+  const g = iv ? greeks({ spot, strike: card.strike, years, iv, side: card.side }) : null;
+
+  // No greeks (no spot/expiry/IV): the old delta-scaled approximation, honestly labelled.
+  if (!g) {
+    const move = Math.max(atr * Math.abs(delta), entry * 0.08);
+    return {
+      ...card,
+      sl: round2(Math.max(entry * 0.5, entry - ATR_STOP_MULT * move)),
+      tgt1: round2(entry + ATR_TGT1_MULT * move),
+      tgt2: round2(entry + ATR_TGT2_MULT * move),
+      levelsBasis: 'ATR',
+    };
+  }
+
+  // Levels are sized on the UNDERLYING (ATR multiples), then converted to a
+  // premium with gamma and the decay of the intended hold. The stock price each
+  // level needs travels with the card, so a target is never a bare percentage.
+  const days = Math.max(1, Math.min(holdDays, Math.floor(years * 365)));
+  const priced = move => round2(Math.max(0.05, premiumForMove({ entry, move, delta: g.delta, gamma: g.gamma, thetaDay: g.thetaDay, days })));
+  const slMove = ATR_STOP_MULT * atr;
+  const tgt1Move = ATR_TGT1_MULT * atr;
+  const tgt2Move = ATR_TGT2_MULT * atr;
+  const needs = {
+    sl: levelFor({ spot, move: -slMove, side: card.side }),
+    tgt1: levelFor({ spot, move: tgt1Move, side: card.side }),
+    tgt2: levelFor({ spot, move: tgt2Move, side: card.side }),
+  };
+  const tgt1 = priced(tgt1Move);
+  // Decay can eat an ATR-sized target on a weekly leg; say so instead of
+  // printing a target below the entry.
+  if (!(tgt1 > entry)) {
+    return { ...card, levelsBasis: 'decay-too-heavy', holdDays: days, thetaDay: round2(g.thetaDay), needs: null };
+  }
   return {
     ...card,
-    sl: round2(Math.max(entry * 0.5, entry - ATR_STOP_MULT * move)),
-    tgt1: round2(entry + ATR_TGT1_MULT * move),
-    tgt2: round2(entry + ATR_TGT2_MULT * move),
-    levelsBasis: 'ATR',
+    sl: priced(-slMove),
+    tgt1,
+    tgt2: priced(tgt2Move),
+    levelsBasis: 'ATR+decay',
+    holdDays: days,
+    thetaDay: round2(g.thetaDay),
+    ivUsed: round2(iv * 100),
+    optionGamma: g.gamma,
+    needs: {
+      sl: needs.sl && { level: round2(needs.sl.level), pct: round2(needs.sl.pct) },
+      tgt1: needs.tgt1 && { level: round2(needs.tgt1.level), pct: round2(needs.tgt1.pct) },
+      tgt2: needs.tgt2 && { level: round2(needs.tgt2.level), pct: round2(needs.tgt2.pct) },
+    },
+    // What the chosen premium targets imply, decay included — the honest check
+    // that the target is reachable at all.
+    requiredMovePct: (() => {
+      const move = requiredMove({ entry, target: tgt1, delta: g.delta, gamma: g.gamma, thetaDay: g.thetaDay, days });
+      return move == null || !(spot > 0) ? null : round2((move / spot) * 100);
+    })(),
   };
 }
 

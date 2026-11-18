@@ -43,6 +43,36 @@ describe('candidateStrikes', () => {
     expect(adaptiveLevels({ entry: 50 })).toMatchObject({ levelsBasis: 'fixed' });
   });
 
+  it('sizes levels on the underlying and prints the stock price each target needs (decay included)', () => {
+    const card = {
+      symbol: 'IREDA', side: 'CE', strike: 120, spot: 119.8, entry: 2.53, delta: 0.54, iv: 40.4,
+      expiry: '2026-11-23', atr: { value: 2.4, barMinutes: 15, state: 'normal' },
+    };
+    const priced = adaptiveLevels(card, { holdDays: 2, now: Date.parse('2026-11-18T15:30:00+05:30') });
+    expect(priced.levelsBasis).toBe('ATR+decay');
+    expect(priced.holdDays).toBe(2);
+    expect(priced.thetaDay).toBeLessThan(0);
+    expect(priced.tgt1).toBeGreaterThan(priced.entry);
+    expect(priced.sl).toBeLessThan(priced.entry);
+    // A CE target needs the stock ABOVE spot, the stop BELOW it.
+    expect(priced.needs.tgt1.level).toBeGreaterThan(119.8);
+    expect(priced.needs.sl.level).toBeLessThan(119.8);
+    expect(priced.needs.tgt1.pct).toBeGreaterThan(0);
+    expect(priced.requiredMovePct).toBeGreaterThan(0);
+    // The quoted target and the quoted level agree: pricing that move returns the target.
+    expect(priced.tgt1).toBeGreaterThan(2.53);
+  });
+
+  it('refuses to quote a premium target when decay eats an ATR-sized move', () => {
+    const card = {
+      symbol: 'X', side: 'CE', strike: 100, spot: 100, entry: 0.6, delta: 0.2, iv: 60,
+      expiry: '2026-11-19', atr: { value: 0.2, barMinutes: 15, state: 'compressed' },
+    };
+    const priced = adaptiveLevels(card, { holdDays: 2, now: Date.parse('2026-11-18T15:30:00+05:30') });
+    expect(priced.levelsBasis).toBe('decay-too-heavy');
+    expect(priced.needs).toBeNull();
+  });
+
   it('early cards catch momentum (flat OI) and strong build-ups the model gate skips', () => {
     const rows = (strike: number, mult: number) => [
       [strike, 0, 6, 5, Math.round(100_000 * mult), 100_000, 10_000],
