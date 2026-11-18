@@ -80,6 +80,8 @@ export interface FlowZone {
   from: number;
   to: number;
   oiAdded: number;
+  /** build = OI added with the move; unwind = price moved with the side while OI fell. */
+  kind: 'build' | 'unwind';
 }
 
 export type FlowCheckId = 'fresh' | 'spot' | 'day' | 'hour' | 'quarter' | 'options' | 'sector';
@@ -273,20 +275,28 @@ export function readZone(candles: readonly FlowCandle[], side: Exclude<FlowSide,
   if (candles.length < 2) return { zone: null, note: candles.length ? 'one futures candle is not a stretch' : 'no futures candles for this session' };
   const span = Math.min(ZONE_SPAN_MINUTES, candles.length);
   const direction = side === 'bullish' ? 1 : -1;
-  let best: FlowZone | null = null;
-  for (let end = span - 1; end < candles.length; end++) {
-    const start = end - span + 1;
-    const first = candles[start];
-    const last = candles[end];
-    const oiAdded = last.oi - first.oi;
-    if (!(oiAdded > 0) || sign(last.close - first.close) !== direction) continue;
-    if (best && oiAdded <= best.oiAdded) continue;
-    let low = Infinity;
-    let high = -Infinity;
-    for (let i = start; i <= end; i++) { low = Math.min(low, candles[i].close); high = Math.max(high, candles[i].close); }
-    best = { low, high, from: first.at, to: last.at + MINUTE, oiAdded };
-  }
-  return best ? { zone: best, note: null } : { zone: null, note: `no ${ZONE_SPAN_MINUTES}-minute stretch added open interest while the price moved this way` };
+  const strongest = (requireBuild: boolean): FlowZone | null => {
+    let best: FlowZone | null = null;
+    for (let end = span - 1; end < candles.length; end++) {
+      const start = end - span + 1;
+      const first = candles[start];
+      const last = candles[end];
+      const oiAdded = last.oi - first.oi;
+      if (requireBuild ? !(oiAdded > 0) : !(oiAdded < 0)) continue;
+      if (sign(last.close - first.close) !== direction) continue;
+      const score = requireBuild ? oiAdded : -oiAdded; // build: most added; unwind: most shed
+      if (best && score <= (requireBuild ? best.oiAdded : -best.oiAdded)) continue;
+      let low = Infinity;
+      let high = -Infinity;
+      for (let i = start; i <= end; i++) { low = Math.min(low, candles[i].close); high = Math.max(high, candles[i].close); }
+      best = { low, high, from: first.at, to: last.at + MINUTE, oiAdded, kind: requireBuild ? 'build' : 'unwind' };
+    }
+    return best;
+  };
+  // A build-up zone (OI added with the move) wins; on an OI-shedding day the
+  // strongest unwind stretch still marks where positions were closed.
+  const zone = strongest(true) ?? strongest(false);
+  return zone ? { zone, note: null } : { zone: null, note: `no ${ZONE_SPAN_MINUTES}-minute stretch moved the price with this side` };
 }
 
 const sideOf = (changePct: number | null, floor: number): FlowSide | null =>

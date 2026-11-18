@@ -54,10 +54,11 @@ describe('readZone', () => {
     expect(zone!.to).toBe(OPEN + 35 * MINUTE);
   });
 
-  it('reads no zone when open interest only fell, and says so', () => {
+  it('falls back to the strongest unwind stretch when open interest only fell', () => {
     const { zone, note } = readZone(candles(100, 0.1, 5000, -10, 40), 'bullish');
-    expect(zone).toBeNull();
-    expect(note).toContain(`${ZONE_SPAN_MINUTES}-minute`);
+    expect(note).toBeNull();
+    expect(zone?.kind).toBe('unwind');
+    expect(zone!.oiAdded).toBeLessThan(0);
   });
 
   it('needs the price to move the side’s way, not just open interest to grow', () => {
