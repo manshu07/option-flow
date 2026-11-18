@@ -81,7 +81,7 @@ export interface FlowZone {
   to: number;
   oiAdded: number;
   /** build = OI added with the move; unwind = price moved with the side while OI fell. */
-  kind: 'build' | 'unwind';
+  kind?: 'build' | 'unwind';
 }
 
 export type FlowCheckId = 'fresh' | 'spot' | 'day' | 'hour' | 'quarter' | 'options' | 'sector';
