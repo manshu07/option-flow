@@ -191,15 +191,6 @@
       "sector": "capital-goods-infra"
     },
     {
-      "symbol": "ICICIPRULIFE",
-      "name": "ICICI Prudential Life",
-      "apiKey": "NSE:ICICIPRULIFE",
-      "lot": 925,
-      "kind": "stock",
-      "exch": "BSE",
-      "sector": "insurance"
-    },
-    {
       "symbol": "NAVINFLUOR",
       "name": "Navin Fluorine",
       "apiKey": "NSE:NAVINFLUOR",
