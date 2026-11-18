@@ -61,7 +61,6 @@ import { isMarketSessionTime } from '../../src/lib/marketSession.ts';
 import { createFullOptionChainSnapshot, normalizeDhanOptionChain } from '../optionChainSnapshots.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MASTER_CACHE = path.join(ROOT, 'data', '.dhan-master.csv');
-const MASTER_MAX_AGE_MS = 2 * 60 * 60_000;
 const MAX_PER_SECOND = Math.max(1, Number(process.env.DHAN_MAX_RPS) || 5);
 const FUTURES_MONTHS = Math.max(1, Math.min(3, Number(process.env.DHAN_FUTURES_MONTHS) || 2));
 const CHAIN_PER_8S = 10; // documented hard cap; do not raise
@@ -891,25 +890,25 @@ export function createDhanProvider(universe) {
       if (!token || token === 'PUT-YOUR-TOKEN-HERE') throw new Error('Set DHAN_ACCESS_TOKEN (web.dhan.co → My Profile → DhanHQ Trading Access; see PROVIDERS.md).');
       if (!clientId || clientId === 'PUT-YOUR-CLIENT-ID-HERE') throw new Error('Set DHAN_CLIENT_ID (your Dhan client id, shown next to the avatar on web.dhan.co).');
 
+      // Owner rule: refresh the scrip master on EVERY app start, before any
+      // other boot job — new listings/expiries must never wait on a stale cache.
+      // The cached copy is only a fallback when the download itself fails.
       let text = null;
       let age = Infinity;
       try { age = Date.now() - fs.statSync(MASTER_CACHE).mtimeMs; } catch { /* no cache yet */ }
-      if (age < MASTER_MAX_AGE_MS) {
-        text = fs.readFileSync(MASTER_CACHE, 'utf8');
-      } else {
-        try {
-          const res = await fetch(MASTER, { headers: { 'User-Agent': 'Mozilla/5.0 (order-flow)' }, signal: AbortSignal.timeout(120_000) });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          text = await res.text();
-          fs.mkdirSync(path.dirname(MASTER_CACHE), { recursive: true });
-          fs.writeFileSync(MASTER_CACHE, text);
-        } catch (error) {
-          if (age < Infinity) {
-            console.warn(`dhan: master download failed (${error?.message || error}); using the cached copy from ${Math.round(age / 3600_000)}h ago`);
-            text = fs.readFileSync(MASTER_CACHE, 'utf8');
-          } else {
-            throw new Error(`Dhan instrument master unavailable: ${error?.message || error}`);
-          }
+      try {
+        const res = await fetch(MASTER, { headers: { 'User-Agent': 'Mozilla/5.0 (order-flow)' }, signal: AbortSignal.timeout(120_000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        text = await res.text();
+        fs.mkdirSync(path.dirname(MASTER_CACHE), { recursive: true });
+        fs.writeFileSync(MASTER_CACHE, text);
+        console.log('dhan: scrip master refreshed at boot');
+      } catch (error) {
+        if (age < Infinity) {
+          console.warn(`dhan: master download failed (${error?.message || error}); using the cached copy from ${Math.round(age / 3600_000)}h ago`);
+          text = fs.readFileSync(MASTER_CACHE, 'utf8');
+        } else {
+          throw new Error(`Dhan instrument master unavailable: ${error?.message || error}`);
         }
       }
 
