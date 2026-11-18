@@ -7,7 +7,6 @@ import { useFlowFocus, type FocusState } from './flowFocus';
 import { BuildMark, buildUpText, ChangeText, DotMeter, heatStyle, pctText, TickFlash, signedText, Spark, toneOf, windowCandles, shortSector } from './FlowParts';
 import { SymbolMark } from '@/components/common/SymbolMark';
 import { FlowPopup } from './FlowPopup';
-import { demoFeatured } from './demoFeatured';
 import { levelText, type FlowSector, type FlowSettings, type FlowStock, type MarketFlow } from './marketFlowModel';
 import { useBox } from './useBox';
 
@@ -141,9 +140,10 @@ function DiagramBody({ flow, settings, status, W, H }: FlowDiagramProps & { W: n
   // ── Tiles: the small ones (every name on the side but the featured), the tall ones and the cards ──
   const sides = useMemo(() => (['bullish', 'bearish'] as const).map(side => {
     const real = flow.featured[side].slice(0, layout.perHalf);
-    // While the futures are read, demo cards on the side's real leaders hold the slots, with their own paths.
-    const demo = real.length === 0 && flow.futures.pending > 0;
-    const featured = demo ? demoFeatured(flow[side], side, layout.perHalf) : real;
+    // No synthetic DEMO cards: while futures settle, the side's real leaders
+    // (spot reads) hold the big slots, then futures-confirmed featured replace them.
+    const demo = false;
+    const featured = real.length ? real : flow[side].slice(0, layout.perHalf);
     const lead = new Set(featured.map(stock => stock.symbol));
     const rest = flow[side].filter(stock => !lead.has(stock.symbol));
     const { rows } = smallBoxes(layout, side, 0);

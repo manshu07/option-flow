@@ -512,7 +512,10 @@ export function buildMarketFlow(
   let latestAt: number | null = null;
   for (const stock of partial) if (stock.fut) latestAt = Math.max(latestAt ?? 0, stock.fut.to);
   const settledShare = total ? (total - pending) / total : 1;
-  const featured = settledShare >= FEATURED_HOLD_SHARE
+  // Show real featured once ≥90% settled OR once every fetch has resolved
+  // (pending=0) — a few failed reads must not leave the board blank after load.
+  const featuredReady = settledShare >= FEATURED_HOLD_SHARE || pending === 0;
+  const featured = featuredReady
     ? { bullish: featuredOf(bullish, 'LONG_BUILD'), bearish: featuredOf(bearish, 'SHORT_BUILD') }
     : { bullish: [], bearish: [] };
   return {
