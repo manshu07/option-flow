@@ -640,6 +640,59 @@ export function createDhanProvider(universe) {
     }
   }
 
+  /** Instant prev-day seed from yesterday's last captured minute snapshot: one
+   *  ~1.4 MB file holds every leg's OI/close — the whole universe seeds in one
+   *  read instead of the ~11-minute REST sweep. The REST seed loop still runs
+   *  afterwards for IV/delta and the full-chain snapshots. */
+  function seedPrevDayFromDisk(session) {
+    const dataDir = path.join(ROOT, 'data', 'dhan');
+    let dirs = [];
+    try {
+      dirs = fs.readdirSync(dataDir, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name) && entry.name < session)
+        .map(entry => entry.name)
+        .sort()
+        .reverse();
+    } catch { return false; }
+    for (const date of dirs) {
+      const dir = path.join(dataDir, date);
+      let files = [];
+      try { files = fs.readdirSync(dir).filter(f => /^\d{4}\.json$/.test(f)).sort(); } catch { continue; }
+      if (!files.length) continue; // cleaned after archive — try the older day
+      let snap;
+      try { snap = JSON.parse(fs.readFileSync(path.join(dir, files[files.length - 1]), 'utf8')); }
+      catch (error) { console.warn(`dhan: disk seed could not parse ${date}/${files[files.length - 1]}: ${error?.message || error}`); continue; }
+      const bySymbol = new Map((Array.isArray(snap?.series) ? snap.series : []).map(item => [item?.s, item]));
+      let legs = 0;
+      for (const held of map.values()) {
+        const rows = bySymbol.get(held.symbol);
+        if (!rows) continue;
+        const rowMap = new Map((Array.isArray(rows.r) ? rows.r : []).filter(row => Array.isArray(row)).map(row => [`${row[0]}:${row[1]}`, row]));
+        const legSeg = SEG_BYTE[held.exchSeg] ?? SEG_BYTE.NSE_FNO;
+        const windows = [
+          held.optionStrikes?.window?.length ? { window: held.optionStrikes.window, ids: held.optionStrikes.ids } : null,
+          held.nextWindow?.window?.length ? { window: held.nextWindow.window, ids: held.nextWindow.ids } : null,
+        ].filter(Boolean);
+        for (const { window, ids } of windows) {
+          for (const strike of window) {
+            const legsById = ids.get(strike) ?? {};
+            for (const [side, legKey] of [[0, legsById.CE], [1, legsById.PE]]) {
+              const row = rowMap.get(`${strike}:${side}`);
+              if (!legKey || !row) continue;
+              record(legSeg, legKey, { prevOi: num(row[5]), prevClose: num(row[3]), prevVolume: num(row[6]) });
+              legs += 1;
+            }
+          }
+        }
+      }
+      if (legs > 0) {
+        console.log(`dhan: prev-day seeded from ${date}/${files[files.length - 1]} — ${legs} legs instantly (REST seed continues for IV/delta)`);
+        return true;
+      }
+    }
+    return false;
+  }
+
   async function runSeedLoop() {
     // ~1 request every 3 s: the first pass seeds the whole universe in about
     // eleven minutes, entirely inside the documented Option Chain limit. The
@@ -984,6 +1037,10 @@ export function createDhanProvider(universe) {
       }, 60_000);
       // Prev-day seed: fills previous-day OI (and IV/delta) for every subscribed
       // strike, which the board needs for "positions opened with the move".
+      // Instant prev-day OI/close from yesterday's last snapshot — the REST
+      // seed loop that follows only tops up IV/delta and full-chain snapshots.
+      const diskSeeded = seedPrevDayFromDisk(session);
+      if (!diskSeeded) console.warn('dhan: no prior-session snapshot on disk — falling back to the full REST seed');
       runSeedLoop().catch(() => undefined);
       // Watchdog, per connection: a half-open socket keeps readyState OPEN
       // while receiving nothing. Any connection silent for 45 s (or one that
