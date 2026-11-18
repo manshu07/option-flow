@@ -1157,6 +1157,8 @@ server.listen(PORT, HOST, async () => {
             broadcastChatIds: activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)),
             observations,
             watchedSymbols,
+            planMarket: state.latest,
+            ownerChatId: process.env.TELEGRAM_CHAT_ID ?? null,
             send: sendTelegram,
             log,
           });

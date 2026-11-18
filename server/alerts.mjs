@@ -468,6 +468,77 @@ function eodBroadcasts(digestState, observations, date, pendingEvents = []) {
   return bodies.map(body => `${body}\n\n${BROADCAST_FOOTER}`);
 }
 
+const compactOi = value => {
+  if (!Number.isFinite(value) || Math.abs(value) < 0) return null;
+  return Math.abs(value) >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M`
+    : Math.abs(value) >= 100_000 ? `${(value / 100_000).toFixed(1)}L`
+      : Math.abs(value) >= 1_000 ? `${(value / 1_000).toFixed(1)}K`
+        : String(Math.round(value));
+};
+
+function nearestOiWall(series, spot, side) {
+  const candidates = (Array.isArray(series?.r) ? series.r : []).filter(row => Array.isArray(row)
+    && row[1] === side && Number.isFinite(row[0]) && Number.isFinite(row[4]) && row[4] > 0
+    && (side === 0 ? row[0] >= spot : row[0] <= spot));
+  candidates.sort((a, b) => side === 0 ? a[0] - b[0] : b[0] - a[0]);
+  const row = candidates[0];
+  return row ? `${row[0]} ${side === 0 ? 'CE' : 'PE'} (${compactOi(row[4])})` : null;
+}
+
+function nextSessionDate(date) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date ?? ''));
+  if (!match) return null;
+  const day = new Date(`${date}T12:00:00+05:30`).getUTCDay();
+  const offset = day === 5 ? 3 : 1; // Friday → Monday, else next calendar day
+  const next = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + offset));
+  const iso = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+  return RE_SESSION_DATE.test(iso) ? iso : null;
+}
+
+const RE_SESSION_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Owner-approved next-day plan: data-level triggers only — bias, close, OI, walls. */
+export function nextDayPlanMessage(market, dailyEvents, { max = 5, date = null } = {}) {
+  if (!market || typeof market.date !== 'string') return null;
+  const movers = marketMovers(market);
+  const firedSymbols = [...new Set([...(dailyEvents instanceof Map ? dailyEvents.values() : [])]
+    .map(event => event?.rule?.type === 'buildup' ? event.rule?.symbol : null)
+    .filter(symbol => typeof symbol === 'string'))];
+  const ranked = firedSymbols.length
+    ? movers.filter(mover => firedSymbols.includes(mover.symbol)).map(mover => ({ mover, rank: Math.abs(Number(mover.oiPct ?? 0)) }))
+    : movers.slice(0, 3).map(mover => ({ mover, rank: Math.abs(Number(mover.oiPct ?? 0)) }));
+  ranked.sort((left, right) => right.rank - left.rank);
+
+  const seriesFor = symbol => (Array.isArray(market?.series) ? market.series : []).find(item => item?.s === symbol) ?? null;
+  const lines = [];
+  for (const { mover } of ranked.slice(0, max)) {
+    const series = seriesFor(mover.symbol);
+    if (!series) continue;
+    const spot = Number.isFinite(series.sp) ? series.sp : null;
+    if (spot == null) continue;
+    const ce = nearestOiWall(series, spot, 0);
+    const pe = nearestOiWall(series, spot, 1);
+    const parts = [`• <b>${escapeHtml(mover.symbol)}</b>${mover.buildup ? ` ${escapeHtml(mover.buildup)}` : ''}`,
+      `close ${spot.toFixed(2)}${Number.isFinite(mover.changePct) ? ` (${mover.changePct >= 0 ? '+' : '−'}${Math.abs(mover.changePct).toFixed(1)}%)` : ''}`,
+      Number.isFinite(mover.oiPct) ? `OI ${mover.oiPct >= 0 ? '+' : '−'}${Math.abs(mover.oiPct).toFixed(1)}%` : null,
+      ce && pe ? `walls ${ce} / ${pe}` : (ce || pe) ? `wall ${ce ?? pe}` : null,
+    ].filter(Boolean);
+    lines.push(parts.join(' · '));
+  }
+  if (!lines.length) return null;
+
+  const planDate = date ?? market.date;
+  const heading = `🎯 <b>Next-day watchlist</b> · ${escapeHtml(nextSessionDate(planDate) ?? planDate)}`;
+  const limit = 900 - BROADCAST_FOOTER.length - heading.length - 4;
+  const kept = [];
+  for (const line of lines) {
+    if ([...kept, line].join('\n').length > limit) break;
+    kept.push(line);
+  }
+  if (!kept.length) return null;
+  return `${heading}\n${kept.join('\n')}\n\n${BROADCAST_FOOTER}`;
+}
+
 function recipientsFor(chatIds) {
   const ownerId = process.env.TELEGRAM_CHAT_ID == null ? null : String(process.env.TELEGRAM_CHAT_ID);
   return [...new Set((Array.isArray(chatIds) ? chatIds : [])
@@ -676,7 +747,7 @@ export async function runAlerts(market, {
 }
 
 /** Flush queued build-up/top-mover items and the 15:45 subscriber EOD report. */
-export async function flushScheduledDigests({ digestState, now = Date.now(), broadcastChatIds = [], observations = [], watchedSymbols = null, send = sendTelegram, log = () => {} } = {}) {
+export async function flushScheduledDigests({ digestState, now = Date.now(), broadcastChatIds = [], observations = [], watchedSymbols = null, planMarket = null, ownerChatId = null, send = sendTelegram, log = () => {} } = {}) {
   if (!digestState) return { sent: 0, skipped: 'no digest state' };
   const dayKey = istDateKey(now);
   prepareDigestState(digestState, dayKey);
@@ -700,6 +771,8 @@ export async function flushScheduledDigests({ digestState, now = Date.now(), bro
   if (dueSlots.includes(15 * 60 + 45)) {
     const messages = eodBroadcasts(digestState, observations, dayKey, events);
     if (observationLines.length) messages[messages.length - 1] = appendObservationSection(messages[messages.length - 1], observationLines);
+    const plan = planMarket ? nextDayPlanMessage(planMarket, digestState.dailyEvents, { date: dayKey }) : null;
+    if (plan) messages.push(plan);
     for (const chatId of subscribers) {
       for (const message of messages) {
         await pause(30);
@@ -708,6 +781,16 @@ export async function flushScheduledDigests({ digestState, now = Date.now(), bro
         } catch (error) {
           log(`telegram EOD subscriber ${chatId} not sent (${String(error?.message || error)})`);
         }
+      }
+    }
+    // Owner parity ("sabko same"): the plan reaches the owner chat too — the rest
+    // of the EOD stays subscriber-only, the owner already saw its events live.
+    if (plan && ownerChatId != null && String(ownerChatId) !== '') {
+      await pause(30);
+      try {
+        safeLogResult(log, 'telegram EOD plan owner', await send(plan, { chatId: Number(ownerChatId), parseMode: 'HTML', retry: true }));
+      } catch (error) {
+        log(`telegram EOD plan owner not sent (${String(error?.message || error)})`);
       }
     }
     digestState.lastDigestAt = now;

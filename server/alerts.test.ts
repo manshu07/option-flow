@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAlertDigestState, evaluateAlerts, flushScheduledDigests, runAlerts } from './alerts.mjs';
+import { createAlertDigestState, evaluateAlerts, flushScheduledDigests, nextDayPlanMessage, runAlerts } from './alerts.mjs';
 
 const NOW = Date.parse('2026-11-16T04:17:00Z'); // 09:47 IST
 const MINUTE = 60_000;
@@ -326,5 +326,59 @@ describe('subscriber observation digest section', () => {
     expect(sent[0].text).not.toMatch(/jev|quality|watch/i);
     expect(sent[0].text.trimEnd().endsWith('to opt out')).toBe(true);
     expect(digestState.lastDigestAt).toBe(Date.parse('2026-11-16T10:15:00Z'));
+  });
+});
+
+describe('next-day watchlist', () => {
+  const planRows: number[][] = [
+    [26_000, 0, 210, 200, 1_800_000, 1_200_000, 80_000], // CE wall above spot
+    [25_000, 1, 95, 85, 1_500_000, 900_000, 60_000], // PE wall below spot
+  ];
+  const planMarket = () => ({
+    date: '2026-11-16',
+    series: [{ s: 'NIFTY', k: 'index', e: '2026-11-26', t: NOW, sp: 25_400, pc: 25_144, r: planRows }],
+  });
+  const buildupEvents = () => new Map([
+    ['buildup:nifty-buildup', { rule: { type: 'buildup', id: 'nifty-buildup', symbol: 'NIFTY' }, items: [] }],
+  ]);
+
+  it('renders bias, close, OI and walls for fired build-up symbols with the next session date', () => {
+    const message = nextDayPlanMessage(planMarket(), buildupEvents());
+    expect(message).toContain('🎯 <b>Next-day watchlist</b> · 2026-11-17');
+    expect(message).toContain('<b>NIFTY</b> LONG BUILD-UP');
+    expect(message).toContain('close 25400.00 (+1.0%');
+    expect(message).toContain('walls 26000 CE (1.8M) / 25000 PE (1.5M)');
+    expect(message).toContain('📊 educational market-data digest');
+    expect(message).not.toMatch(/jev|quality|advisor|watch probability/i);
+  });
+
+  it('returns null when the fired symbol has no market series, and falls back to top movers otherwise', () => {
+    const unknown = new Map([['buildup:x', { rule: { type: 'buildup', id: 'x', symbol: 'NOBODY' }, items: [] }]]);
+    expect(nextDayPlanMessage(planMarket(), unknown)).toBeNull();
+    const fallback = nextDayPlanMessage(planMarket(), new Map());
+    expect(fallback).toContain('<b>NIFTY</b>');
+    expect(nextDayPlanMessage(null, buildupEvents())).toBeNull();
+  });
+
+  it('sends the plan as the last message to subscribers and once to the owner chat', async () => {
+    const sent: { text: string; chatId?: number }[] = [];
+    const digestState = createAlertDigestState() as any;
+    digestState.dailyEvents.set('buildup:nifty-buildup', { rule: { type: 'buildup', id: 'nifty-buildup', symbol: 'NIFTY' }, items: [] });
+    const result = await flushScheduledDigests({
+      digestState,
+      now: Date.parse('2026-11-16T10:15:00Z'), // 15:45 IST
+      broadcastChatIds: [711],
+      observations: [],
+      planMarket: planMarket(),
+      ownerChatId: '999',
+      send: async (text: string, options?: { chatId?: number }) => { sent.push({ text, chatId: options?.chatId }); return { sent: true }; },
+      log: () => {},
+    });
+    const plans = sent.filter(item => item.text.includes('Next-day watchlist'));
+    expect(plans).toHaveLength(2); // subscriber 711 + owner 999
+    expect(plans[0].chatId).toBe(711);
+    expect(plans[1].chatId).toBe(999);
+    expect(plans[0].text).toContain('NIFTY');
+    expect(result.messages).toBeGreaterThanOrEqual(2); // EOD body + plan
   });
 });
