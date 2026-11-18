@@ -353,8 +353,10 @@ export function orbStrategy(snapshot, card, now) {
   if (rangeCandles.length < 3) return { qualifies: false, label: 'Strategy: ORB — opening range pending (need the 09:20 candle)' };
   const high = Math.max(...rangeCandles.map(candle => Number.isFinite(candle.high) ? candle.high : candle.close));
   const low = Math.min(...rangeCandles.map(candle => Number.isFinite(candle.low) ? candle.low : candle.close));
+  const px = value => Number(value.toFixed(2));
+  const signedPct = value => `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(1)}%`;
   const spot = Number.isFinite(card?.spot) ? card.spot : null;
-  if (!spot) return { qualifies: false, label: `Strategy: ORB — range ${low}–${high}, spot unavailable` };
+  if (!spot) return { qualifies: false, label: `Strategy: ORB — range ${px(low)}–${px(high)}, spot unavailable` };
   const bullish = card.bias !== 'bearish';
   const level = bullish ? high : low;
   const broke = bullish ? spot > level : spot < level;
@@ -364,12 +366,12 @@ export function orbStrategy(snapshot, card, now) {
     return { qualifies: false, label: `Strategy: ORB ⏳ — extended +${extendedPct.toFixed(1)}% opener — wait for a VWAP touch` };
   }
   if (!broke) {
-    return { qualifies: false, label: `Strategy: ORB ✗ — no breakout yet (range ${low}–${high})` };
+    return { qualifies: false, label: `Strategy: ORB ✗ — no breakout yet (range ${px(low)}–${px(high)})` };
   }
   if (oiPct == null || oiPct < 5) {
-    return { qualifies: false, label: `Strategy: ORB ✗ — broke ${level} but OI ${oiPct == null ? 'unknown' : `+${oiPct.toFixed(1)}%`} (<5% needed)` };
+    return { qualifies: false, label: `Strategy: ORB ✗ — broke ${px(level)} but OI ${oiPct == null ? 'unknown' : signedPct(oiPct)} (<5% needed)` };
   }
-  return { qualifies: true, label: `Strategy: ORB ✓ — broke ${level} · OI +${oiPct.toFixed(1)}% · SL zone ${bullish ? low : high}` };
+  return { qualifies: true, label: `Strategy: ORB ✓ — broke ${px(level)} · OI ${signedPct(oiPct)} · SL zone ${px(bullish ? low : high)}` };
 }
 
 async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, now, log }) {
