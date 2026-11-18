@@ -50,7 +50,7 @@
  * the instrument map current.
  */
 const API = 'https://api.dhan.co/v2';
-const MASTER = 'https://images.dhan.co/api-scrip-master.csv';
+const MASTER = 'https://images.dhan.co/api-data/api-scrip-master.csv';
 const FEED_HOSTS = ['wss://api-feed.dhan.co', 'wss://ws-feed.dhan.co'];
 /** The master is ~27 MB and Dhan throttles repeat downloads by IP: cache it on
  *  disk and refresh at most every two hours (Dhan publishes it ~8 am and 1 pm IST). */
