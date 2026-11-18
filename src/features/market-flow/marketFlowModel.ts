@@ -92,7 +92,7 @@ export interface FlowCheck {
   note: string;
 }
 
-export interface FlowCandle { at: number; close: number; oi: number }
+export interface FlowCandle { at: number; close: number; oi: number; open?: number | null; high?: number | null; low?: number | null }
 
 export interface FlowProfileRow { strike: number; put: number; call: number }
 

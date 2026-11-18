@@ -168,7 +168,10 @@ function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlo
     const pad = { top: 8, right: 80, bottom: 18, left: 6 };
     let low = Infinity;
     let high = -Infinity;
-    for (const candle of candles) { low = Math.min(low, candle.close); high = Math.max(high, candle.close); }
+    for (const candle of candles) {
+      low = Math.min(low, candle.close, Number.isFinite(candle.low) ? (candle.low as number) : candle.close);
+      high = Math.max(high, candle.close, Number.isFinite(candle.high) ? (candle.high as number) : candle.close);
+    }
     const base = stock.fut?.priceFrom ?? null;
     if (base != null) { low = Math.min(low, base); high = Math.max(high, base); }
     if (stock.zone) { low = Math.min(low, stock.zone.low); high = Math.max(high, stock.zone.high); }

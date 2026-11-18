@@ -91,6 +91,11 @@ const DAY_MINUTES = 24 * 60;
 export function candlesFromCloses(candles: readonly FlowCandle[], minutes = 5): Candle[] {
   const out: Candle[] = [];
   if (!candles.length) return out;
+  // Real OHLC when the capture carries it (post 2026-11-18); fall back to the
+  // close for older close-only minutes so historical charts still render.
+  const hi = (c: FlowCandle) => (Number.isFinite(c.high) ? (c.high as number) : c.close);
+  const lo = (c: FlowCandle) => (Number.isFinite(c.low) ? (c.low as number) : c.close);
+  const op = (c: FlowCandle) => (Number.isFinite(c.open) ? (c.open as number) : c.close);
   let current: Candle | null = null;
   let bucket = 0;
   for (const candle of candles) {
@@ -100,12 +105,12 @@ export function candlesFromCloses(candles: readonly FlowCandle[], minutes = 5): 
     const key = istDay * DAY_MINUTES + index;
     if (!current || key !== bucket) {
       const at = candle.at - (minuteOfDay - SESSION_OPEN_MINUTE - index * minutes) * MINUTE;
-      current = { at, open: candle.close, high: candle.close, low: candle.close, close: candle.close };
+      current = { at, open: op(candle), high: hi(candle), low: lo(candle), close: candle.close };
       out.push(current);
       bucket = key;
     } else {
-      current.high = Math.max(current.high, candle.close);
-      current.low = Math.min(current.low, candle.close);
+      current.high = Math.max(current.high, hi(candle));
+      current.low = Math.min(current.low, lo(candle));
       current.close = candle.close;
     }
   }
