@@ -58,6 +58,10 @@ Gates: `npm test`, `npx tsc --noEmit`, `npm run build` clean.
 
 ## S2 — ATR/delta-aware levels + liquidity gate (next batch)
 
+**Delivered 5ed5ce2.** Levels use futures ATR × captured delta (per
+`docs/ATR_RANGE_SPEC.md` r2 — the option's own premium ATR ratio was rejected);
+gate shipped as OI ≥ 10k, day volume ≥ 1k, spread ≤ 2% of mid.
+
 - Replace fixed `STOP_FRACTION`/`TGT1_FRACTION`/`TGT2_FRACTION` % of premium as the
   default: `sl = entry − k·ATR_premium`, `tgt = entry + k·ATR_premium` where
   `ATR_premium` comes from the option's own minute premium series (fallback:
@@ -69,6 +73,11 @@ Gates: `npm test`, `npx tsc --noEmit`, `npm run build` clean.
   fixture with known premium ATR.
 
 ## S3 — Jev quality scale recalibration (after S2)
+
+**Delivered.** Question now asks for 0–100 with confidence anchors;
+`normalizeQuality()` maps 0–100 → 0–1 (auto-detects `>1`, `ADVISOR_QUALITY_SCALE=1|100`
+pins the scale), non-numeric answers count as `unknown` and skip. Skip reasons
+print `quality 45%` / `quality unknown`.
 
 - The quality question returns 0.12–0.20 per pass against a 0.65 gate while
   triage watch reads 0.5–0.7 — the scale is mismatched.

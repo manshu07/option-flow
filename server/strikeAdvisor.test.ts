@@ -167,6 +167,18 @@ describe('advisorQuestions / advisorDecisions', () => {
     expect(unsure.cards).toHaveLength(0);
   });
 
+  it('normalizes a 0-100 quality answer onto the 0-1 gate (P0-S3)', () => {
+    const answers = (quality: number) => ({ quality_MANAPPURAM: { noul: quality }, strike_MANAPPURAM: { choice: 'c1', probabilities: { c1: 0.9 } } });
+    const percent = advisorDecisions([watch], answers(80));
+    expect(percent.cards).toHaveLength(1);
+    expect(percent.cards[0].quality).toBeCloseTo(0.8, 5);
+    expect(advisorDecisions([watch], answers(0.8)).cards).toHaveLength(1);
+    const low = advisorDecisions([watch], answers(45));
+    expect(low.cards).toHaveLength(0);
+    expect(low.skipped[0].reason).toBe('quality 45%');
+    expect(advisorDecisions([watch], { quality_MANAPPURAM: { noul: 'n/a' }, strike_MANAPPURAM: { choice: 'c1', probabilities: { c1: 0.9 } } }).skipped[0].reason).toBe('quality unknown');
+  });
+
   it('uses a stable symbol/session identity across advisor passes', () => {
     const answers = { quality_MANAPPURAM: { noul: 0.8 }, strike_MANAPPURAM: { choice: 'c1', probabilities: { c1: 0.75 } } };
     const first = advisorDecisions([{ ...watch, at: NOW }], answers).cards[0];

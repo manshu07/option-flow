@@ -194,7 +194,7 @@ export function advisorQuestions(symbol, bias, candidates) {
     [`quality_${symbol}`]: {
       type: 'noul',
       instructions: { question: `Do the ${side} premiums and open interest both confirm a ${bias} setup on \`${symbol}\` right now?`, compare: [`\`chain.${symbol}.spot_change_pct\``, `\`chain.${symbol}.candidates\``] },
-      criteria: { true: `The underlying has moved ${bias === 'bearish' ? 'down' : 'up'} today and the near-the-money ${side} premiums show it (positive premium change for ${bias === 'bearish' ? 'PE' : 'CE'}) while that side's OI builds.`, false: 'Premiums disagree with the underlying move (for example decay after the move already happened), or OI does not join, or the moves are noise-level.' },
+      criteria: { true: `The underlying has moved ${bias === 'bearish' ? 'down' : 'up'} today and the near-the-money ${side} premiums show it (positive premium change for ${bias === 'bearish' ? 'PE' : 'CE'}) while that side's OI builds. Confidence anchors: 90%+ = clean build-up, walls aligned, liquid strike; 65–89% = setup holds but one leg is weak; 40–64% = mixed; below 30% = noise. Answer with that confidence, not a bare yes.`, false: 'Premiums disagree with the underlying move (for example decay after the move already happened), or OI does not join, or the moves are noise-level.' },
     },
     [`strike_${symbol}`]: {
       type: 'choice',
@@ -205,18 +205,31 @@ export function advisorQuestions(symbol, bias, candidates) {
   return questions;
 }
 
+/**
+ * Quality arrives on either a 0–1 probability scale or an explicit 0–100
+ * strength score (P0-S3). ADVISOR_QUALITY_SCALE=1 pins 0–1, =100 pins 0–100,
+ * unset auto-detects (>1 means the model answered 0–100). Always returns 0–1.
+ */
+export function normalizeQuality(raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  const pin = Number(process.env.ADVISOR_QUALITY_SCALE) || 0;
+  const scaled = pin === 1 ? value : pin === 100 ? value / 100 : value > 1 ? value / 100 : value;
+  return Math.max(0, Math.min(1, scaled));
+}
+
 /** The advisor's decision table — pure. */
 export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, pickMin = PICK_MIN } = {}) {
   const cards = [];
   const skipped = [];
   for (const watch of watches) {
     const symbol = watch.symbol;
-    const quality = answers?.[`quality_${symbol}`]?.noul;
+    const quality = normalizeQuality(answers?.[`quality_${symbol}`]?.noul);
     const pick = answers?.[`strike_${symbol}`];
     const candidates = watch.candidates ?? [];
     const chosen = candidates.find(c => c.id === pick?.choice);
     if (!(quality >= qualityYes) || !chosen || (pick?.probabilities?.[pick.choice] ?? 0) < pickMin) {
-      skipped.push({ symbol, reason: !(quality >= qualityYes) ? `quality ${quality}` : 'strike pick not decisive' });
+      skipped.push({ symbol, reason: !(quality >= qualityYes) ? `quality ${quality == null ? 'unknown' : `${Math.round(quality * 100)}%`}` : 'strike pick not decisive' });
       continue;
     }
     if (!(chosen.ltp > MIN_ENTRY_PREMIUM)) { skipped.push({ symbol, reason: 'premium too thin' }); continue; }
