@@ -985,7 +985,7 @@ async function handle(req, res) {
 
   if (p === '/api/status') {
     return send(res, 200, withCaptureStatus({
-      provider: { id: provider.id, label: provider.label, alwaysLive: Boolean(provider.alwaysLive) },
+      provider: { id: provider.id, label: provider.label, alwaysLive: Boolean(provider.alwaysLive), usage: provider.getUsage?.() ?? null },
       ready: state.ready, clock: now(), session: getLatestTradingSessionDate(new Date(now())),
       market: state.latest ? { at: state.latest.t, date: state.latest.date, series: state.latest.series.length, nextExpiry: state.latest.series.filter(item => item?.next).length } : null,
       lastBuild: state.lastBuild && { at: state.lastBuild.at, series: state.lastBuild.series, failed: state.lastBuild.failed },

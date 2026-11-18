@@ -152,6 +152,20 @@ export function createDhanProvider(universe) {
   /** The feed: one connection for underlyings + futures, the rest for option strikes. */
   const conns = [];
   let feedHealthyAt = 0, feedStartedAt = 0, feedWant = new Set(), rebalanceTimer = null, watchdogTimer = null;
+  // Resource ledger (owner ask): every REST call, WS packet, and the heap are
+  // counted so usage jumps are traceable instead of guessed at.
+  const usage = {
+    startedAt: Date.now(),
+    restCalls: 0, rest429: 0,
+    packets: 0, packetBytes: 0,
+    lastHeapMb: 0, peakHeapMb: 0,
+  };
+  const usageTick = () => {
+    const heapMb = process.memoryUsage().heapUsed / 1_048_576;
+    usage.lastHeapMb = Math.round(heapMb);
+    usage.peakHeapMb = Math.max(usage.peakHeapMb, Math.round(heapMb));
+    console.log(`dhan: usage 5m — rest ${usage.restCalls} (429s ${usage.rest429}), ws ${usage.packets} pkts/${Math.round(usage.packetBytes / 1_048_576)}MB, heap ${usage.lastHeapMb}MB (peak ${usage.peakHeapMb}MB)`);
+  };
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -203,7 +217,7 @@ export function createDhanProvider(universe) {
       }
       throw new Error('Dhan rejected the credentials (HTTP 401). Generate a fresh access token on web.dhan.co → My Profile → DhanHQ Trading Access.');
     }
-    if (res.status === 429 && retry) { await sleep(3000); return post(path, payload, { retry: false, timeoutMs }); }
+    if (res.status === 429 && retry) { usage.rest429 += 1; await sleep(3000); return post(path, payload, { retry: false, timeoutMs }); }
     if (!res.ok) throw new Error(`Dhan ${res.status} ${path}: ${(await res.text()).slice(0, 200)}`);
     const body = await res.json();
     // Chart endpoints answer with the payload itself; the rest wrap it in { status, data }.
@@ -246,6 +260,8 @@ export function createDhanProvider(universe) {
   }
 
   function parseFeed(buf) {
+    usage.packets += 1;
+    usage.packetBytes += buf.length;
     let off = 0;
     while (off + 8 <= buf.length) {
       const code = buf.readUInt8(off);
@@ -972,6 +988,11 @@ export function createDhanProvider(universe) {
       // never received anything a minute after opening) is force-closed so its
       // onclose handler reconnects it.
       if (watchdogTimer) clearInterval(watchdogTimer);
+      // Resource ledger: one plain line every 5 minutes — REST calls, WS
+      // packets/bytes, heap. The owner reads usage jumps from this log.
+      const usageTimer = setInterval(usageTick, 5 * 60_000);
+      usageTimer.unref();
+      usageTick();
       watchdogTimer = setInterval(() => {
         const now = Date.now();
         for (let i = 0; i < conns.length; i++) {
@@ -994,6 +1015,11 @@ export function createDhanProvider(universe) {
 
     async expiries(u) {
       return entry(u.symbol).expiries;
+    },
+
+    getUsage() {
+      // No logging here — /api/status is polled; the 5-minute tick owns the log line.
+      return { restCalls: usage.restCalls, rest429: usage.rest429, packets: usage.packets, packetMb: Math.round(usage.packetBytes / 1_048_576), heapMb: usage.lastHeapMb, peakHeapMb: usage.peakHeapMb, since: usage.startedAt };
     },
 
     async optionChain(u, expiry) {
