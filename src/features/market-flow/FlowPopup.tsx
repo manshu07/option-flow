@@ -160,7 +160,13 @@ const levelPair = (first: FlowLevel | null, second: FlowLevel | null, letter: st
 function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlow['window'] }) {
   const [ref, box] = useBox<HTMLDivElement>();
   const [tf, setTf] = useRememberedChoice<ChartTf>('marketFlow.miniChart.tf:v1', CHART_TFS, 'auto');
-  const candles = windowCandles(stock);
+  // Minimum 30 bars per timeframe: start from the window, extend to the full
+  // session when the window is too short, then cap the bucket size so at least
+  // 30 bars render. All drawn features (levels, zone, base, tags) are kept.
+  const winCandles = windowCandles(stock);
+  const desiredSpan = tf === 'auto' ? (winCandles.length > 120 ? 5 : winCandles.length > 30 ? 2 : 1) : tf;
+  const candles = winCandles.length < 30 * desiredSpan && stock.candles.length ? stock.candles : winCandles;
+  const span = Math.max(1, Math.min(desiredSpan, Math.floor(candles.length / 30) || 1));
   const note = stock.futures === 'pending' ? 'Loading future…' : stock.futures === 'failed' ? 'Could not load future' : stock.futures === 'unavailable' ? 'No future listed for this underlying' : candles.length < 2 ? 'Too few minutes yet for a line' : null;
   const { width: w, height: h } = box;
   let body = null;
@@ -183,8 +189,7 @@ function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlo
     for (const [, level] of levels) { low = Math.min(low, level.strike); high = Math.max(high, level.strike); }
     const margin = (high - low) * 0.06 || range * 0.06;
     low -= margin; high += margin;
-    // Candles from the minute closes: Auto picks 5 minutes for a day and 1 for the short windows; a chosen timeframe always applies.
-    const span = tf === 'auto' ? (candles.length > 120 ? 5 : candles.length > 30 ? 2 : 1) : tf;
+    // Candles bucketed at the (capped) span so at least 30 bars render.
     const bars = candlesFromCloses(candles, span);
     // A bucket starts at the session clock, which can sit before the window's first minute: the axis follows.
     const t0 = Math.min(stock.fut?.from ?? candles[0].at, bars[0].at);
