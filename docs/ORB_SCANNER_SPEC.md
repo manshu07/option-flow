@@ -1,8 +1,27 @@
 # ORB scanner — opening-range breakout automation (owner's playbook, spec)
 
-**Owner:** the 9:15–9:30 playbook, stated 2026-11-17. **Status:** spec only —
-nothing implemented. **Kept deliberately separate** from the December-expiry
-work (owner: "for ORB create something separated, don't combine everything").
+**Owner:** the 9:15–9:30 playbook, stated 2026-11-17. **Status:** IMPLEMENTED
+2026-11-18 (S1–S4) — `server/orbModel.mjs` (pure), `server/orb.mjs` (scan +
+schedule), `/api/orb`, 09:35 / 10:05 pushes. **Kept deliberately separate** from
+the December-expiry work (owner: "for ORB create something separated, don't
+combine everything").
+
+**Implementation notes (deviations from the first draft, all deliberate):**
+
+- **A quiet minute prints no candle.** Dhan's intraday series skips minutes with
+  no trades, so an illiquid future often has 1–3 candles inside 09:15–09:20. The
+  range uses whatever the window holds instead of demanding 5 candles.
+- **The break direction is where price went**, not where the first five minutes
+  opened; a stock far below its opening range is a downside break, not "armed".
+- **Participation is read on the traded side:** CE OI for an upside break, PE OI
+  for a downside one (summed over the captured near-expiry chain). A down day
+  unwinds futures OI, so futures OI alone could never confirm a bearish break —
+  on 18-Nov that change turned 0 qualified breakouts into 7. Futures OI is the
+  fallback when the chain has no baseline.
+- **Volume for VWAP** comes from Dhan intraday `volume` plus per-tick cumulative
+  deltas; where no volume exists the VWAP is null and the label says so.
+- **PDH/PDL** come from the daily-candle read (`prevHigh`/`prevLow` on the
+  futures month), so they appear once a symbol's daily backfill has run.
 
 **The playbook it automates:**
 1. 09:15–09:20 — first 5-minute candle per stock = the opening range.

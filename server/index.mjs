@@ -5,6 +5,7 @@
  *   GET /api/market                  the market file: every underlying's nearest-expiry chain
  *   GET /api/market/<date>/<HHMM>    an earlier minute of today (the 15m / 1h windows)
  *   GET /api/futures/<SYMBOL>?session=YYYY-MM-DD   its futures months and 1-minute candles
+ *   GET /api/orb                     the ORB scanner list for the current session
  *   GET /api/replay/<date>/manifest  captured market minutes and futures coverage
  *   GET /api/replay/<date>/futures/<SYMBOL>?asOf=HHMM  persisted futures at a cursor
  *   GET /api/strikes/<SYMBOL>?date=&asOf=HHMM      one underlying's per-strike premium
@@ -42,6 +43,7 @@ import { createProvider } from './providers/index.mjs';
 import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, ReplayDataError, REPLAY_DATE, REPLAY_SYMBOL, truncateFutures } from './replayStorage.mjs';
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
 import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAlerts } from './alerts.mjs';
+import { orbScan, orbSlotDue, orbMessage } from './orb.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { liveErrorMessage, liveSnapshotMessage, obsSnapshotMessage, oiSnapshotMessage } from './liveCommand.mjs';
@@ -90,6 +92,9 @@ const ladderCache = { session: '', bySymbol: new Map() };
 const state = { ready: false, building: false, latestJson: null, latest: null, lastBuild: null, lastError: null };
 const alertState = new Map();
 const alertDigestState = createAlertDigestState();
+// ORB scanner (P1): one scan per day slot, cached for /api/orb between builds.
+const orbState = { session: null, sent: new Set(), last: null };
+const ORB_SECTORS = new Map(universe.filter(u => typeof u?.sector === 'string').map(u => [u.symbol, u.sector]));
 const journalMinuteIndexes = new Map();
 let previousOiSessionDate = null;
 let previousOiBaseline = new Map();
@@ -146,6 +151,26 @@ async function readJournalMinute(date, hhmm) {
   // the API. The normal pass always runs at 15:40 while the raw minutes still
   // exist; a missed day is backfilled offline (see docs/JOURNAL_ARCHIVE.md).
   return null;
+}
+
+/**
+ * The ORB scan for a market file: opening range + breakout state per symbol
+ * from the persisted futures snapshots, gated by the morning's leading
+ * sectors. Pure model, disk reads only — no new subscriptions or timers.
+ */
+function computeOrb(at, file) {
+  const session = file?.date ?? getLatestTradingSessionDate(new Date(at));
+  const scan = orbScan({
+    session,
+    now: at,
+    series: file?.series ?? [],
+    sectors: ORB_SECTORS,
+    readSnapshot: symbol => {
+      try { return readFutures(SCAN_DIR, session, symbol); } catch { return null; }
+    },
+  });
+  orbState.last = scan;
+  return scan;
 }
 
 async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
@@ -339,6 +364,22 @@ async function build() {
       if (fired.length) log(`alerts fired: ${fired.length}`);
     } catch (error) {
       log('alerts failed:', String(error?.message || error));
+    }
+    // ORB pushes: one at 09:35 and one at 10:05 IST, day-keyed. Evaluation rides
+    // this build loop — no extra timer, no extra subscriptions.
+    if (process.env.TELEGRAM_BOT_TOKEN && file?.series?.length) {
+      if (orbState.session !== session) { orbState.session = session; orbState.sent = new Set(); }
+      const slot = orbSlotDue(at, orbState.sent);
+      if (slot) {
+        try {
+          const scan = computeOrb(at, file);
+          orbState.sent.add(slot);
+          await sendOwnerAndSubscribers(orbMessage(scan.rows, { slot, date: session }), { parseMode: 'HTML' });
+          log(`orb push ${slot}: ${scan.counts.breakouts} breakout(s), ${scan.counts.extended} extended, ${scan.counts.building} still building`);
+        } catch (error) {
+          log('orb push failed:', String(error?.message || error));
+        }
+      }
     }
     // Throttled to TYPESAFE_TRIAGE_MIN (default 10); never blocks or fails the build.
     runTriage(file, { autoPath: path.join(DATA_DIR, 'alerts.auto.json'), now: at, log })
@@ -1110,6 +1151,18 @@ async function handle(req, res) {
   }
 
   if (p === '/underlyings.json') return serveFile(res, path.join(ROOT, 'public/underlyings.json'), 'public, max-age=3600');
+  if (p === '/api/orb') {
+    const at = now();
+    const session = state.latest?.date ?? getLatestTradingSessionDate(new Date(at));
+    const cached = orbState.last && orbState.last.session === session && Number.isFinite(orbState.last.at) && at - orbState.last.at < 60_000;
+    let scan = cached ? orbState.last : null;
+    if (!scan) {
+      if (!state.latest) return send(res, 503, { error: 'The first market file is still being built.' }, 'application/json', { 'Retry-After': '5' });
+      scan = computeOrb(at, state.latest);
+    }
+    return send(res, 200, { at: scan.at, session: scan.session, leading: scan.leading, counts: scan.counts, rows: scan.rows });
+  }
+
   if (p === '/api/observations') return send(res, 200, { cards: loadObservations(path.join(DATA_DIR, 'observations.json')) });
 
   // The built page; any other path is the page itself (its router is in memory).

@@ -243,7 +243,7 @@ export function createDhanProvider(universe) {
     return held;
   }
 
-  function noteTick(segByte, securityId, price, oi) {
+  function noteTick(segByte, securityId, price, oi, volume) {
     if (!price) return;
     const now = Date.now();
     const minute = istMinute(now);
@@ -256,6 +256,13 @@ export function createDhanProvider(universe) {
       candle.low = Math.min(candle.low ?? price, price);
       if (oi !== undefined) candle.oi = oi;
       else if (candle.oi === undefined) candle.oi = 0;
+      // Dhan's tick volume is the day's cumulative figure; one minute's volume
+      // is the delta from the minute's first cumulative reading. The start is
+      // kept off the candle body so it never reaches the persisted file.
+      if (Number.isFinite(volume) && volume >= 0) {
+        if (candle.volStart === undefined) candle.volStart = volume;
+        candle.volume = Math.max(0, volume - candle.volStart);
+      }
       held.set(minute, candle);
     }
   }
@@ -299,7 +306,7 @@ export function createDhanProvider(universe) {
           open: buf.readFloatLE(off + 34), close: buf.readFloatLE(off + 38),
           high: buf.readFloatLE(off + 42), low: buf.readFloatLE(off + 46),
         });
-        noteTick(seg, id, ltp);
+        noteTick(seg, id, ltp, undefined, buf.readUInt32LE(off + 22));
       } else if (code === 5) {
         const oi = buf.readUInt32LE(off + 8);
         record(seg, id, { oi });
@@ -330,7 +337,7 @@ export function createDhanProvider(universe) {
           open: buf.readFloatLE(off + 46), close: buf.readFloatLE(off + 50),
           high: buf.readFloatLE(off + 54), low: buf.readFloatLE(off + 58),
         });
-        noteTick(seg, id, ltp, oi);
+        noteTick(seg, id, ltp, oi, buf.readUInt32LE(off + 22));
       }
       // code 7 (market status) and 3 (v1 depth) carry nothing we need.
       off += size;
@@ -787,7 +794,11 @@ export function createDhanProvider(universe) {
     const held = futTicks.get(contractId);
     if (!held) return [];
     return [...held.entries()]
-      .map(([at, candle]) => ({ at, open: candle.open ?? candle.close, high: candle.high ?? candle.close, low: candle.low ?? candle.close, close: candle.close, oi: candle.oi ?? 0 }))
+      .map(([at, candle]) => {
+        const out = { at, open: candle.open ?? candle.close, high: candle.high ?? candle.close, low: candle.low ?? candle.close, close: candle.close, oi: candle.oi ?? 0 };
+        if (Number.isFinite(candle.volume)) out.volume = candle.volume;
+        return out;
+      })
       .filter(c => c.close > 0 && Number.isFinite(c.oi))
       .sort((a, b) => a.at - b.at);
   }
@@ -808,26 +819,37 @@ export function createDhanProvider(universe) {
           })
         : Promise.resolve(null),
     ]);
-    let prevClose = null, prevOi = null;
+    let prevClose = null, prevOi = null, prevHigh = null, prevLow = null;
     if (daily?.timestamp?.length) {
       const stamps = daily.timestamp.map(Number);
       for (let i = stamps.length - 1; i >= 0; i--) {
-        if (ymdIst(stamps[i] * 1000) < session) { prevClose = num(daily.close?.[i]); prevOi = num(daily.open_interest?.[i]); break; }
+        if (ymdIst(stamps[i] * 1000) < session) {
+          prevClose = num(daily.close?.[i]);
+          prevOi = num(daily.open_interest?.[i]);
+          prevHigh = num(daily.high?.[i]);
+          prevLow = num(daily.low?.[i]);
+          break;
+        }
       }
     }
     const stamps = (minute?.timestamp ?? []).map(Number);
     const candles = stamps
-      .map((t, i) => ({
-        at: t > 1e12 ? t : t * 1000,
-        open: num(minute.open?.[i]),
-        high: num(minute.high?.[i]),
-        low: num(minute.low?.[i]),
-        close: num(minute.close?.[i]),
-        oi: num(minute.open_interest?.[i]),
-      }))
+      .map((t, i) => {
+        const candle = {
+          at: t > 1e12 ? t : t * 1000,
+          open: num(minute.open?.[i]),
+          high: num(minute.high?.[i]),
+          low: num(minute.low?.[i]),
+          close: num(minute.close?.[i]),
+          oi: num(minute.open_interest?.[i]),
+        };
+        const volume = num(minute.volume?.[i]);
+        if (volume != null && volume >= 0) candle.volume = volume;
+        return candle;
+      })
       .filter(c => Number.isFinite(c.at) && c.close != null && c.close > 0 && Number.isFinite(c.oi))
       .sort((a, b) => a.at - b.at);
-    return { prevClose, prevOi, candles };
+    return { prevClose, prevOi, prevHigh, prevLow, candles };
   }
 
   // ── Strike windows and the rebalancer ─────────────────────────────────────
@@ -1204,7 +1226,7 @@ export function createDhanProvider(universe) {
         const fromFeed = session === today && feedLive;
         if (!fromFeed) {
           const rest = await restFuturesMonth(id, held, expiry, expiryCode, instrument, session, month === 0);
-          return { date: expiry, prevClose: rest.prevClose, prevOi: rest.prevOi, candles: rest.candles };
+          return { date: expiry, prevClose: rest.prevClose, prevOi: rest.prevOi, prevHigh: rest.prevHigh, prevLow: rest.prevLow, candles: rest.candles };
         }
         // One REST backfill per contract per session: yesterday's close and OI,
         // plus the minutes before the feed was subscribed, which its ticks then
@@ -1233,6 +1255,7 @@ export function createDhanProvider(universe) {
                 low: base.low != null ? Math.min(base.low, candle.low) : candle.low,
                 close: candle.close,
                 oi: candle.oi,
+                volume: candle.volume ?? base.volume,
               }
             : candle);
         }
@@ -1260,6 +1283,7 @@ export function createDhanProvider(universe) {
                       low: base.low != null ? Math.min(base.low, item.low) : item.low,
                       close: item.close,
                       oi: item.oi,
+                      volume: item.volume ?? base.volume,
                     }
                   : item);
               }
@@ -1269,13 +1293,18 @@ export function createDhanProvider(universe) {
         }
         let prevClose = feed.prevClose ?? feed.close ?? rest?.prevClose ?? diskNear?.prevClose ?? null;
         let prevOi = feed.prevOi ?? rest?.prevOi ?? diskNear?.prevOi ?? null;
+        // Previous-session high/low (PDH/PDL) feed the ORB scanner; they only
+        // come from the daily-candle read, so a rate-limited backfill leaves
+        // them null rather than inventing a level.
+        const prevHigh = rest?.prevHigh ?? diskNear?.prevHigh ?? null;
+        const prevLow = rest?.prevLow ?? diskNear?.prevLow ?? null;
         // The charts backfill (prev-day OI/close) can be rate-limited; fall back
         // to the previous session's persisted last candle so OI never goes blank.
         if (prevOi == null || prevClose == null) {
           const pd = prevDayFutures(u.symbol, session);
           if (pd) { prevClose = prevClose ?? pd.close; prevOi = prevOi ?? pd.oi; }
         }
-        return { date: expiry, prevClose, prevOi, candles: finalCandles };
+        return { date: expiry, prevClose, prevOi, prevHigh, prevLow, candles: finalCandles };
       }));
     },
 
