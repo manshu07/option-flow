@@ -646,6 +646,8 @@
 .mf-ring text { font-size: 10px; font-weight: 700; fill: var(--text); font-variant-numeric: tabular-nums; }
 .mf-dgcard__pct { font-size: 24px; font-weight: 700; line-height: 1.05; letter-spacing: -0.01em; }
 .mf-dgcard__price { font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mf-dgcard__basis { margin-left: 5px; padding: 0 4px; border: 1px solid var(--flow-hair); border-radius: 4px; font-size: 9.5px; font-weight: 600; letter-spacing: 0.03em; color: var(--text-muted); }
+.mf-dgcard__spot { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mf-dgcard__levels { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, auto); justify-content: space-between; gap: 8px; padding-top: 5px; border-top: 1px solid var(--flow-hair); font-variant-numeric: tabular-nums; }
 .mf-dgcard__levels > span { display: grid; min-width: 0; }
 .mf-dgcard__levels i { font-style: normal; font-size: 10px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-muted); }

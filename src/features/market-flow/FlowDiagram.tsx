@@ -758,7 +758,14 @@ const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false }
             <Ring held={held} counted={counted} />
           </span>
           <ChangeText value={stock.changePct} className="mf-dgcard__pct" />
-          <span className="mf-dgcard__price">₹{fmtPrice(stock.fut?.price ?? stock.spot)} <span className={`mf-tone is-${side}`}>{signedText(stock.fut?.priceChange)}</span></span>
+          {/* The headline price is the FUTURE, not the stock: say so, and keep
+              the stock's own price beside it so nobody compares a futures
+              quote with a broker's equity quote. */}
+          <span className="mf-dgcard__price">
+            ₹{fmtPrice(stock.fut?.price ?? stock.spot)} <span className={`mf-tone is-${side}`}>{signedText(stock.fut?.priceChange)}</span>
+            <span className="mf-dgcard__basis">{stock.fut ? `FUT ${expiryMonth(stock.expiry)}` : 'SPOT'}</span>
+          </span>
+          <span className="mf-dgcard__spot">Stock ₹{fmtPrice(stock.spot)} <span className="mf-tone">{pctText(stock.spotChangePct)}</span></span>
           {!compact && <RangeBar stock={stock} />}
         </span>
         <span className="mf-dgcard__chart"><CandleChart stock={stock} width={chartW} height={chartH} tf={tf} /></span>
@@ -771,6 +778,12 @@ const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false }
     </article>
   );
 });
+
+/** The future's expiry as a short month tag (Dec), so a futures quote is never read as the stock's. */
+function expiryMonth(expiry: string): string {
+  const date = new Date(`${expiry}T00:00:00+05:30`);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short' });
+}
 
 export function Ring({ held, counted }: { held: number; counted: number }) {
   const r = 11;
