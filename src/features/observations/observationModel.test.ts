@@ -89,4 +89,30 @@ describe('Post-call follow-through evidence', () => {
     expect(normalizeFollowThrough({ ...report, sequence: 'target-first', touches: { ...report.touches, sl: null } })?.sequence).toBe('target-first');
     expect(normalizeFollowThrough({ ...report, sequence: 'ambiguous' })?.sequence).toBe('ambiguous');
   });
+
+  it('preserves legacy reports and accepts only a valid full-minute futures range', () => {
+    expect(normalizeFollowThrough(report)).not.toHaveProperty('futures');
+    expect(normalizeFollowThrough({ ...report, futures: null })).toHaveProperty('futures', null);
+    const at = Date.parse('2026-11-16T09:45:23+05:30');
+    const first = Date.parse('2026-11-16T09:46:00+05:30');
+    const current = {
+      ...report,
+      from: at,
+      firstAt: first,
+      lastAt: first + 60_000,
+      sessionCloseAt: Date.parse('2026-11-16T15:40:00+05:30'),
+      // Touches must live inside the new real-epoch window, or the parser
+      // correctly rejects the report as internally inconsistent.
+      touches: {
+        sl: { at: first + 30_000, after: first + 30_000, source: 'ltp' as const },
+        tgt1: { at: first + 60_000, after: first + 60_000, source: 'ltp' as const },
+        tgt2: { at: first + 120_000, after: first + 90_000, source: 'day-range' as const },
+      },
+    };
+    const futures = { high: 25_600, low: 25_100, from: first, to: first + 120_000 };
+    expect(normalizeFollowThrough({ ...current, futures })?.futures).toEqual(futures);
+    expect(normalizeFollowThrough({ ...current, futures: { ...futures, from: first - 60_000 } })?.futures).toBeNull();
+    expect(normalizeFollowThrough({ ...current, futures: { ...futures, high: 'bad' } })?.futures).toBeNull();
+    expect(normalizeFollowThrough({ ...current, futures: { ...futures, to: current.sessionCloseAt + 60_000 } })?.futures).toBeNull();
+  });
 });

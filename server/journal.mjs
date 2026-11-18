@@ -119,7 +119,7 @@ export function resolveCard(card, minutes) {
 }
 
 /** Evidence through close, separate from the journal's first-exit result/R. */
-export function trackCardFollowThrough(card, minutes, { source = 'raw' } = {}) {
+export function trackCardFollowThrough(card, minutes, { source = 'raw', futuresCandles = [] } = {}) {
   if (!validCard(card) || !(card.sl > 0 && card.sl < card.entry && card.tgt1 > card.entry && card.tgt2 >= card.tgt1)) return null;
   const closeAt = sessionCloseAt(card.date);
   const openAt = Date.parse(`${card.date}T09:15:00+05:30`);
@@ -191,6 +191,18 @@ export function trackCardFollowThrough(card, minutes, { source = 'raw' } = {}) {
   else if (target) sequence = 'target-first';
   const sampleCount = observedMinutes.size;
   const missingMinutes = Math.max(0, expectedMinutes - sampleCount);
+  const firstFullMinute = Math.ceil(card.at / MINUTE_MS) * MINUTE_MS;
+  const futureMinutes = (Array.isArray(futuresCandles) ? futuresCandles : []).filter(candle =>
+    Number.isSafeInteger(candle?.at) && candle.at % MINUTE_MS === 0
+      && candle.at >= firstFullMinute && candle.at + MINUTE_MS <= closeAt
+      && Number.isFinite(candle.high) && Number.isFinite(candle.low)
+      && candle.low > 0 && candle.high >= candle.low);
+  const futures = futureMinutes.length ? {
+    high: Math.max(...futureMinutes.map(candle => candle.high)),
+    low: Math.min(...futureMinutes.map(candle => candle.low)),
+    from: Math.min(...futureMinutes.map(candle => candle.at)),
+    to: Math.max(...futureMinutes.map(candle => candle.at)) + MINUTE_MS,
+  } : null;
   return {
     version: 1,
     source,
@@ -205,6 +217,7 @@ export function trackCardFollowThrough(card, minutes, { source = 'raw' } = {}) {
     range: Object.fromEntries(Object.entries(range).map(([key, value]) => [key, value == null ? null : round2(value)])),
     touches,
     sequence,
+    futures,
   };
 }
 
@@ -272,7 +285,7 @@ function emptyOpen(card, snapshots, now) {
 }
 
 /** Resolve persisted observations once after close, grouped by each card's own session date. */
-export async function runJournal({ obsPath, readMinute, now = Date.now(), log = () => {}, send } = {}) {
+export async function runJournal({ obsPath, readMinute, readFuturesSnapshot = () => null, now = Date.now(), log = () => {}, send } = {}) {
   if (!obsPath || typeof readMinute !== 'function') return { skipped: 'not configured' };
   let day;
   try { day = marketParts(now); }
@@ -290,9 +303,9 @@ export async function runJournal({ obsPath, readMinute, now = Date.now(), log = 
     return { skipped: 'read failed', date: sessionDate };
   }
 
-  const pendingDates = [...new Set(cards
-    .filter(card => validCard(card) && (card.outcome?.followThrough?.version !== 1 || card.outcome.followThrough.coverage === 'missing') && card.date <= sessionDate)
-    .map(card => card.date))].sort();
+  const pendingCards = cards.filter(card => validCard(card)
+    && (card.outcome?.followThrough?.version !== 1 || card.outcome.followThrough.coverage === 'missing') && card.date <= sessionDate);
+  const pendingDates = [...new Set(pendingCards.map(card => card.date))].sort();
   const snapshotsByDate = new Map();
   const mismatchedSnapshotDates = new Set();
   for (const date of pendingDates) {
@@ -315,6 +328,22 @@ export async function runJournal({ obsPath, readMinute, now = Date.now(), log = 
     snapshotsByDate.set(date, snapshots);
   }
 
+  const futuresByCard = new Map();
+  for (const card of pendingCards) {
+    const key = `${card.symbol}|${card.date}`;
+    if (futuresByCard.has(key)) continue;
+    futuresByCard.set(key, []);
+    try {
+      const snapshot = await readFuturesSnapshot(card.symbol, card.date);
+      if (snapshot?.symbol === card.symbol && snapshot?.session === card.date && Array.isArray(snapshot.months)) {
+        const candles = snapshot.months[0]?.candles;
+        if (Array.isArray(candles)) futuresByCard.set(key, candles);
+      }
+    } catch (error) {
+      log(`journal futures unavailable for ${card.symbol} ${card.date}: ${String(error?.message || error)}`);
+    }
+  }
+
   const resolvedByDate = new Map();
   let written = 0;
   const updates = new Map();
@@ -327,7 +356,7 @@ export async function runJournal({ obsPath, readMinute, now = Date.now(), log = 
     if (card.outcome && !snapshots.length) return card;
     if (!snapshots.length && mismatchedSnapshotDates.has(card.date)) return card;
     const result = card.outcome ?? resolveCard(card, snapshots) ?? emptyOpen(card, snapshots, now);
-    const followThrough = trackCardFollowThrough(card, snapshots);
+    const followThrough = trackCardFollowThrough(card, snapshots, { futuresCandles: futuresByCard.get(`${card.symbol}|${card.date}`) });
     const enriched = followThrough ? { ...result, followThrough } : result;
     written++;
     if (!card.outcome && result.status !== 'open') {

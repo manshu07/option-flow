@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { resolveCard, trackCardFollowThrough, withJournalStoreLock } from '../server/journal.mjs';
 import { isMarketSessionTime, marketCloseMinuteFor, marketParts } from '../src/lib/marketSession.ts';
+import { readFutures } from '../server/replayStorage.mjs';
 
 export function backfillJournalFollowThrough({ date, inputPath, obsPath, dryRun = false, now = Date.now() }) {
   const parsedDate = Date.parse(`${date}T00:00:00Z`);
@@ -19,6 +20,7 @@ export function backfillJournalFollowThrough({ date, inputPath, obsPath, dryRun 
   }
   const isRaw = fs.statSync(inputPath).isDirectory();
   let snapshots;
+  let archivedFutures = {};
   if (isRaw) {
     const index = JSON.parse(fs.readFileSync(path.join(inputPath, 'index.json'), 'utf8'));
     if (!Array.isArray(index)) throw new Error('Raw minute index must be an array.');
@@ -35,6 +37,7 @@ export function backfillJournalFollowThrough({ date, inputPath, obsPath, dryRun 
       throw new Error('Archive does not contain the requested session.');
     }
     snapshots = Object.values(payload.minutes);
+    if (payload.futures && typeof payload.futures === 'object' && !Array.isArray(payload.futures)) archivedFutures = payload.futures;
   }
   snapshots = snapshots.filter(snapshot => snapshot && snapshot.date === date && Number.isFinite(snapshot.t));
   snapshots.sort((a, b) => a.t - b.t);
@@ -47,8 +50,18 @@ export function backfillJournalFollowThrough({ date, inputPath, obsPath, dryRun 
     const changes = [];
     const cards = store.cards.map(card => {
       if (card?.date !== date) return card;
-      const followThrough = trackCardFollowThrough(card, snapshots, { source: isRaw ? 'raw' : 'archive' });
+      let futuresCandles = [];
+      try {
+        const future = isRaw ? readFutures(path.dirname(path.resolve(inputPath)), date, card.symbol) : archivedFutures[card.symbol];
+        if (future?.symbol === card.symbol && future?.session === date && Array.isArray(future.months?.[0]?.candles)) {
+          futuresCandles = future.months[0].candles;
+        }
+      } catch { /* Old or missing futures files leave the additive range unavailable. */ }
+      const followThrough = trackCardFollowThrough(card, snapshots, { source: isRaw ? 'raw' : 'archive', futuresCandles });
       if (!followThrough || (card.outcome?.followThrough?.version === 1 && card.outcome.followThrough.sampleCount > followThrough.sampleCount)) return card;
+      if (!followThrough.futures && card.outcome?.followThrough?.from === card.at && card.outcome.followThrough.futures) {
+        followThrough.futures = card.outcome.followThrough.futures;
+      }
       const legacy = card.outcome ?? resolveCard(card, snapshots);
       // Never invent a settled journal outcome when no readable contract exists.
       if (!legacy) return card;

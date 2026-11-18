@@ -9,6 +9,14 @@ export interface ObservationTouch {
   source: 'ltp' | 'day-range';
 }
 
+export interface ObservationFuturesRange {
+  high: number;
+  low: number;
+  /** Inclusive start and exclusive end of the included full-minute candles. */
+  from: number;
+  to: number;
+}
+
 export interface ObservationFollowThrough {
   version: 1;
   source: 'raw' | 'archive';
@@ -32,6 +40,7 @@ export interface ObservationFollowThrough {
     tgt2: ObservationTouch | null;
   };
   sequence: FollowThroughSequence;
+  futures?: ObservationFuturesRange | null;
 }
 
 export interface ObservationOutcome {
@@ -70,6 +79,7 @@ export interface ObservationCard {
   strikePickProbability: number;
   oiChangePct: number | null;
   gamma?: ObservationGamma | null;
+  atr?: { value: number; barMinutes: number; state: 'compressed' | 'normal' | 'expanded' } | null;
   outcome?: ObservationOutcome | null;
   disclaimer: string;
 }
@@ -96,6 +106,16 @@ function normalizeTouch(value: unknown): ObservationTouch | null {
   return timestamp(touch.at) && timestamp(touch.after) && touch.after <= touch.at && (touch.source === 'ltp' || touch.source === 'day-range')
     ? { at: touch.at, after: touch.after, source: touch.source }
     : null;
+}
+
+function normalizeFuturesRange(value: unknown, from: number, closeAt: number): ObservationFuturesRange | null {
+  if (!value || typeof value !== 'object') return null;
+  const range = value as Record<string, unknown>;
+  if (!finite(range.high) || !finite(range.low) || range.low <= 0 || range.high < range.low
+    || !timestamp(range.from) || !timestamp(range.to)
+    || range.from % 60_000 !== 0 || range.to % 60_000 !== 0
+    || range.from < Math.ceil(from / 60_000) * 60_000 || range.to <= range.from || range.to > closeAt) return null;
+  return { high: range.high, low: range.low, from: range.from, to: range.to };
 }
 
 /** Parse the persisted report without allowing malformed evidence to break card rendering. */
@@ -149,6 +169,7 @@ export function normalizeFollowThrough(value: unknown): ObservationFollowThrough
     },
     touches: normalizedTouches,
     sequence: report.sequence,
+    ...(report.futures === undefined ? {} : { futures: normalizeFuturesRange(report.futures, report.from, report.sessionCloseAt) }),
   };
 }
 

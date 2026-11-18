@@ -144,6 +144,9 @@ function verificationBody(report: ObservationFollowThrough | null, rawReport: un
         <div><dt>Post-call sampled O/H/L/C</dt><dd>{[report.range.open, report.range.high, report.range.low, report.range.close].map(priceText).join(' / ')}</dd></div>
         <div><dt>Captures</dt><dd>{captureTime(report.firstAt)} → {captureTime(report.lastAt)}</dd></div>
         <div><dt>Samples</dt><dd>{report.sampleCount}/{report.expectedMinutes} minutes · {report.source}</dd></div>
+        {report.futures && <div title={`Captured full minutes: ${captureTime(report.futures.from)} → ${captureTime(report.futures.to)}`}>
+          <dt>Futures after entry:</dt><dd>H {priceText(report.futures.high)} / L {priceText(report.futures.low)}</dd>
+        </div>}
       </dl>
       <ul className="obs-verification__touches">
         <li><b>SL</b> {touchText(report.touches.sl, report)}</li>

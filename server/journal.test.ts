@@ -213,6 +213,42 @@ describe('post-call follow-through evidence', () => {
     const minutes = [reading(from, 100, 100, 100), middle, reading(from + 120_000, 120, 200, 50)];
     expect(trackCardFollowThrough(followCard(), minutes)).toMatchObject({ sequence: 'ambiguous' });
   });
+
+  it('starts futures evidence at the first full minute, excluding pre-call extremes and post-close candles', () => {
+    const at = Date.parse(`${DATE}T09:45:23+05:30`);
+    const first = Date.parse(`${DATE}T09:46:00+05:30`);
+    const futuresCandles = [
+      { at: first + 120_000, high: 115, low: 95 },
+      { at: first - 60_000, high: 10_000, low: 1 },
+      { at: first, high: 110, low: 100 },
+      { at: closeAt(DATE), high: 20_000, low: 0.1 },
+      { at: first + 86_400_000, high: 30_000, low: 0.01 },
+    ];
+    const original = structuredClone(futuresCandles);
+    const result = trackCardFollowThrough(followCard({ at }), [], { futuresCandles });
+    expect(result.futures).toEqual({ high: 115, low: 95, from: first, to: first + 180_000 });
+    expect(result.coverage).toBe('missing'); // Futures evidence does not fill option-quote gaps.
+    expect(futuresCandles).toEqual(original);
+  });
+
+  it('can use an exact entry-boundary candle and ends at the configured session close', () => {
+    const at = Date.parse(`${DATE}T09:45:00+05:30`);
+    const result = trackCardFollowThrough(followCard({ at }), [], { futuresCandles: [
+      { at, high: 120, low: 100 },
+      { at: closeAt(DATE) - 60_000, high: 130, low: 90 },
+    ] });
+    expect(result.futures).toEqual({ high: 130, low: 90, from: at, to: closeAt(DATE) });
+  });
+
+  it('omits futures range without valid captured highs/lows instead of inventing them from closes', () => {
+    expect(trackCardFollowThrough(followCard(), [])).toHaveProperty('futures', null);
+    expect(trackCardFollowThrough(followCard(), [], { futuresCandles: [
+      { at: from, close: 100 },
+      { at: from + 60_000, high: null, low: 50 },
+      { at: from + 120_000, high: 50, low: 100 },
+      { at: from + 30_000, high: 500, low: 1 },
+    ] })).toHaveProperty('futures', null);
+  });
 });
 
 describe('runJournal', () => {
@@ -306,6 +342,48 @@ describe('runJournal', () => {
     expect(await runJournal({ obsPath, readMinute, now: closeAt('2026-11-25') })).toMatchObject({ written: 1 });
     expect(JSON.parse(readFileSync(obsPath, 'utf8')).cards[0].outcome).toMatchObject({ status: 'open', r: null, followThrough: { coverage: 'complete' } });
   });
+
+  it('reads only the matching nearest futures month and leaves the first-exit result/R unchanged', async () => {
+    const date = '2026-11-27';
+    const at = closeAt(date) - 180_000 + 23_000;
+    const obsPath = join(tempDir(), 'observations.json');
+    const candidate = card({ date, at, expiry: '2026-11-30' });
+    const minutes = [5, 8, 10].map((premium, index) => ({
+      date, t: index ? closeAt(date) - (3 - index) * 60_000 : at,
+      series: [{ s: 'TMPV', e: '2026-11-30', r: [optionRow(265, 0, premium)] }],
+    }));
+    writeFileSync(obsPath, JSON.stringify({ cards: [candidate] }));
+    const readMinute = async (_date, hhmm) => minutes.find(minute => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(minute.t).replace(':', '') === hhmm) ?? null;
+    const readFuturesSnapshot = vi.fn(() => ({ symbol: 'TMPV', session: date, months: [
+      { date: '2026-11-30', candles: [
+        { at: closeAt(date) - 180_000, high: 99_999, low: 1 },
+        { at: closeAt(date) - 120_000, high: 320, low: 300 },
+        { at: closeAt(date) - 60_000, high: 330, low: 295 },
+      ] },
+      { date: '2026-12-31', candles: [{ at: closeAt(date) - 60_000, high: 999, low: 2 }] },
+    ] }));
+    await runJournal({ obsPath, readMinute, readFuturesSnapshot, now: closeAt(date) });
+    const stored = JSON.parse(readFileSync(obsPath, 'utf8')).cards[0].outcome;
+    const { followThrough, ...legacy } = stored;
+    expect(legacy).toEqual(resolveCard(candidate, minutes));
+    expect(followThrough.futures).toEqual({ high: 330, low: 295, from: closeAt(date) - 120_000, to: closeAt(date) });
+    expect(readFuturesSnapshot).toHaveBeenCalledExactlyOnceWith('TMPV', date);
+  });
+
+  it('keeps settling outcomes when persisted futures cannot be read', async () => {
+    const date = '2026-12-02';
+    const at = closeAt(date) - 120_000;
+    const obsPath = join(tempDir(), 'observations.json');
+    writeFileSync(obsPath, JSON.stringify({ cards: [card({ date, at, expiry: '2026-12-03' })] }));
+    const log = vi.fn();
+    await runJournal({
+      obsPath, now: closeAt(date), log,
+      readMinute: async (_date, hhmm) => hhmm === '1539' ? { date, t: at + 60_000, series: [{ s: 'TMPV', e: '2026-12-03', r: [optionRow(265, 0, 8)] }] } : null,
+      readFuturesSnapshot: () => { throw new Error('Invalid persisted futures'); },
+    });
+    expect(JSON.parse(readFileSync(obsPath, 'utf8')).cards[0].outcome).toMatchObject({ status: 'tgt1', r: 1.22, followThrough: { futures: null } });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('journal futures unavailable'));
+  });
 });
 
 describe('offline follow-through backfill', () => {
@@ -322,6 +400,11 @@ describe('offline follow-through backfill', () => {
     for (const [hhmm, at, premium] of [['0915', AT, 5], ['0916', AT + 60_000, 10]]) {
       writeFileSync(join(raw, `${hhmm}.json`), JSON.stringify({ date: DATE, t: at, series: [{ s: 'TMPV', e: '2026-11-23', r: [optionRow(265, 0, premium)] }] }));
     }
+    const future = { symbol: 'TMPV', session: DATE, months: [{ date: '2026-11-26', prevClose: 300, prevOi: 100, candles: [
+      { at: AT + 60_000, open: 300, high: 320, low: 295, close: 310, oi: 100 },
+    ] }] };
+    mkdirSync(join(raw, 'futures'));
+    writeFileSync(join(raw, 'futures', 'TMPV.json'), JSON.stringify(future));
     expect(backfillJournalFollowThrough({ ...args, dryRun: true })).toMatchObject({ updated: 1, backupPath: null });
     expect(readFileSync(obsPath, 'utf8')).toBe(original);
     const result = backfillJournalFollowThrough(args);
@@ -332,7 +415,12 @@ describe('offline follow-through backfill', () => {
     const { followThrough, ...legacy } = stored.cards[0].outcome;
     expect(legacy).toEqual(candidate.outcome);
     expect(followThrough).toMatchObject({ source: 'raw', coverage: 'partial', touches: { tgt2: { at: AT + 60_000 } } });
+    expect(followThrough.futures).toEqual({ high: 320, low: 295, from: AT + 60_000, to: AT + 120_000 });
     expect(backfillJournalFollowThrough(args)).toMatchObject({ updated: 0, backupPath: null });
+    future.months[0].candles = [{ at: AT + 60_000, close: 310, oi: 100 }] as typeof future.months[0]['candles'];
+    writeFileSync(join(raw, 'futures', 'TMPV.json'), JSON.stringify(future));
+    expect(backfillJournalFollowThrough(args)).toMatchObject({ updated: 0 });
+    expect(JSON.parse(readFileSync(obsPath, 'utf8')).cards[0].outcome.followThrough.futures).toEqual(followThrough.futures);
     writeFileSync(join(raw, 'index.json'), JSON.stringify([['0915', AT]]));
     expect(backfillJournalFollowThrough(args)).toMatchObject({ updated: 0 });
     expect(JSON.parse(readFileSync(obsPath, 'utf8')).cards[0].outcome.followThrough.sampleCount).toBe(2);
@@ -347,11 +435,15 @@ describe('offline follow-through backfill', () => {
     const obsPath = join(dir, 'observations.json');
     const candidate = card({ expiry: '2026-11-23', outcome: { status: 'open', r: null, tgt2: false } });
     const minute = { date: DATE, t: AT + 60_000, series: [{ s: 'TMPV', e: '2026-11-23', r: [optionRow(265, 0, 10)] }] };
-    writeFileSync(inputPath, gzipSync(JSON.stringify({ date: DATE, minutes: { '0916': minute } })));
+    const futures = { TMPV: { symbol: 'TMPV', session: DATE, months: [{ date: '2026-11-26', candles: [
+      { at: AT + 60_000, high: 350, low: 300, close: 320, oi: 100 },
+    ] }] } };
+    writeFileSync(inputPath, gzipSync(JSON.stringify({ date: DATE, minutes: { '0916': minute }, futures })));
     writeFileSync(obsPath, JSON.stringify({ cards: [candidate] }));
     const args = { date: DATE, inputPath, obsPath, now: closeAt('2026-11-17') + 60_000 };
     const result = backfillJournalFollowThrough(args);
     expect(result.changes[0].followThrough).toMatchObject({ source: 'archive', touches: { tgt1: { at: AT + 60_000 }, tgt2: { at: AT + 60_000 } } });
+    expect(result.changes[0].followThrough.futures).toEqual({ high: 350, low: 300, from: AT + 60_000, to: AT + 120_000 });
     const original = readFileSync(obsPath, 'utf8');
     expect(() => backfillJournalFollowThrough({ ...args, date: '2026-11-17' })).toThrow('requested session');
     expect(readFileSync(obsPath, 'utf8')).toBe(original);

@@ -336,6 +336,7 @@ async function build() {
             watches: result.watches,
             now: at,
             log,
+            readFuturesSnapshot: (symbol, date) => readFutures(SCAN_DIR, date, symbol),
             getLive: card => {
               try {
                 const spots = provider.spots?.() ?? {};
@@ -360,6 +361,7 @@ async function build() {
     void runJournal({
       obsPath: path.join(DATA_DIR, 'observations.json'),
       readMinute: readJournalMinute,
+      readFuturesSnapshot: (symbol, date) => readFutures(SCAN_DIR, date, symbol),
       now: at,
       log,
       send: process.env.TELEGRAM_BOT_TOKEN ? sendOwnerAndSubscribers : undefined,

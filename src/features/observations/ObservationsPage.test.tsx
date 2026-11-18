@@ -167,6 +167,30 @@ describe('ObservationsPage cards and table', () => {
     expect(await screen.findByText('Post-call evidence unavailable; the saved report is invalid.')).toBeInTheDocument();
   });
 
+  it('adds a futures-labelled post-entry row without changing option evidence or the recorded outcome', async () => {
+    responseCards = [{ ...card, outcome: { status: 'tgt1', followThrough: evidence({ futures: {
+      high: 25_600.25, low: 25_010, from: Date.parse('2026-11-16T09:46:00+05:30'), to: Date.parse('2026-11-16T12:15:00+05:30'),
+    } }) } }];
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    expect(await screen.findByText('Futures after entry:')).toBeInTheDocument();
+    expect(screen.getByText('H 25600.25 / L 25010.00')).toBeInTheDocument();
+    expect(screen.getByText('Post-call sampled O/H/L/C')).toBeInTheDocument();
+    expect(screen.getByText('Recorded journal status:', { exact: false }).parentElement).toHaveTextContent('TGT1');
+    expect(screen.queryByText(/Spot after entry/)).not.toBeInTheDocument();
+  });
+
+  it('adds no futures line for close-only/legacy reports or malformed optional range data', async () => {
+    responseCards = [{ ...card, outcome: { status: 'open', followThrough: evidence({ futures: null }) } }];
+    const first = render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    await screen.findByText('Post-call sampled O/H/L/C');
+    expect(screen.queryByText('Futures after entry:')).not.toBeInTheDocument();
+    first.unmount();
+    responseCards = [{ ...card, outcome: { status: 'open', followThrough: evidence({ futures: { high: NaN, low: 1, from: card.at, to: card.at + 60_000 } }) } }];
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    expect(await screen.findByText('Post-call sampled O/H/L/C')).toBeInTheDocument();
+    expect(screen.queryByText('Futures after entry:')).not.toBeInTheDocument();
+  });
+
   it('strengthens the theta line at two DTE and omits it at twenty DTE', async () => {
     responseCards = [{ ...card, expiry: '2026-11-18' }];
     const first = render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
@@ -227,7 +251,10 @@ describe('ObservationsPage cards and table', () => {
   });
 
   it('exposes the same verification in the existing Status table cell', async () => {
-    responseCards = [{ ...card, outcome: { status: 'tgt1', followThrough: evidence({ touches: { sl: null, tgt1: { at: card.at + 120_000, after: card.at + 120_000, source: 'ltp' }, tgt2: null } }) } }];
+    responseCards = [{ ...card, outcome: { status: 'tgt1', followThrough: evidence({
+      touches: { sl: null, tgt1: { at: card.at + 120_000, after: card.at + 120_000, source: 'ltp' }, tgt2: null },
+      futures: { high: 25_300, low: 25_200, from: card.at + 60_000, to: card.at + 180_000 },
+    }) } }];
     render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
     fireEvent.click(screen.getByRole('radio', { name: 'Table' }));
     const table = await screen.findByRole('table');
@@ -236,5 +263,6 @@ describe('ObservationsPage cards and table', () => {
     expect(details).not.toBeNull();
     fireEvent.click(details!.querySelector('summary')!);
     expect(details!.querySelector('.obs-verification__highest')).toHaveTextContent('Highest target observed: TGT1 (legacy journal status is unchanged).');
+    expect(within(table).getByText('Futures after entry:')).toBeInTheDocument();
   });
 });
