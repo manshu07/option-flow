@@ -83,6 +83,24 @@ export function candidateStrikes(series, bias) {
   return candidates;
 }
 
+const NEXT_EXPIRY_DTE = Number(process.env.ADVISOR_NEXT_EXPIRY_DTE) || 3;
+
+/**
+ * Chain selection at card build: when the near expiry is inside
+ * ADVISOR_NEXT_EXPIRY_DTE days and the market file carries the next-expiry
+ * block, build the card on the December block instead. Rationale: the near
+ * weekly bleeds ~5–8%/day inside 3 DTE; the monthly decays ~1–1.5%/day.
+ */
+export function chooseChain(series, now = Date.now()) {
+  const next = series?.next;
+  if (!next || typeof next.e !== 'string' || typeof series?.e !== 'string') return series;
+  const expiryAt = Date.parse(`${series.e}T15:30:00+05:30`);
+  if (!Number.isFinite(expiryAt)) return series;
+  const dte = (expiryAt - now) / (24 * 60 * 60_000);
+  if (dte > NEXT_EXPIRY_DTE) return series;
+  return { ...series, e: next.e, sp: next.sp, pc: next.pc, atm: next.atm, r: next.r, t: next.t ?? series.t, tp: next.tp ?? series.tp };
+}
+
 /** Heaviest CE above spot (resistance) and PE below spot (support). */
 export function chainWalls(series) {
   const spot = series?.sp;
@@ -295,7 +313,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
   const seriesFor = symbol => (market?.series ?? []).find(item => item?.s === symbol) ?? null;
   const prepared = [];
   for (const watch of watches) {
-    const series = seriesFor(watch.symbol);
+    const series = chooseChain(seriesFor(watch.symbol), now);
     const candidates = candidateStrikes(series, watch.bias);
     if (!candidates.length) continue;
     const spot = Number.isFinite(series?.sp) ? series.sp : null;
@@ -307,7 +325,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
   if (!prepared.length) return { skipped: 'no readable chains on watched symbols' };
   try {
     const questions = {};
-    const spotOf = p => seriesFor(p.symbol) ?? {};
+    const spotOf = p => chooseChain(seriesFor(p.symbol), now) ?? {};
     const state = { chain: Object.fromEntries(prepared.map(p => {
       const s = spotOf(p);
       return [p.symbol, {

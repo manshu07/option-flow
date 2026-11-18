@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { candidateStrikes, chainWalls, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { candidateStrikes, chainWalls, chooseChain, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { observationCaption } from './observationCardSvg.mjs';
 import { gammaProfile } from '../src/features/market-flow/gammaModel';
 
@@ -21,6 +21,23 @@ function seriesFixture() {
 }
 
 describe('candidateStrikes', () => {
+  it('switches to the next-expiry block only when the near expiry is inside the DTE threshold', () => {
+    const next = { e: '2026-12-31', sp: 300.9, pc: 308.2, atm: 300, r: [[300, 0, 12, 11, 2_000_000, 1_800_000, 50_000]] };
+    // Exactly 3 DTE (expiry 15:30 IST − same clock time) → the December block wins.
+    const boundary = Date.parse('2026-11-16T15:30:00+05:30');
+    const near3 = { ...seriesFixture(), e: '2026-11-19', next };
+    const chosen = chooseChain(near3, boundary);
+    expect(chosen.e).toBe('2026-12-31');
+    expect(chosen.sp).toBe(300.9);
+    expect(chosen.r).toEqual(next.r);
+    // Past the threshold → today's behaviour (near chain stays).
+    const near8 = { ...seriesFixture(), e: '2026-11-24', next };
+    expect(chooseChain(near8, NOW).e).toBe('2026-11-24');
+    // No next block, or a broken expiry → unchanged.
+    expect(chooseChain(seriesFixture(), NOW).e).toBe('2026-11-19');
+    expect(chooseChain({ ...seriesFixture(), e: 'not-a-date', next }, NOW).e).toBe('not-a-date');
+  });
+
   it('returns buy-side candidates around ATM on the bias side', () => {
     const series = seriesFixture();
     const bearish = candidateStrikes(series, 'bearish');

@@ -24,7 +24,10 @@ function belongsToDate(snapshot, date) {
 function rowFor(card, snapshot) {
   const series = snapshot?.series?.find(item => item?.s === card.symbol);
   const side = card.side === 'CE' ? 0 : 1;
-  return series?.r?.find(row => Array.isArray(row) && row[0] === card.strike && row[1] === side) ?? null;
+  // The card's own expiry selects the chain: near rows by default, December
+  // rows when the card was built on the next-expiry block.
+  const rows = typeof card.expiry === 'string' && series?.next?.e === card.expiry ? series.next.r : series?.r;
+  return rows?.find(row => Array.isArray(row) && row[0] === card.strike && row[1] === side) ?? null;
 }
 
 function sessionCloseAt(date) {
@@ -132,8 +135,12 @@ export function trackCardFollowThrough(card, minutes, { source = 'raw', futuresC
   for (const snapshot of Array.isArray(minutes) ? minutes : []) {
     // The session gate includes its closing minute (e.g. the 15:40:03 capture).
     if (!belongsToDate(snapshot, card.date) || snapshot.t < openAt || snapshot.t >= closeAt + MINUTE_MS) continue;
-    const series = (Array.isArray(snapshot.series) ? snapshot.series : []).find(item => item?.s === card.symbol && typeof card.expiry === 'string' && item?.e === card.expiry);
-    const row = (Array.isArray(series?.r) ? series.r : []).find(item => Array.isArray(item) && item[0] === card.strike && item[1] === (card.side === 'CE' ? 0 : 1));
+    const series = (Array.isArray(snapshot.series) ? snapshot.series : []).find(item => item?.s === card.symbol);
+    const onNear = typeof card.expiry === 'string' && series?.e === card.expiry;
+    const onNext = typeof card.expiry === 'string' && series?.next?.e === card.expiry;
+    if (!onNear && !onNext) continue;
+    const rows = onNext ? series.next.r : series.r;
+    const row = (Array.isArray(rows) ? rows : []).find(item => Array.isArray(item) && item[0] === card.strike && item[1] === (card.side === 'CE' ? 0 : 1));
     if (!row || !Number.isFinite(row[2]) || row[2] <= 0) continue;
     const at = Number.isFinite(series.t) ? series.t : snapshot.t;
     if (at < openAt || at > snapshot.t || at >= closeAt + MINUTE_MS) continue;

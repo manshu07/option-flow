@@ -55,6 +55,24 @@ afterEach(() => {
 });
 
 describe('resolveCard', () => {
+  it('resolves a card built on the next-expiry block from its own December rows', () => {
+    const december = card({ id: `TMPV|${DATE}|DEC`, expiry: '2026-12-31' });
+    const withNext = (t: number, decemberPremium: number) => ({
+      date: DATE,
+      t,
+      series: [{ s: 'TMPV', e: '2026-11-24', r: [optionRow(265, 0, 5)], next: { e: '2026-12-31', r: [optionRow(265, 0, decemberPremium)] } }],
+    });
+    // Near stays flat at 5; only December moves 5 → 9 past tgt1 7.75 — so a
+    // tgt1 outcome proves the December rows were the ones read.
+    const result = resolveCard(december, [withNext(AT, 5), withNext(AT + 60_000, 9)]);
+    expect(result).toMatchObject({ status: 'tgt1', hitAt: AT + 60_000 });
+    // An expiry that matches neither chain sees no movement at all: the card
+    // stays unresolved (status open, nothing measured).
+    const neither = card({ id: `TMPV|${DATE}|X`, expiry: '2026-12-30' });
+    const unresolved = resolveCard(neither, [withNext(AT, 9)]);
+    expect(unresolved).toMatchObject({ status: 'open', mfe: 0, mae: 0 });
+  });
+
   it('settles a bullish card at TGT1 before a later stop', () => {
     const bullish = card();
     const result = resolveCard(bullish, [
