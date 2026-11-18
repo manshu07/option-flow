@@ -3,6 +3,7 @@ import { getLatestTradingSessionDate, isMarketSessionTime } from '@/lib/marketSe
 import type { Underlying } from '@/lib/underlyings';
 import { combineMonths, type FuturesMonth, type FuturesSeries } from '../options-scanner/futuresModel';
 import { parseMarketFile, type ContractMarket } from '../options-scanner/contractScanModel';
+import { describeStale } from './dataAge';
 
 /**
  * The page's data, all from its own server (server/index.mjs), whichever
@@ -150,6 +151,27 @@ export function useMarketFeed() {
     }, market ? 60_000 : 5_000);
     return () => window.clearInterval(timer);
   }, [market]);
+
+  // A hidden tab stops polling on purpose; when it comes back the owner must
+  // not wait up to a minute to see today's numbers again.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') setTick(value => value + 1);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+
+  // Self-heal: a visible tab holding a reading older than the rebuild cadence
+  // asks again every 15s instead of once a minute.
+  const stale = market != null && describeStale(market.at).stale;
+  useEffect(() => {
+    if (!stale) return undefined;
+    const timer = window.setInterval(() => {
+      if (visible()) setTick(value => value + 1);
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [stale, market?.at]);
 
   return { market, loading: !market, error, status, rescan: () => setTick(value => value + 1) };
 }

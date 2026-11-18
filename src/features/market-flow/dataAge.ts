@@ -18,3 +18,19 @@ export function describeDataAge(readingAt: number, now: number = Date.now()): Fl
   const date = marketParts(readingAt).dateKey;
   return { aged: date < getLatestTradingSessionDate(new Date(now)), date };
 }
+
+/**
+ * How far behind the clock the board's reading is, for the status line.
+ *
+ * A visible tab should never sit on a two-minute-old file: the market file is
+ * rebuilt every minute, so anything past `STALE_MINUTES` means the page's own
+ * polling stalled (a backgrounded tab, a failed fetch) and the owner would be
+ * reading old numbers without knowing it.
+ */
+export const STALE_MINUTES = 3;
+
+export function describeStale(readingAt: number, now: number = Date.now()): { stale: boolean; minutes: number | null } {
+  if (!Number.isFinite(readingAt) || !Number.isFinite(now)) return { stale: false, minutes: null };
+  const minutes = Math.max(0, Math.round((now - readingAt) / 60_000));
+  return { stale: minutes >= STALE_MINUTES, minutes };
+}

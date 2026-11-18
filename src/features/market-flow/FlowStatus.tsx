@@ -1,5 +1,5 @@
 import { Button } from '@/components/common/Button';
-import { describeDataAge } from './dataAge';
+import { describeDataAge, describeStale } from './dataAge';
 import { clockOf, type MarketFlow } from './marketFlowModel';
 
 const dateFormat = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' });
@@ -46,6 +46,9 @@ export function FlowStatus({ flow, at, loading, error, provider, futuresRead, fu
     );
   }
   const age = at != null ? describeDataAge(at, now) : null;
+  // A live board whose reading is minutes behind the clock is the page's own
+  // polling stall, not a quiet market — say it instead of letting old numbers pass.
+  const lag = at != null ? describeStale(at, now) : { stale: false, minutes: null };
   const updating = futuresRead < futuresTotal || flow.provisional;
   const total = flow.futures.total;
   const stamp = at != null ? `${dateFormat.format(at)}, ${clockOf(at)}` : null;
@@ -68,6 +71,7 @@ export function FlowStatus({ flow, at, loading, error, provider, futuresRead, fu
           {stamp && <>As of {stamp}</>}
           {flow.futures.latestAt != null && <> · futures to {clockOf(flow.futures.latestAt)}</>}
           {flow.futures.failed > 0 && <> · <span className="mf-status__warn">{flow.futures.failed} could not load</span></>}
+          {lag.stale && !provider?.alwaysLive && <> · <span className="mf-status__warn">{lag.minutes} min behind · retrying</span></>}
         </span>
       )}
       {/* A replay (the demo, a recorded day) says what it is in its source label instead. */}
