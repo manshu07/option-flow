@@ -827,7 +827,12 @@ function queueClosedSessionArchives(session, at) {
         if (!state.building && futuresActive === 0 && !(await closedRawDates(session, at)).length) return;
         continue;
       }
-      for (const date of dates) await archive.archive(date);
+      for (const date of dates) {
+        // Idempotent: a date whose archive already exists (raw minutes cleaned,
+        // dir left over) is done — retrying it forever just floods the log.
+        if (fs.existsSync(path.join(ARCHIVE_ROOT, provider.id, `${date}.json.gz`))) continue;
+        await archive.archive(date);
+      }
       await yieldToLoop();
     }
   })().catch(error => log('archive pass failed:', error?.message || error)).finally(() => { archivePass = null; });
