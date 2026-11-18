@@ -56,11 +56,14 @@ loop already runs):
   today" once, not twice).
 - Day-keyed dedupe: the two messages are the day's entire ORB push.
 
-## S4 — Parked: sector mapping
+## S4 — Sector gate (correction 2026-11-18: the map EXISTS)
 
-`public/underlyings.json` has no sector field today. When a mapping lands
-(one static JSON, NSE sector per symbol), the sector gate flips on in S2 and
-the message gains `sector ✓/✗`. Nothing else changes.
+`public/underlyings.json` already carries a `sector` field per symbol
+(`banks-private`, `fmcg-consumer`, `power-utilities`, …). The S2 sector gate
+reads it directly: a candidate qualifies only when its sector matches the
+sector of the strongest NIFTY-aligned mover that morning (definition pinned at
+implementation: same sector as NIFTY's top-3 movers, or the gate reports
+`sector neutral` without blocking). No new mapping file needed.
 
 ## Gates
 
