@@ -353,6 +353,7 @@ async function build() {
             now: at,
             log,
             readFuturesSnapshot: (symbol, date) => readFutures(SCAN_DIR, date, symbol),
+            subscriberChatIds: activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)),
             getLive: card => {
               try {
                 const spots = provider.spots?.() ?? {};

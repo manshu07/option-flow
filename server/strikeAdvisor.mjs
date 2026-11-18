@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { sendTelegramObservationCard } from './telegram.mjs';
+import { sendTelegram, sendTelegramObservationCard } from './telegram.mjs';
+import { observationSubscriberCaption } from './observationCardSvg.mjs';
 import { askTypeSafe, typesafeConfigured } from './typesafe.mjs';
 import { inFireWindow, marketMovers } from './alerts.mjs';
 import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
@@ -391,7 +392,7 @@ async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, n
  * One advisor pass over the triage's watch list. Never throws; every failure
  * is logged and the observations file keeps its previous content.
  */
-export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null, readFuturesSnapshot = () => null } = {}) {
+export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null, readFuturesSnapshot = () => null, subscriberChatIds = [], sendSubscriber = (text, chatId) => sendTelegram(text, { chatId, parseMode: 'HTML', retry: true }) } = {}) {
   const sessionDate = typeof market?.date === 'string' ? market.date : null;
   if (!configured()) return { skipped: 'not configured' };
   if (!inFireWindow(now)) return { skipped: 'outside fire window' };
@@ -451,6 +452,19 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
         try { live = getLive(card); } catch { /* quiet live feeds do not block the captured-data card */ }
         const result = await send({ ...card, sentAt: now, live });
         log(`telegram ${result.sent ? 'sent' : `not sent (${result.reason ?? result.status})`}: observation ${card.symbol} ${card.strike}${card.side}`);
+        // Subscribers get the same signal instantly in the stripped copy
+        // (owner decision 2026-11-18: "Instant सबको भेजो") — no model words.
+        if (subscriberChatIds.length) {
+          const caption = observationSubscriberCaption({ ...card, sentAt: now, live });
+          for (const chatId of subscriberChatIds) {
+            try {
+              const sub = await sendSubscriber(caption, chatId);
+              if (!sub?.sent) log(`telegram subscriber card ${chatId} not sent (${sub?.reason ?? sub?.status ?? 'unknown'})`);
+            } catch (error) {
+              log(`telegram subscriber card ${chatId} failed: ${String(error?.message || error)}`);
+            }
+          }
+        }
       }
     }
     for (const s of skipped) log(`advisor skipped ${s.symbol}: ${s.reason}`);

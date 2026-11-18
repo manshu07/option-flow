@@ -225,6 +225,29 @@ describe('runAdvisor gates', () => {
     }
   });
 
+  it('sends the stripped subscriber copy instantly when subscriber ids are given', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-sub-'));
+    const obsPath = join(dir, 'observations.json');
+    const marketSeries = { ...seriesFixture(), s: 'SUBTEST' };
+    const watches = [{ symbol: 'SUBTEST', bias: 'bullish' }];
+    const ask = async () => ({ quality_SUBTEST: { noul: 0.9 }, strike_SUBTEST: { choice: 'c1', probabilities: { c1: 0.9 } } });
+    const subs: Array<{ text: string; chatId: number }> = [];
+    try {
+      await runAdvisor({ date: '2026-11-16', series: [marketSeries] }, {
+        obsPath, watches, now: NOW, ask,
+        send: async () => ({ sent: true }),
+        subscriberChatIds: [123, 456],
+        sendSubscriber: async (text, chatId) => { subs.push({ text, chatId }); return { sent: true }; },
+      });
+      expect(subs).toHaveLength(2);
+      expect(subs[0].chatId).toBe(123);
+      expect(subs[0].text).toContain('SUBTEST');
+      expect(subs[0].text).not.toMatch(/jev|quality|advisor/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('samples cached live readings immediately before sending without persisting them', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'obs-live-'));
     const obsPath = join(dir, 'observations.json');
