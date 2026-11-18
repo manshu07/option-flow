@@ -6,6 +6,7 @@ import { askTypeSafe, typesafeConfigured } from './typesafe.mjs';
 import { inFireWindow, marketMovers } from './alerts.mjs';
 import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
 import { atrSummary } from '../src/features/market-flow/atrModel.ts';
+import { openingRange, sessionVwap } from './orbModel.mjs';
 
 /**
  * Strike setup advisor — observation cards for watched symbols, buy-side only.
@@ -381,30 +382,33 @@ export function orbStrategy(snapshot, card, now) {
   if (!snapshot || !Array.isArray(snapshot.months)) return null;
   const month = snapshot.months[0];
   const candles = Array.isArray(month?.candles) ? month.candles : [];
-  const openAt = Date.parse(`${snapshot.session}T09:15:00+05:30`);
-  const rangeCandles = candles.filter(candle => Number.isFinite(candle?.at) && candle.at >= openAt && candle.at < openAt + 5 * 60_000);
-  if (rangeCandles.length < 3) return { qualifies: false, label: 'Strategy: ORB — opening range pending (need the 09:20 candle)' };
-  const high = Math.max(...rangeCandles.map(candle => Number.isFinite(candle.high) ? candle.high : candle.close));
-  const low = Math.min(...rangeCandles.map(candle => Number.isFinite(candle.low) ? candle.low : candle.close));
+  // Same range rule as the ORB scanner: Dhan prints no candle in a minute with
+  // no trades, so a stock future often has 1–3 prints inside 09:15–09:20. A
+  // three-minute range is still the opening range — the old "need the 09:20
+  // candle" gate hid the tag on 200 of 228 symbols.
+  const range = openingRange(candles, snapshot.session, { now });
+  if (!range) return { qualifies: false, label: 'Strategy: ORB — opening range pending (no 09:15–09:20 candle captured yet)' };
+  const vwap = sessionVwap(candles, snapshot.session, { until: now });
   const px = value => Number(value.toFixed(2));
   const signedPct = value => `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(1)}%`;
   const spot = Number.isFinite(card?.spot) ? card.spot : null;
-  if (!spot) return { qualifies: false, label: `Strategy: ORB — range ${px(low)}–${px(high)}, spot unavailable` };
+  if (!spot) return { qualifies: false, label: `Strategy: ORB — range ${px(range.low)}–${px(range.high)} (${range.candles} min), spot unavailable` };
   const bullish = card.bias !== 'bearish';
-  const level = bullish ? high : low;
+  const level = bullish ? range.high : range.low;
   const broke = bullish ? spot > level : spot < level;
-  const extendedPct = bullish ? (spot - high) / high * 100 : (low - spot) / low * 100;
+  const extendedPct = bullish ? (spot - range.high) / range.high * 100 : (range.low - spot) / range.low * 100;
   const oiPct = Number.isFinite(card?.oiChangePct) ? card.oiChangePct : null;
+  const minutes = ` (${range.candles} min)`;
   if (extendedPct >= 4) {
-    return { qualifies: false, label: `Strategy: ORB ⏳ — extended +${extendedPct.toFixed(1)}% opener — wait for a VWAP touch` };
+    return { qualifies: false, label: `Strategy: ORB ⏳ — extended +${extendedPct.toFixed(1)}% opener — wait for a VWAP touch${vwap == null ? '' : ` near ${px(vwap)}`}` };
   }
   if (!broke) {
-    return { qualifies: false, label: `Strategy: ORB ✗ — no breakout yet (range ${px(low)}–${px(high)})` };
+    return { qualifies: false, label: `Strategy: ORB ✗ — no breakout yet (range ${px(range.low)}–${px(range.high)}${minutes})` };
   }
   if (oiPct == null || oiPct < 5) {
     return { qualifies: false, label: `Strategy: ORB ✗ — broke ${px(level)} but OI ${oiPct == null ? 'unknown' : signedPct(oiPct)} (<5% needed)` };
   }
-  return { qualifies: true, label: `Strategy: ORB ✓ — broke ${px(level)} · OI ${signedPct(oiPct)} · SL zone ${px(bullish ? low : high)}` };
+  return { qualifies: true, label: `Strategy: ORB ✓ — broke ${px(level)} · OI ${signedPct(oiPct)} · SL zone ${px(bullish ? range.low : range.high)}` };
 }
 
 /**

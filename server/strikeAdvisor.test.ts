@@ -77,7 +77,9 @@ describe('candidateStrikes', () => {
     expect(orbStrategy(snapshot, { ...card, oiChangePct: 3 }, NOW).label).toContain('<5% needed');
     expect(orbStrategy(snapshot, { ...card, oiChangePct: null }, NOW).label).toContain('unknown');
     const thin = { ...snapshot, months: [{ candles: candles.slice(0, 2) }] };
-    expect(orbStrategy(thin, card, NOW).label).toContain('range pending');
+    // A quiet minute prints no candle: two prints still form the opening range.
+    expect(orbStrategy(thin, card, NOW).label).toContain('ORB ✓');
+    expect(orbStrategy({ ...snapshot, months: [{ candles: [] }] }, card, NOW).label).toContain('range pending');
     expect(orbStrategy(null, card, NOW)).toBeNull();
   });
 
