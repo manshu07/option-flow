@@ -60,6 +60,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMarketSessionTime } from '../../src/lib/marketSession.ts';
 import { createFullOptionChainSnapshot, normalizeDhanOptionChain } from '../optionChainSnapshots.mjs';
+import { readFutures } from '../replayStorage.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MASTER_CACHE = path.join(ROOT, 'data', '.dhan-master.csv');
 const MAX_PER_SECOND = Math.max(1, Number(process.env.DHAN_MAX_RPS) || 5);
@@ -1236,15 +1237,45 @@ export function createDhanProvider(universe) {
             : candle);
         }
         const candles = [...merged.values()].sort((a, b) => a.at - b.at);
-        let prevClose = feed.prevClose ?? feed.close ?? rest?.prevClose ?? null;
-        let prevOi = feed.prevOi ?? rest?.prevOi ?? null;
+        // A restart empties the in-memory per-minute ticks, so right after boot
+        // this feed path would return only a candle or two ("Too few minutes").
+        // Merge today's persisted futures file (complete earlier minutes) as the
+        // base and let the fresh feed ticks overlay the live ones.
+        let finalCandles = candles;
+        let diskNear = null;
+        if (candles.length < 30) {
+          try {
+            const disk = readFutures(path.join(ROOT, 'server', 'data', 'dhan'), session, u.symbol);
+            diskNear = disk?.months?.find(item => item?.date === expiry) ?? disk?.months?.[0] ?? null;
+            if (Array.isArray(diskNear?.candles) && diskNear.candles.length > finalCandles.length) {
+              const byAt = new Map(diskNear.candles.map(item => [item.at, item]));
+              for (const item of finalCandles) {
+                const base = byAt.get(item.at);
+                byAt.set(item.at, base
+                  ? {
+                      ...base,
+                      ...item,
+                      open: base.open ?? item.open,
+                      high: base.high != null ? Math.max(base.high, item.high) : item.high,
+                      low: base.low != null ? Math.min(base.low, item.low) : item.low,
+                      close: item.close,
+                      oi: item.oi,
+                    }
+                  : item);
+              }
+              finalCandles = [...byAt.values()].sort((a, b) => a.at - b.at);
+            }
+          } catch { /* disk read is optional */ }
+        }
+        let prevClose = feed.prevClose ?? feed.close ?? rest?.prevClose ?? diskNear?.prevClose ?? null;
+        let prevOi = feed.prevOi ?? rest?.prevOi ?? diskNear?.prevOi ?? null;
         // The charts backfill (prev-day OI/close) can be rate-limited; fall back
         // to the previous session's persisted last candle so OI never goes blank.
         if (prevOi == null || prevClose == null) {
           const pd = prevDayFutures(u.symbol, session);
           if (pd) { prevClose = prevClose ?? pd.close; prevOi = prevOi ?? pd.oi; }
         }
-        return { date: expiry, prevClose, prevOi, candles };
+        return { date: expiry, prevClose, prevOi, candles: finalCandles };
       }));
     },
 
