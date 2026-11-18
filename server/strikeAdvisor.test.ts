@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { candidateStrikes, chainWalls, chooseChain, orbStrategy, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { candidateStrikes, chainWalls, chooseChain, orbStrategy, earlyCards, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { observationCaption } from './observationCardSvg.mjs';
 import { gammaProfile } from '../src/features/market-flow/gammaModel';
 
@@ -21,6 +21,26 @@ function seriesFixture() {
 }
 
 describe('candidateStrikes', () => {
+  it('early cards catch momentum (flat OI) and strong build-ups the model gate skips', () => {
+    const rows = (strike: number, mult: number) => [
+      [strike, 0, 6, 5, Math.round(100_000 * mult), 100_000, 10_000],
+      [strike, 1, 6, 5, Math.round(100_000 * mult), 100_000, 10_000],
+    ];
+    const market = {
+      date: '2026-11-16',
+      series: [
+        { s: 'UJJIVANSFB', sp: 103.9, pc: 102, atm: 104, e: '2026-11-19', r: [...rows(104, 1), ...rows(105, 1)] },
+        { s: 'SAGILITY', sp: 26.3, pc: 25.5, atm: 26, e: '2026-11-19', r: [...rows(26, 1.2), ...rows(27, 1.2)] },
+      ],
+    };
+    const cards = earlyCards(market, '2026-11-16', NOW);
+    expect(cards.map(card => card.symbol).sort()).toEqual(['SAGILITY', 'UJJIVANSFB']);
+    expect(cards.find(card => card.symbol === 'SAGILITY')?.early).toBe('build-fast');
+    expect(cards.find(card => card.symbol === 'UJJIVANSFB')?.early).toBe('momentum');
+    expect(cards.every(card => card.side === 'CE' && card.entry > 0.5)).toBe(true);
+    expect(earlyCards(market, '2026-11-16', NOW, cards)).toHaveLength(0);
+  });
+
   it('tags a card with the owner ORB playbook at build time', () => {
     const open = Date.parse('2026-11-16T09:15:00+05:30');
     const candles = [0, 1, 2, 3, 4].map(minute => ({

@@ -2,7 +2,7 @@ import { dirname, join } from 'node:path';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { sendTelegramObservationCard } from './telegram.mjs';
 import { askTypeSafe, typesafeConfigured } from './typesafe.mjs';
-import { inFireWindow } from './alerts.mjs';
+import { inFireWindow, marketMovers } from './alerts.mjs';
 import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
 import { atrSummary } from '../src/features/market-flow/atrModel.ts';
 
@@ -233,6 +233,56 @@ export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, p
   return { cards, skipped };
 }
 
+/**
+ * Early-signal cards, computed by code (no model gate). The owner wants early
+ * grabs at the bottom, not only model-confirmed setups, so a fast price move
+ * still scores a card when either (a) chain OI is adding strongly (build-up)
+ * or (b) OI is flat/falling (momentum / short covering — the model gate was
+ * skipping exactly these). Cap: two early cards per pass, one per symbol/day.
+ */
+export function earlyCards(market, date, now, existing = [], { max = 2 } = {}) {
+  if (!market || typeof date !== 'string') return [];
+  const seen = new Set((Array.isArray(existing) ? existing : []).map(card => observationKey(card)).filter(Boolean));
+  const out = [];
+  for (const mover of marketMovers(market)) {
+    if (out.length >= max) break;
+    if (!Number.isFinite(mover.changePct) || Math.abs(mover.changePct) < 1.5) continue;
+    const oiPct = Number.isFinite(mover.oiPct) ? mover.oiPct : 0;
+    const strong = oiPct >= 5;
+    const momentum = Math.abs(oiPct) < 2;
+    if (!strong && !momentum) continue;
+    const key = `${mover.symbol}|${date}`;
+    if (seen.has(key)) continue;
+    const series = (market.series ?? []).find(item => item?.s === mover.symbol);
+    const chain = chooseChain(series, now);
+    if (!chain) continue;
+    const bias = mover.changePct > 0 ? 'bullish' : 'bearish';
+    const candidate = candidateStrikes(chain, bias)[0];
+    if (!candidate || !(candidate.ltp > MIN_ENTRY_PREMIUM)) continue;
+    seen.add(key);
+    out.push({
+      id: key,
+      at: now,
+      date,
+      symbol: mover.symbol,
+      spot: Number.isFinite(chain.sp) ? chain.sp : mover.spot ?? null,
+      spotChangePct: Number.isFinite(mover.changePct) ? round2(mover.changePct) : null,
+      bias,
+      side: candidate.side === 0 ? 'CE' : 'PE',
+      strike: candidate.strike,
+      expiry: chain.e ?? null,
+      ...levelsFor(candidate, chainWalls(chain)),
+      quality: null,
+      strikePickProbability: null,
+      oiChangePct: candidate.oiChangePct,
+      early: strong ? 'build-fast' : 'momentum',
+      atr: null,
+      disclaimer: DISCLAIMER,
+    });
+  }
+  return out;
+}
+
 export function observationKey(card) {
   if (typeof card?.symbol === 'string' && typeof card?.date === 'string') return `${card.symbol}|${card.date}`;
   return typeof card?.id === 'string' && card.id.length ? `id:${card.id}` : null;
@@ -374,7 +424,11 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     for (const p of prepared) Object.assign(questions, advisorQuestions(p.symbol, p.bias, p.candidates));
     const answers = await ask(state, questions);
     const decisions = advisorDecisions(prepared, answers);
-    const cards = await enrichWithFuturesAtr(decisions.cards, { readFuturesSnapshot, sessionDate, now, log });
+    // Code-computed early grabs ride alongside the model's cards.
+    const existingForDedupe = loadObservations(obsPath);
+    const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...decisions.cards]);
+    if (early.length) log(`advisor early signals: ${early.map(card => `${card.symbol} ${card.strike}${card.side} (${card.early})`).join(', ')}`);
+    const cards = await enrichWithFuturesAtr([...decisions.cards, ...early], { readFuturesSnapshot, sessionDate, now, log });
     const { skipped } = decisions;
     if (cards.length) {
       const freshCards = dedupeObservations(cards);
