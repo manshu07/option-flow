@@ -11,6 +11,9 @@ import type { Underlying } from '@/lib/underlyings';
 import { clockOf, type FlowWindow } from '../market-flow/marketFlowModel';
 import { gammaProfile, type GammaSeries } from '../market-flow/gammaModel';
 import { GAMMA_RISK_FREE, GAMMA_SYMBOLS } from '../market-flow/gammaConfig';
+import { atrSummary } from '../market-flow/atrModel';
+import { fetchFutures, getCachedFutures, putCachedFutures } from '../market-flow/feed';
+import type { FuturesSeries } from '../options-scanner/futuresModel';
 import { fetchStrikeFlows, type StrikeFlowPayload } from './feed';
 import { optionBoardFlow } from './optionBoardFlow';
 import { GammaOverlay, GammaRegimeChips, type GammaProfileView } from './GammaOverlay';
@@ -76,6 +79,7 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
   const [failedSymbols, setFailedSymbols] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [futuresBySymbol, setFuturesBySymbol] = useState<ReadonlyMap<string, FuturesSeries>>(new Map());
   const [retry, setRetry] = useState(0);
   const forceNextFetch = useRef(false);
 
@@ -96,6 +100,7 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
     setPayloads(null);
     setUnavailableSymbols([]);
     setFailedSymbols([]);
+    setFuturesBySymbol(new Map());
     setLoading(true);
     setFailed(false);
     void fetchStrikeFlows(symbols, { date, signal: controller.signal, force }).then(result => {
@@ -106,6 +111,30 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
         setFailedSymbols(result.failedSymbols);
         setFailed(kept.length === 0 && result.failedSymbols.length > 0);
         setLoading(false);
+
+        const gammaSymbols = [...new Set(kept.map(payload => payload.symbol).filter(symbol => GAMMA_SYMBOLS.includes(symbol)))];
+        const cached = new Map<string, FuturesSeries>();
+        for (const symbol of gammaSymbols) {
+          const series = getCachedFutures(date, symbol);
+          if (series) cached.set(symbol, series);
+        }
+        if (!controller.signal.aborted) setFuturesBySymbol(cached);
+        void Promise.all(gammaSymbols.map(async symbol => {
+          const existing = cached.get(symbol);
+          if (existing) return [symbol, existing] as const;
+          try {
+            const series = await fetchFutures(symbol, date);
+            if (series) putCachedFutures(date, symbol, series);
+            return series ? [symbol, series] as const : null;
+          } catch {
+            return null;
+          }
+        })).then(entries => {
+          if (controller.signal.aborted) return;
+          const next = new Map<string, FuturesSeries>();
+          for (const entry of entries) if (entry) next.set(entry[0], entry[1]);
+          setFuturesBySymbol(next);
+        });
       }).catch(() => {
         if (controller.signal.aborted) return;
         setFailed(true);
@@ -165,13 +194,13 @@ export function StrikeFlowPage({ universe, tabs }: StrikeFlowPageProps) {
       };
       try {
         const profile = gammaProfile(series, { lot: series.lot, r: GAMMA_RISK_FREE });
-        if (profile.strikes.length) output.push({ symbol, spot: spotPoint[1], profile });
+        if (profile.strikes.length) output.push({ symbol, spot: spotPoint[1], profile, atr: atrSummary(futuresBySymbol.get(symbol)?.candles ?? []) });
       } catch {
         // A malformed/partial captured chain hides the overlay rather than breaking the board.
       }
     }
     return output;
-  }, [payloads, universe]);
+  }, [futuresBySymbol, payloads, universe]);
   const hasChain = Boolean(payloads && payloads.length > 0);
   const noChain = !loading && !failed && !hasChain;
 

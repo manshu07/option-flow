@@ -15,8 +15,15 @@ import { SCAN_WINDOW_MINUTES, SCAN_WINDOW_TOLERANCE_MS, type ScanWindow } from '
  * tolerances), or the day, against the previous session's close.
  */
 
-/** One 1-minute candle of the future: its start, closing price (₹) and open interest (units). */
-interface FuturesCandle { at: number; close: number; oi: number }
+/** One 1-minute candle of the future: close/OI are always required; OHLC is additive. */
+export interface FuturesCandle {
+  at: number;
+  close: number;
+  oi: number;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+}
 
 export interface FuturesSeries {
   symbol: string;
@@ -50,7 +57,11 @@ export function combineMonths(symbol: string, months: readonly FuturesMonth[]): 
       while (month.cursor + 1 < month.candles.length && month.candles[month.cursor + 1].at <= candle.at) month.cursor++;
       oi += month.cursor >= 0 ? month.candles[month.cursor].oi : month.prevOi ?? 0;
     }
-    return { at: candle.at, close: candle.close, oi };
+    const combined: FuturesCandle = { at: candle.at, close: candle.close, oi };
+    if (Number.isFinite(candle.open)) combined.open = candle.open;
+    if (Number.isFinite(candle.high)) combined.high = candle.high;
+    if (Number.isFinite(candle.low)) combined.low = candle.low;
+    return combined;
   });
   // A month listed today has no previous session: it held nothing then.
   const prevOi = near.prevOi == null ? null : months.reduce((sum, month) => sum + (month.prevOi ?? 0), 0);

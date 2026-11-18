@@ -5,12 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Underlying } from '@/lib/underlyings';
 import type { StrikeFlowContract, StrikeFlowPayload, StrikeSeriesPoint, StrikeSide } from './feed';
 
-const feed = vi.hoisted(() => ({ fetch: vi.fn() }));
+const feed = vi.hoisted(() => ({ fetch: vi.fn(), fetchFutures: vi.fn(), getCachedFutures: vi.fn(), putCachedFutures: vi.fn() }));
 vi.mock('./feed', () => ({
   fetchStrikeFlow: feed.fetch,
+  fetchFutures: feed.fetchFutures,
+  getCachedFutures: feed.getCachedFutures,
+  putCachedFutures: feed.putCachedFutures,
   fetchStrikeFlows: (symbols: string[], options: { date: string }) =>
     Promise.all(symbols.map(symbol => feed.fetch(symbol, options).then((payload: StrikeFlowPayload | null) => payload ?? { symbols: [symbol], symbol, date: options.date, expiry: {}, spotPrevClose: {}, spot: {}, strikes: {}, minuteCount: 0 })))
       .then(payloads => ({ payloads, unavailableSymbols: [], failedSymbols: [] })),
+}));
+vi.mock('../market-flow/feed', () => ({
+  fetchFutures: feed.fetchFutures,
+  getCachedFutures: feed.getCachedFutures,
+  putCachedFutures: feed.putCachedFutures,
 }));
 vi.mock('../market-flow/FlowBoard', () => ({
   FlowBoard: ({ flow, status }: { flow: { stocks: Array<{ symbol: string }> }; status?: ReactNode }) => (
@@ -78,6 +86,11 @@ function page() {
 beforeEach(() => {
   feed.fetch.mockReset();
   feed.fetch.mockResolvedValue(fixture);
+  feed.fetchFutures.mockReset();
+  feed.fetchFutures.mockResolvedValue(null);
+  feed.getCachedFutures.mockReset();
+  feed.getCachedFutures.mockReturnValue(null);
+  feed.putCachedFutures.mockReset();
 });
 afterEach(cleanup);
 
@@ -93,7 +106,7 @@ describe('StrikeFlowPage (Option Board)', () => {
     expect(diagram).toHaveTextContent('NIFTY25150CE');
     expect(diagram).toHaveTextContent('NIFTY25000PE');
     expect(screen.getByRole('img', { name: 'NIFTY net gamma exposure by strike' })).toBeInTheDocument();
-    expect(screen.getByText(/NIFTY Gamma/)).toBeInTheDocument();
+    expect(screen.getByText(/NIFTY (RANGE|TREND)/)).toBeInTheDocument();
   });
 
   it('fetches a single chain for a single-index scope', async () => {
@@ -167,6 +180,31 @@ describe('StrikeFlowPage (Option Board)', () => {
 
     expect(await screen.findByRole('heading', { name: 'Option chain could not be loaded' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('keeps the chain visible when futures ATR is missing or rejected', async () => {
+    feed.fetchFutures.mockRejectedValue(new Error('futures unavailable'));
+    page();
+    expect(await screen.findByTestId('flow-board')).toBeInTheDocument();
+    const chart = screen.getByRole('img', { name: 'NIFTY net gamma exposure by strike' });
+    expect(chart).toHaveTextContent('FLIP 25150');
+    expect(chart).not.toHaveTextContent('ATR');
+  });
+
+  it('adds a finite ATR distance when cached futures are available', async () => {
+    const candles = Array.from({ length: 15 }, (_, index) => ({
+      at: BASE + index * 15 * MINUTE,
+      close: 25_000 + index,
+      open: 24_999 + index,
+      high: 25_002 + index,
+      low: 24_998 + index,
+      oi: 1_000 + index,
+    }));
+    feed.getCachedFutures.mockReturnValue({ symbol: 'NIFTY', contractDate: '2026-11-19', months: ['2026-11-19'], prevClose: 25_000, prevOi: 1_000, candles });
+    page();
+    const chart = await screen.findByRole('img', { name: 'NIFTY net gamma exposure by strike' });
+    await waitFor(() => expect(chart).toHaveTextContent('×ATR'));
+    expect(feed.fetchFutures).not.toHaveBeenCalled();
   });
 
   it('shows an honest client-side state when a captured chain lacks flow history', async () => {

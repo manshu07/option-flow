@@ -1,9 +1,11 @@
 import type { GammaProfile } from '../market-flow/gammaModel';
+import type { AtrSummary } from '../market-flow/atrModel';
 
 export interface GammaProfileView {
   symbol: string;
   spot: number;
   profile: GammaProfile;
+  atr?: AtrSummary | null;
 }
 
 interface StrikeGex {
@@ -39,14 +41,20 @@ function GexProfileChart({ view }: { view: GammaProfileView }) {
   const x = (strike: number) => left + ((strike - minStrike) / range) * (right - left);
   const barWidth = Math.max(3, Math.min(12, ((right - left) / points.length) * 0.62));
   const topThree = new Set(points.slice().sort((a, b) => Math.abs(b.gex) - Math.abs(a.gex)).slice(0, 3).map(point => point.strike));
-  const flipX = view.profile.flipLevel == null ? null : x(view.profile.flipLevel);
+  const flipLevel = Number.isFinite(view.profile.flipLevel) ? view.profile.flipLevel : null;
+  const flipX = flipLevel == null ? null : x(flipLevel);
+  const rawDistance = flipLevel != null && Number.isFinite(view.spot) && view.atr?.atr != null && Number.isFinite(view.atr.atr) && view.atr.atr > 0
+    ? Math.abs(view.spot - flipLevel) / view.atr.atr
+    : null;
+  const distance = rawDistance != null && Number.isFinite(rawDistance) ? rawDistance : null;
+  const flipSuffix = distance == null ? '' : ` · ${distance.toFixed(1)}×ATR${distance <= 1 ? ' (one bar)' : distance > 2 ? ' (far)' : ''}`;
 
   return (
     <svg className="gamma-overlay__chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${view.symbol} net gamma exposure by strike`}>
       <line className="gamma-overlay__zero" x1={left} x2={right} y1={zeroY} y2={zeroY} />
       {flipX != null && flipX >= left && flipX <= right && <>
         <line className="gamma-overlay__flip" x1={flipX} x2={flipX} y1={12} y2={height - 24} />
-        <text className="gamma-overlay__flip-label" x={flipX} y={11} textAnchor="middle">FLIP {view.profile.flipLevel}</text>
+        <text className="gamma-overlay__flip-label" x={flipX} y={11} textAnchor="middle">FLIP {flipLevel}{flipSuffix}</text>
       </>}
       {points.map(point => {
         const bar = Math.max(1, (Math.abs(point.gex) / maxGex) * barHeight);
@@ -75,8 +83,12 @@ export function GammaRegimeChips({ profiles }: { profiles: GammaProfileView[] })
   return (
     <span className="gamma-overlay__regimes" aria-label="Gamma regimes">
       {shown.map(view => (
-        <span className={`gamma-overlay__regime ${view.profile.regime === 'gamma-long' ? 'is-long' : view.profile.regime === 'gamma-short' ? 'is-short' : 'is-unknown'}`} key={view.symbol}>
-          {view.symbol} {view.profile.regime === 'gamma-long' ? 'Gamma Long' : view.profile.regime === 'gamma-short' ? 'Gamma Short' : 'Gamma N/A'}
+        <span
+          className={`gamma-overlay__regime ${view.profile.regime === 'gamma-long' ? 'is-long' : view.profile.regime === 'gamma-short' ? 'is-short' : 'is-unknown'}`}
+          key={view.symbol}
+          title={view.profile.regime === 'gamma-long' ? 'Gamma Long' : view.profile.regime === 'gamma-short' ? 'Gamma Short' : 'Gamma N/A'}
+        >
+          {view.symbol} {view.profile.regime === 'gamma-long' ? 'RANGE · dips bought, breakouts fade' : view.profile.regime === 'gamma-short' ? "TREND · breakouts run, don't fade" : 'Gamma N/A'}
         </span>
       ))}
     </span>

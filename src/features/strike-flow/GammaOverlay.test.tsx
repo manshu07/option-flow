@@ -22,11 +22,18 @@ describe('Option Board gamma overlay', () => {
   it('shows signed GEX bars, heaviest strikes, flip level, regime, and assumption disclaimer', () => {
     render(<><GammaRegimeChips profiles={[view]} /><GammaOverlay profiles={[view]} /></>);
 
-    expect(screen.getByText('NIFTY Gamma Long')).toBeInTheDocument();
+    expect(screen.getByText('NIFTY RANGE · dips bought, breakouts fade')).toBeInTheDocument();
+    expect(screen.getByTitle('Gamma Long')).toBeInTheDocument();
     const chart = screen.getByRole('img', { name: 'NIFTY net gamma exposure by strike' });
     expect(within(chart).getByText('FLIP 25200')).toBeInTheDocument();
     expect(chart.querySelectorAll('.gamma-overlay__strike-label')).toHaveLength(3);
     expect(screen.getByText(/Dealer positioning sign is an assumption/)).toBeInTheDocument();
+  });
+
+  it('keeps the exact flip label when ATR is missing', () => {
+    render(<GammaOverlay profiles={[view]} />);
+    expect(screen.getByRole('img', { name: 'NIFTY net gamma exposure by strike' })).toHaveTextContent('FLIP 25200');
+    expect(screen.getByRole('img', { name: 'NIFTY net gamma exposure by strike' })).not.toHaveTextContent('ATR');
   });
 
   it('hides the overlay and chip silently when there are no eligible strikes', () => {
