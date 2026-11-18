@@ -660,7 +660,7 @@ export function archiveSessionSync(scanDir, providerId, date, options = {}) {
       verifyArchive(target, source, { providerId, date });
       const keep = keepCount(options.keep ?? process.env.MF_ARCHIVE_KEEP);
       removeOlder({ archiveRoot, scanDir, entries, providerId, keep });
-      fs.rmSync(rawDay, { recursive: true, force: true });
+      cleanArchivedRawDay(rawDay);
       return previous;
     } catch (error) {
       if (!(error instanceof ArchiveError)) throw error;
@@ -693,8 +693,22 @@ export function archiveSessionSync(scanDir, providerId, date, options = {}) {
   writeArchiveIndex(archiveRoot, withoutPrevious);
   const keep = keepCount(options.keep ?? process.env.MF_ARCHIVE_KEEP);
   removeOlder({ archiveRoot, scanDir, entries: withoutPrevious, providerId, keep });
-  fs.rmSync(rawDay, { recursive: true, force: true });
+  cleanArchivedRawDay(rawDay);
   return withoutPrevious.find(entry => entry.providerId === providerId && entry.date === date) || metadata;
+}
+
+/** After archiving, keep ONLY the day's last minute snapshot — it is the
+ *  instant prev-day seed fuel for the next boot (one ~1.4 MB file/day). */
+function cleanArchivedRawDay(rawDay) {
+  let keep = null;
+  try {
+    const files = fs.readdirSync(rawDay).filter(f => /^\d{4}\.json$/.test(f)).sort();
+    keep = files.length ? files[files.length - 1] : null;
+  } catch { return; }
+  for (const entry of fs.readdirSync(rawDay, { withFileTypes: true })) {
+    if (entry.isFile() && /^\d{4}\.json$/.test(entry.name) && entry.name === keep) continue;
+    fs.rmSync(path.join(rawDay, entry.name), { recursive: true, force: true });
+  }
 }
 
 export function listArchives(archiveRoot, providerId = null) {
