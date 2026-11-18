@@ -137,6 +137,78 @@
   },
   "underlyings": [
     {
+      "symbol": "ANANDRATHI",
+      "name": "Anand Rathi Wealth",
+      "apiKey": "NSE:ANANDRATHI",
+      "lot": 250,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "capital-markets"
+    },
+    {
+      "symbol": "ATHERENERG",
+      "name": "Ather Energy",
+      "apiKey": "NSE:ATHERENERG",
+      "lot": 375,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "auto-ancillary"
+    },
+    {
+      "symbol": "COROMANDEL",
+      "name": "Coromandel International",
+      "apiKey": "NSE:COROMANDEL",
+      "lot": 300,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "chemicals-agri"
+    },
+    {
+      "symbol": "CUB",
+      "name": "City Union Bank",
+      "apiKey": "NSE:CUB",
+      "lot": 2325,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "banks-private"
+    },
+    {
+      "symbol": "DATAPATTNS",
+      "name": "Data Patterns India",
+      "apiKey": "NSE:DATAPATTNS",
+      "lot": 125,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "defence-railways"
+    },
+    {
+      "symbol": "ENRIN",
+      "name": "Enrin",
+      "apiKey": "NSE:ENRIN",
+      "lot": 175,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "capital-goods-infra"
+    },
+    {
+      "symbol": "ICICIPRULIFE",
+      "name": "ICICI Prudential Life",
+      "apiKey": "NSE:ICICIPRULIFE",
+      "lot": 925,
+      "kind": "stock",
+      "exch": "BSE",
+      "sector": "insurance"
+    },
+    {
+      "symbol": "NAVINFLUOR",
+      "name": "Navin Fluorine",
+      "apiKey": "NSE:NAVINFLUOR",
+      "lot": 75,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "chemicals-agri"
+    },
+    {
       "symbol": "NIFTY",
       "name": "Nifty 50",
       "apiKey": "NSE:NIFTY50",
@@ -167,6 +239,15 @@
       "lot": 120,
       "kind": "index",
       "exch": "NSE"
+    },
+    {
+      "symbol": "SAGILITY",
+      "name": "Sagility India",
+      "apiKey": "NSE:SAGILITY",
+      "lot": 12000,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "it-services"
     },
     {
       "symbol": "SENSEX",
@@ -2065,6 +2146,15 @@
       "sector": "new-age-internet"
     },
     {
+      "symbol": "SYRMA",
+      "name": "Syrma SGS Technology",
+      "apiKey": "NSE:SYRMA",
+      "lot": 325,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "capital-goods-infra"
+    },
+    {
       "symbol": "TATACONSUM",
       "name": "Tata Consumer Products",
       "apiKey": "NSE:TATACONSUM",
@@ -2195,6 +2285,15 @@
       "kind": "stock",
       "exch": "NSE",
       "sector": "auto-oem"
+    },
+    {
+      "symbol": "UJJIVANSFB",
+      "name": "Ujjivan Small Finance Bank",
+      "apiKey": "NSE:UJJIVANSFB",
+      "lot": 8000,
+      "kind": "stock",
+      "exch": "NSE",
+      "sector": "banks-private"
     },
     {
       "symbol": "ULTRACEMCO",
