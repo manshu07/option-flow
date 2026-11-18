@@ -55,6 +55,7 @@ const FEED_HOSTS = ['wss://api-feed.dhan.co', 'wss://ws-feed.dhan.co'];
 /** The master is ~27 MB and Dhan throttles repeat downloads by IP: cache it on
  *  disk and refresh at most every two hours (Dhan publishes it ~8 am and 1 pm IST). */
 import fs from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMarketSessionTime } from '../../src/lib/marketSession.ts';
@@ -653,15 +654,8 @@ export function createDhanProvider(universe) {
         .sort()
         .reverse();
     } catch { return false; }
-    for (const date of dirs) {
-      const dir = path.join(dataDir, date);
-      let files = [];
-      try { files = fs.readdirSync(dir).filter(f => /^\d{4}\.json$/.test(f)).sort(); } catch { continue; }
-      if (!files.length) continue; // cleaned after archive — try the older day
-      let snap;
-      try { snap = JSON.parse(fs.readFileSync(path.join(dir, files[files.length - 1]), 'utf8')); }
-      catch (error) { console.warn(`dhan: disk seed could not parse ${date}/${files[files.length - 1]}: ${error?.message || error}`); continue; }
-      const bySymbol = new Map((Array.isArray(snap?.series) ? snap.series : []).map(item => [item?.s, item]));
+    const seedFromSeries = (series, sourceLabel) => {
+      const bySymbol = new Map((Array.isArray(series) ? series : []).map(item => [item?.s, item]));
       let legs = 0;
       for (const held of map.values()) {
         const rows = bySymbol.get(held.symbol);
@@ -677,16 +671,49 @@ export function createDhanProvider(universe) {
             const legsById = ids.get(strike) ?? {};
             for (const [side, legKey] of [[0, legsById.CE], [1, legsById.PE]]) {
               const row = rowMap.get(`${strike}:${side}`);
-              if (!legKey || !row) continue;
-              record(legSeg, legKey, { prevOi: num(row[5]), prevClose: num(row[3]), prevVolume: num(row[6]) });
+              const prevOi = num(row?.[5]);
+              if (!legKey || !row || prevOi == null) continue; // only real prev-day values count
+              record(legSeg, legKey, { prevOi, prevClose: num(row[3]), prevVolume: num(row[6]) });
               legs += 1;
             }
           }
         }
       }
-      if (legs > 0) {
-        console.log(`dhan: prev-day seeded from ${date}/${files[files.length - 1]} — ${legs} legs instantly (REST seed continues for IV/delta)`);
-        return true;
+      if (legs > 0) console.log(`dhan: prev-day seeded from ${sourceLabel} — ${legs} legs instantly (REST seed continues for IV/delta)`);
+      return legs > 0;
+    };
+
+    for (const date of dirs) {
+      const dir = path.join(dataDir, date);
+      let files = [];
+      try { files = fs.readdirSync(dir).filter(f => /^\d{4}\.json$/.test(f)).sort(); } catch { continue; }
+      if (!files.length) continue; // cleaned after archive — try the older day / the gz below
+      let snap;
+      try { snap = JSON.parse(fs.readFileSync(path.join(dir, files[files.length - 1]), 'utf8')); }
+      catch (error) { console.warn(`dhan: disk seed could not parse ${date}/${files[files.length - 1]}: ${error?.message || error}`); continue; }
+      if (seedFromSeries(snap?.series, `${date}/${files[files.length - 1]}`)) return true;
+    }
+
+    // Raw minutes may be cleaned after archiving (or written pre-seed on a
+    // restart). The day's archive gz still holds every leg's prev-day OI —
+    // read its LAST minute once (~3s) instead of the 11-minute REST sweep.
+    const archiveDir = path.join(ROOT, 'data', 'archives', 'dhan');
+    let gzFiles = [];
+    try { gzFiles = fs.readdirSync(archiveDir).filter(f => /^\d{4}-\d{2}-\d{2}\.json\.gz$/.test(f) && f.slice(0, 10) <= session).sort().reverse(); } catch { /* none */ }
+    for (const gz of gzFiles) {
+      try {
+        const payload = JSON.parse(gunzipSync(fs.readFileSync(path.join(archiveDir, gz))).toString('utf8'));
+        const minutes = payload?.minutes;
+        let last;
+        if (Array.isArray(minutes)) last = minutes[minutes.length - 1];
+        else if (minutes && typeof minutes === 'object') {
+          const keys = Object.keys(minutes).sort();
+          last = minutes[keys[keys.length - 1]];
+        }
+        const series = Array.isArray(last) ? last[1]?.series : last?.series;
+        if (seedFromSeries(series, `archive ${gz}`)) return true;
+      } catch (error) {
+        console.warn(`dhan: disk seed could not read archive ${gz}: ${error?.message || error}`);
       }
     }
     return false;
