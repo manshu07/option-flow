@@ -1,3 +1,5 @@
+import { signalStatsLines } from './journalStats.mjs';
+
 const DISCLAIMER = '🎓 observation history is educational only · not investment advice';
 const escapeHtml = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -21,6 +23,9 @@ export function formatJournalMessage(cards, date) {
   const count = status => outcomes.filter(card => card.outcome.status === status).length;
   const tally = `${count('tgt1')} TGT1 · ${count('sl')} SL · ${count('open')} open${count('ambiguous') ? ` · ${count('ambiguous')} ambiguous` : ''}`;
   const lines = [`📓 <b>Journal ${escapeHtml(date)}</b>`, `<b>Day tally</b> · ${tally}`];
+  // Which card type actually works: early vs model, ORB ✓ vs ✗ (owner P0-1).
+  const signalLines = signalStatsLines(outcomes.filter(card => card?.date === date));
+  if (signalLines.length) lines.push('', '<b>By signal</b>', ...signalLines);
   const limit = 899 - DISCLAIMER.length - 2;
   for (let index = 0; index < outcomes.length; index++) {
     const line = cardLine(outcomes[index]);
