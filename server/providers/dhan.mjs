@@ -719,6 +719,50 @@ export function createDhanProvider(universe) {
     return false;
   }
 
+  /** Previous session's persisted near-month last candle = today's prev OI/close.
+   *  Cached per symbol+session; used when the charts backfill is rate-limited. */
+  const prevDayFuturesCache = new Map();
+  let archiveFuturesCache = null; // symbol -> {oi,close} from the latest archive gz
+  function archiveFutures() {
+    if (archiveFuturesCache) return archiveFuturesCache;
+    archiveFuturesCache = new Map();
+    const archiveDir = path.join(ROOT, 'server', 'data', 'archives', 'dhan');
+    try {
+      const gz = fs.readdirSync(archiveDir).filter(f => /^\d{4}-\d{2}-\d{2}\.json\.gz$/.test(f)).sort().reverse()[0];
+      if (gz) {
+        const payload = JSON.parse(gunzipSync(fs.readFileSync(path.join(archiveDir, gz))).toString('utf8'));
+        for (const [symbol, months] of Object.entries(payload?.futures ?? {})) {
+          const near = Array.isArray(months) ? months[0] : null;
+          const last = Array.isArray(near?.candles) ? near.candles[near.candles.length - 1] : null;
+          if (last && Number.isFinite(last.oi) && Number.isFinite(last.close)) archiveFuturesCache.set(symbol, { oi: last.oi, close: last.close });
+        }
+      }
+    } catch { /* leave empty */ }
+    return archiveFuturesCache;
+  }
+  function prevDayFutures(symbol, session) {
+    const cacheKey = `${symbol}|${session}`;
+    if (prevDayFuturesCache.has(cacheKey)) return prevDayFuturesCache.get(cacheKey);
+    let result = null;
+    const dataDir = path.join(ROOT, 'server', 'data', 'dhan');
+    try {
+      const dirs = fs.readdirSync(dataDir, { withFileTypes: true })
+        .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name) && e.name < session)
+        .map(e => e.name).sort().reverse();
+      for (const date of dirs) {
+        const file = path.join(dataDir, date, 'futures', `${symbol}.json`);
+        if (!fs.existsSync(file)) continue;
+        const payload = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const near = Array.isArray(payload?.months) ? payload.months[0] : null;
+        const last = Array.isArray(near?.candles) ? near.candles[near.candles.length - 1] : null;
+        if (last && Number.isFinite(last.oi) && Number.isFinite(last.close)) { result = { oi: last.oi, close: last.close }; break; }
+      }
+    } catch { /* leave null */ }
+    if (!result) result = archiveFutures().get(symbol) ?? null;
+    prevDayFuturesCache.set(cacheKey, result);
+    return result;
+  }
+
   async function runSeedLoop() {
     // ~1 request every 3 s: the first pass seeds the whole universe in about
     // eleven minutes, entirely inside the documented Option Chain limit. The
@@ -1192,8 +1236,14 @@ export function createDhanProvider(universe) {
             : candle);
         }
         const candles = [...merged.values()].sort((a, b) => a.at - b.at);
-        const prevClose = feed.prevClose ?? feed.close ?? rest?.prevClose ?? null;
-        const prevOi = feed.prevOi ?? rest?.prevOi ?? null;
+        let prevClose = feed.prevClose ?? feed.close ?? rest?.prevClose ?? null;
+        let prevOi = feed.prevOi ?? rest?.prevOi ?? null;
+        // The charts backfill (prev-day OI/close) can be rate-limited; fall back
+        // to the previous session's persisted last candle so OI never goes blank.
+        if (prevOi == null || prevClose == null) {
+          const pd = prevDayFutures(u.symbol, session);
+          if (pd) { prevClose = prevClose ?? pd.close; prevOi = prevOi ?? pd.oi; }
+        }
         return { date: expiry, prevClose, prevOi, candles };
       }));
     },
