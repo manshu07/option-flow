@@ -430,29 +430,45 @@ function boundedSectionBody(events, sections, heading, limit) {
 
 export function eodJournalBody(observations, date, limit) {
   const cards = (Array.isArray(observations) ? observations : []).filter(card => card?.date === date);
-  // Owner's plain format: "Stock name - target 1 (hit - Yes/no)" — one line per
-  // card, verdicts in plain words, no R/quality jargon.
-  const verdict = card => {
-    const status = card?.outcome && typeof card.outcome === 'object' ? String(card.outcome.status ?? 'open') : 'open';
-    if (status === 'tgt1') return 'YES';
-    if (status === 'sl') return 'NO (SL)';
-    if (status === 'ambiguous') return 'NO';
-    return 'OPEN';
-  };
-  const count = verdictText => cards.filter(card => verdict(card) === verdictText).length;
-  const items = cards.map(card => {
+  // Owner's format — every card carries its own numbers:
+  //   Entry - ₹… · TGT1 - ₹… ✅/❌/⏳ · TGT2 - … · SL - … · Status - …
+  const price = value => Number.isFinite(value) ? `₹${value.toFixed(2)}` : '—';
+  const statusWord = { tgt1: 'TGT1 done', tgt2: 'TGT2 done', sl: 'SL hit', ambiguous: 'no trade', open: 'running' };
+  const blocks = cards.map(card => {
+    const outcome = card?.outcome && typeof card.outcome === 'object' ? card.outcome : null;
+    const status = String(outcome?.status ?? 'open');
+    const resolved = status !== 'open';
+    const touches = outcome?.followThrough?.touches ?? {};
+    const hitMark = (level, hit, at) => {
+      if (!Number.isFinite(level)) return '—';
+      if (!resolved) return `${price(level)} ⏳`;
+      return hit ? `${price(level)} ✅${at ? ` ${clock(at)}` : ''}` : `${price(level)} ❌`;
+    };
+    const tgt1Hit = status === 'tgt1' || status === 'tgt2' || touches?.tgt1 != null;
+    const tgt2Hit = status === 'tgt2' || touches?.tgt2 != null || outcome?.tgt2 === true;
+    const slHit = status === 'sl' || touches?.sl != null;
+    const tgt1At = touches?.tgt1?.at ?? (tgt1Hit ? outcome?.hitAt : null);
+    const tgt2At = touches?.tgt2?.at ?? null;
+    const slAt = touches?.sl?.at ?? (slHit ? outcome?.hitAt : null);
     const label = `${escapeHtml(card.symbol)} ${escapeHtml(card.strike)}${card.side === 'PE' ? 'PE' : 'CE'}`;
-    return `• <b>${label}</b> — TGT1 hit? ${verdict(card)}`;
+    return [
+      `• <b>${label}</b>`,
+      `Entry ${price(card.entry)} · TGT1 ${hitMark(card.tgt1, tgt1Hit, tgt1At)} · TGT2 ${hitMark(card.tgt2, tgt2Hit, tgt2At)} · SL ${slHit ? `${Number.isFinite(card.sl) ? `₹${card.sl.toFixed(2)} ` : ''}💥${slAt ? ` ${clock(slAt)}` : ''}` : resolved ? `${price(card.sl)} ✅ safe` : `${price(card.sl)} ⏳`}`,
+      `Status: ${statusWord[status] ?? status}`,
+    ].join('\n');
   });
+  const yesCount = blocks.filter((_, index) => ['tgt1', 'tgt2'].includes(String(cards[index]?.outcome?.status ?? 'open'))).length;
+  const noCount = blocks.filter((_, index) => ['sl', 'ambiguous'].includes(String(cards[index]?.outcome?.status ?? 'open'))).length;
+  const openCount = cards.length - yesCount - noCount;
   const lines = [`📓 <b>Journal</b> · ${escapeHtml(date)}`];
-  const summary = `${count('YES')} YES · ${count('NO') + count('NO (SL)')} NO · ${count('OPEN')} OPEN`;
-  for (const item of items) {
-    if ([...lines, item, summary].join('\n').length > limit) break;
-    lines.push(item);
+  const summary = `${yesCount} TGT done · ${noCount} SL hit · ${openCount} running`;
+  for (const block of blocks) {
+    if ([...lines, block, summary].join('\n').length > limit) break;
+    lines.push(block);
   }
-  const shown = lines.length - 1;
-  if (shown < items.length) {
-    const truncated = `• … ${items.length - shown} more cards`;
+  const shownBlocks = (lines.length - 1) / 3;
+  if (shownBlocks < blocks.length) {
+    const truncated = `• … ${blocks.length - shownBlocks} more cards in the app`;
     if ([...lines, truncated, summary].join('\n').length <= limit) lines.push(truncated);
   }
   lines.push(summary);

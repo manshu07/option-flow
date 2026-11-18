@@ -146,8 +146,8 @@ describe('15:45 subscriber EOD report', () => {
     expect(message).toContain('<b>Build-ups</b>');
     expect(message).toContain('<b>Levels touched</b>');
     expect(message).toContain('<b>Journal</b>');
-    expect(message).toContain('TGT1 hit? YES');
-    expect(message).toContain('TGT1 hit? NO (SL)');
+    expect(message).toContain('Status: TGT1 done');
+    expect(message).toContain('Status: SL hit');
     expect(message).toContain('not investment advice');
     expect(message).not.toContain('0.99');
     expect(message.length).toBeLessThan(900);
