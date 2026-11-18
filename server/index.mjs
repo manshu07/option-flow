@@ -46,6 +46,7 @@ import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs'
 import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAlerts } from './alerts.mjs';
 import { orbScan, orbSlotDue, orbMessage } from './orb.mjs';
 import { participation } from './participation.mjs';
+import { hoursLeft, tokenReminder } from './tokenWatch.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { liveErrorMessage, liveSnapshotMessage, obsSnapshotMessage, oiSnapshotMessage } from './liveCommand.mjs';
@@ -82,6 +83,11 @@ const bySymbol = new Map(universe.map(u => [u.symbol, u]));
 // `--recorded` (npm run dev:recorded / start:recorded) and `--archive` (npm run dev:archive) are shortcuts for MF_PROVIDER.
 const flagged = ['recorded', 'archive'].find(id => process.argv.includes(`--${id}`));
 const provider = createProvider(universe, flagged);
+{
+  const expiresAt = provider.health?.()?.tokenExpiresAt ?? null;
+  const left = hoursLeft(expiresAt);
+  if (left != null) log(`dhan: access token valid for ${left}h${left <= 6 ? ' — regenerate before the next market open' : ''}`);
+}
 const now = () => (provider.now ? provider.now() : Date.now());
 const SCAN_DIR = path.join(DATA_DIR, provider.id);
 const ARCHIVE_ROOT = path.join(DATA_DIR, 'archives');
@@ -96,6 +102,8 @@ const alertState = new Map();
 const alertDigestState = createAlertDigestState();
 // ORB scanner (P1): one scan per day slot, cached for /api/orb between builds.
 const orbState = { session: null, sent: new Set(), last: null };
+// Dhan's token dies 24h after issue; one reminder per level per session.
+const tokenWatch = { sentFor: null };
 const ORB_SECTORS = new Map(universe.filter(u => typeof u?.sector === 'string').map(u => [u.symbol, u.sector]));
 const journalMinuteIndexes = new Map();
 let previousOiSessionDate = null;
@@ -383,6 +391,21 @@ async function build() {
         }
       }
     }
+    // Token-expiry reminder: owner-only, once per level per session. The server
+    // keeps the token it read at boot, so this is the only warning before 401s.
+    if (process.env.TELEGRAM_BOT_TOKEN) {
+      const reminder = tokenReminder({ expiresAt: provider.health?.()?.tokenExpiresAt ?? null, now: at });
+      const key = reminder && `${session}|${reminder.level}`;
+      if (reminder && tokenWatch.sentFor !== key) {
+        tokenWatch.sentFor = key;
+        try {
+          const result = await sendTelegram(reminder.text, { parseMode: 'HTML' });
+          log(`dhan token ${reminder.level} reminder ${result?.sent ? 'sent' : 'not sent'} (${reminder.hoursLeft}h left)`);
+        } catch (error) {
+          log('dhan token reminder failed:', String(error?.message || error));
+        }
+      }
+    }
     // Throttled to TYPESAFE_TRIAGE_MIN (default 10); never blocks or fails the build.
     runTriage(file, { autoPath: path.join(DATA_DIR, 'alerts.auto.json'), now: at, log })
       .then(result => {
@@ -498,6 +521,7 @@ export function storedSessionSnapshot(dir, session) {
 export function healthPayload(provider, state, capture, now = Date.now(), bootedAt = BOOTED_AT) {
   let feed = { healthy: true, packets: null, lastPacketAt: null, connections: null };
   let tokenState = 'ok';
+  let tokenExpiresAt = null;
   try {
     const health = typeof provider?.health === 'function' ? provider.health() : null;
     if (health) {
@@ -509,6 +533,7 @@ export function healthPayload(provider, state, capture, now = Date.now(), booted
       };
       if (health.flowing !== undefined) feed.flowing = Boolean(health.flowing);
       tokenState = health.tokenState === 'rejected' ? 'rejected' : 'ok';
+      if (Number.isFinite(health.tokenExpiresAt)) tokenExpiresAt = health.tokenExpiresAt;
     }
   } catch { /* a broken provider read must not break health */ }
   return {
@@ -519,6 +544,7 @@ export function healthPayload(provider, state, capture, now = Date.now(), booted
     ...withCaptureStatus({}, capture),
     feed,
     tokenState,
+    token: { expiresAt: tokenExpiresAt, hoursLeft: hoursLeft(tokenExpiresAt, now) },
   };
 }
 

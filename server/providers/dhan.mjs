@@ -62,6 +62,7 @@ import { isMarketSessionTime } from '../../src/lib/marketSession.ts';
 import { createFullOptionChainSnapshot, normalizeDhanOptionChain } from '../optionChainSnapshots.mjs';
 import { readFutures } from '../replayStorage.mjs';
 import { seedPlan } from '../prevDaySeed.mjs';
+import { tokenExpiryAt } from '../tokenWatch.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MASTER_CACHE = path.join(ROOT, 'data', '.dhan-master.csv');
 const MAX_PER_SECOND = Math.max(1, Number(process.env.DHAN_MAX_RPS) || 5);
@@ -1364,6 +1365,8 @@ export function createDhanProvider(universe) {
         packets,
         lastPacketAt,
         tokenState: Date.now() < authFailUntil ? 'rejected' : 'ok',
+        // The token's own expiry (JWT exp) — /api/health turns it into hours left.
+        tokenExpiresAt: tokenExpiryAt(process.env.DHAN_ACCESS_TOKEN),
       };
     },
   };
