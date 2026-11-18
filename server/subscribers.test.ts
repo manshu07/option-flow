@@ -132,7 +132,7 @@ describe('Telegram subscribers', () => {
     expect(messages).toHaveLength(2);
     expect(calls).toHaveLength(4);
     expect(calls[0].options).toEqual({ parseMode: 'HTML', retry: true });
-    expect(calls[0].text).toContain('· long');
+    expect(calls[0].text).toContain('buy side');
     expect(calls[0].text).toContain('Level');
     expect(calls.slice(1).map(call => call.options?.chatId)).toEqual([201, 202, 203]);
     expect(calls.slice(1).every(call => call.options?.parseMode === 'HTML')).toBe(true);

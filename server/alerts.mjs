@@ -165,8 +165,8 @@ function gammaUnwindEvents(market, rules, digestState) {
       };
       events.push({
         rule,
-        text: `Γ unwind: ${symbol} ${wall.strike}${wall.side} −${Math.round(shedPct)}% OI`,
-        items: [`• Γ unwind: <b>${escapeHtml(symbol)} ${wall.strike}${wall.side}</b> −${Math.round(shedPct)}% OI`],
+        text: `Big exit: ${symbol} ${wall.strike}${wall.side} ${Math.round(shedPct)}% of OI pulled out`,
+        items: [`• Big exit: <b>${escapeHtml(symbol)} ${wall.strike}${wall.side}</b> OI −${Math.round(shedPct)}%`],
       });
     }
   }
@@ -195,9 +195,9 @@ function buildupMessage(rule, series, now) {
   const long = changePct >= PRICE_FLOOR_PCT && oiPct >= OI_FLOOR_PCT;
   const short = changePct <= -PRICE_FLOOR_PCT && oiPct >= OI_FLOOR_PCT;
   if (!long && !short) return null;
-  const label = long ? 'LONG BUILD-UP' : 'SHORT BUILD-UP';
+  const label = long ? 'BUY side' : 'SELL side';
   const sign = value => `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
-  return `🚨 ${rule.label ?? rule.symbol} ${label}: spot ${sign(changePct)}, chain OI ${sign(oiPct)} · ${clock(now)} IST`;
+  return `🚨 ${rule.label ?? rule.symbol} ${label}: price ${sign(changePct)}, OI ${sign(oiPct)} · ${clock(now)} IST`;
 }
 
 function oiSpikeMessage(rule, series, now) {
@@ -306,8 +306,8 @@ const ALERT_SECTIONS = [
   { type: 'level', heading: '🚨 <b>Level</b>' },
   { type: 'buildup', heading: '📈 <b>Build-ups</b>' },
   { type: 'oi-spike', heading: '⚡ <b>OI spikes</b>' },
-  { type: 'wall-shift', heading: '🧱 <b>Wall shifts</b>' },
-  { type: 'gamma-unwind', heading: 'Γ <b>Gamma unwinds</b>' },
+  { type: 'wall-shift', heading: '🧱 <b>Support/Resistance moved</b>' },
+  { type: 'gamma-unwind', heading: '📉 <b>Big OI exits</b>' },
   { type: 'top-movers', heading: '📊 <b>Digest</b>' },
 ];
 
@@ -333,14 +333,14 @@ function alertItems({ rule, text }, market) {
     return [`• <b>${escapeHtml(label)}</b> ${escapeHtml(detail)}`];
   }
   if (rule.type === 'buildup') {
-    const match = plain.match(/(LONG|SHORT) BUILD-UP: spot ([+-]\d+\.\d+%), chain OI ([+-]\d+\.\d+%)/);
+    const match = plain.match(/(BUY|SELL) side: price ([+-]\d+\.\d+)%, OI ([+-]\d+\.\d+%)/);
     const mover = marketMovers(market).find(item => item.symbol === rule.symbol);
     const oiAdded = Math.abs(mover?.oiAdded ?? 0);
     const sign = (mover?.oiAdded ?? 0) >= 0 ? '+' : '−';
     const oi = mover
       ? `${sign}${oiAdded >= 1_000_000 ? `${(oiAdded / 1_000_000).toFixed(1)}M` : oiAdded >= 1000 ? `${(oiAdded / 1000).toFixed(1)}K` : oiAdded.toFixed(0)}`
       : match?.[3] ?? '';
-    if (match) return [`• <b>${escapeHtml(rule.symbol ?? rule.label ?? '')}</b> ${escapeHtml(match[2])} · OI ${escapeHtml(oi)} · ${match[1].toLowerCase()}`];
+    if (match) return [`• <b>${escapeHtml(rule.symbol ?? rule.label ?? '')}</b> ${escapeHtml(match[2])} · OI ${escapeHtml(oi)} · ${match[1].toLowerCase()} side`];
     return [`• <b>${escapeHtml(rule.symbol ?? rule.label ?? '')}</b> ${escapeHtml(plain)}`];
   }
   if (rule.type === 'oi-spike') {
@@ -355,7 +355,7 @@ function alertItems({ rule, text }, market) {
     return [`• <b>${escapeHtml(rule.symbol)}</b> ${escapeHtml(detail)}`];
   }
   if (rule.type === 'gamma-unwind') {
-    return [`• Γ unwind: <b>${escapeHtml(rule.symbol)} ${escapeHtml(rule.strike)}${rule.side === 'PE' ? 'PE' : 'CE'}</b> −${Math.round(rule.changePct)}% OI`];
+    return [`• Big exit: <b>${escapeHtml(rule.symbol)} ${escapeHtml(rule.strike)}${rule.side === 'PE' ? 'PE' : 'CE'}</b> OI −${Math.round(rule.changePct)}%`];
   }
   if (rule.type === 'top-movers') {
     return String(text).split('\n').slice(1).map(line => {
@@ -395,8 +395,8 @@ function combinedHtml(events, market, now, includeFooter) {
 const EOD_SECTIONS = [
   { type: 'top-movers', heading: '📊 <b>Top movers</b>' },
   { type: 'buildup', heading: '📈 <b>Build-ups</b>' },
-  { type: 'wall-shift', heading: '🧱 <b>Wall shifts</b>' },
-  { type: 'gamma-unwind', heading: 'Γ <b>Gamma unwinds</b>' },
+  { type: 'wall-shift', heading: '🧱 <b>Support/Resistance moved</b>' },
+  { type: 'gamma-unwind', heading: '📉 <b>Big OI exits</b>' },
   { type: 'level', heading: '🚨 <b>Levels touched</b>' },
 ];
 
@@ -428,30 +428,34 @@ function boundedSectionBody(events, sections, heading, limit) {
   return lines.join('\n');
 }
 
-function eodJournalBody(observations, date, limit) {
+export function eodJournalBody(observations, date, limit) {
   const cards = (Array.isArray(observations) ? observations : []).filter(card => card?.date === date);
-  const outcomes = cards.filter(card => card?.outcome && typeof card.outcome === 'object');
-  const tally = status => outcomes.filter(card => card.outcome.status === status).length;
-  const counts = `Cards written ${cards.length} · ${tally('tgt1')} TGT1 · ${tally('sl')} SL · ${tally('open')} open · ${tally('ambiguous')} ambiguous`;
-  const lines = [`📓 <b>Journal outcomes</b> · ${escapeHtml(date)}`, counts];
-  const items = outcomes.map(card => {
-    const status = String(card.outcome.status ?? 'unknown').toUpperCase();
-    const r = Number.isFinite(card.outcome.r) ? `${card.outcome.r >= 0 ? '+' : '−'}${Math.abs(card.outcome.r).toFixed(2)}` : '—';
-    return `• <b>${escapeHtml(card.symbol)} ${escapeHtml(card.strike)}${card.side === 'PE' ? 'PE' : 'CE'}</b> · ${escapeHtml(status)} · R${r}`;
+  // Owner's plain format: "Stock name - target 1 (hit - Yes/no)" — one line per
+  // card, verdicts in plain words, no R/quality jargon.
+  const verdict = card => {
+    const status = card?.outcome && typeof card.outcome === 'object' ? String(card.outcome.status ?? 'open') : 'open';
+    if (status === 'tgt1') return 'YES';
+    if (status === 'sl') return 'NO (SL)';
+    if (status === 'ambiguous') return 'NO';
+    return 'OPEN';
+  };
+  const count = verdictText => cards.filter(card => verdict(card) === verdictText).length;
+  const items = cards.map(card => {
+    const label = `${escapeHtml(card.symbol)} ${escapeHtml(card.strike)}${card.side === 'PE' ? 'PE' : 'CE'}`;
+    return `• <b>${label}</b> — TGT1 hit? ${verdict(card)}`;
   });
-  // Subscriber copy: no model attribution in the heading (owner's audience rule).
-  lines.push(`📓 <b>Decision tally</b> · ${counts}`);
-  for (let index = 0; index < items.length; index++) {
-    const remaining = items.length - index - 1;
-    const marker = remaining ? `• … ${remaining} more cards` : null;
-    if ([...lines, items[index], ...(marker ? [marker] : [])].join('\n').length <= limit) {
-      lines.push(items[index]);
-      continue;
-    }
-    const truncated = `• … ${items.length - index} more cards`;
-    if ([...lines, truncated].join('\n').length <= limit) lines.push(truncated);
-    break;
+  const lines = [`📓 <b>Journal</b> · ${escapeHtml(date)}`];
+  const summary = `${count('YES')} YES · ${count('NO') + count('NO (SL)')} NO · ${count('OPEN')} OPEN`;
+  for (const item of items) {
+    if ([...lines, item, summary].join('\n').length > limit) break;
+    lines.push(item);
   }
+  const shown = lines.length - 1;
+  if (shown < items.length) {
+    const truncated = `• … ${items.length - shown} more cards`;
+    if ([...lines, truncated, summary].join('\n').length <= limit) lines.push(truncated);
+  }
+  lines.push(summary);
   return lines.join('\n');
 }
 
@@ -497,7 +501,23 @@ function nextSessionDate(date) {
 
 const RE_SESSION_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Owner-approved next-day plan: data-level triggers only — bias, close, OI, walls. */
+function nearestOiWalls(series, spot, side, count = 2) {
+  return (Array.isArray(series?.r) ? series.r : [])
+    .filter(row => Array.isArray(row) && row[1] === side && Number.isFinite(row[0]) && Number.isFinite(row[4]) && row[4] > 0
+      && (side === 0 ? row[0] >= spot : row[0] <= spot))
+    .sort((a, b) => side === 0 ? a[0] - b[0] : b[0] - a[0])
+    .slice(0, count)
+    .map(row => row[0]);
+}
+
+function nearestStrikeToSpot(series, spot, side) {
+  const rows = (Array.isArray(series?.r) ? series.r : []).filter(row => Array.isArray(row)
+    && row[1] === side && Number.isFinite(row[0]));
+  if (!rows.length) return null;
+  return rows.reduce((best, row) => Math.abs(row[0] - spot) < Math.abs(best - spot) ? row[0] : best, rows[0][0]);
+}
+
+/** Owner-approved next-day plan: data-level triggers only — bias, R/S levels, strike to watch. */
 export function nextDayPlanMessage(market, dailyEvents, { max = 5, date = null } = {}) {
   if (!market || typeof market.date !== 'string') return null;
   const movers = marketMovers(market);
@@ -516,12 +536,15 @@ export function nextDayPlanMessage(market, dailyEvents, { max = 5, date = null }
     if (!series) continue;
     const spot = Number.isFinite(series.sp) ? series.sp : null;
     if (spot == null) continue;
-    const ce = nearestOiWall(series, spot, 0);
-    const pe = nearestOiWall(series, spot, 1);
-    const parts = [`• <b>${escapeHtml(mover.symbol)}</b>${mover.buildup ? ` ${escapeHtml(mover.buildup)}` : ''}`,
-      `close ${spot.toFixed(2)}${Number.isFinite(mover.changePct) ? ` (${mover.changePct >= 0 ? '+' : '−'}${Math.abs(mover.changePct).toFixed(1)}%)` : ''}`,
-      Number.isFinite(mover.oiPct) ? `OI ${mover.oiPct >= 0 ? '+' : '−'}${Math.abs(mover.oiPct).toFixed(1)}%` : null,
-      ce && pe ? `walls ${ce} / ${pe}` : (ce || pe) ? `wall ${ce ?? pe}` : null,
+    // Plain format: Stock — Buy/Sell side — R1/R2 ceilings · S1/S2 floors — strike to watch.
+    const side = mover.buildup === 'SHORT BUILD-UP' ? 'Sell side' : 'Buy side';
+    const watchSideCode = mover.buildup === 'SHORT BUILD-UP' ? 1 : 0; // Sell → PE, Buy → CE
+    const resistances = nearestOiWalls(series, spot, 0);
+    const supports = nearestOiWalls(series, spot, 1);
+    const watchStrike = nearestStrikeToSpot(series, spot, watchSideCode);
+    const parts = [`• <b>${escapeHtml(mover.symbol)}</b> — ${side}`,
+      `R1 ${resistances[0] ?? '—'} · R2 ${resistances[1] ?? '—'} · S1 ${supports[0] ?? '—'} · S2 ${supports[1] ?? '—'}`,
+      watchStrike != null ? `watch ${watchStrike} ${watchSideCode === 0 ? 'CE' : 'PE'}` : null,
     ].filter(Boolean);
     lines.push(parts.join(' · '));
   }
@@ -529,14 +552,15 @@ export function nextDayPlanMessage(market, dailyEvents, { max = 5, date = null }
 
   const planDate = date ?? market.date;
   const heading = `🎯 <b>Next-day watchlist</b> · ${escapeHtml(nextSessionDate(planDate) ?? planDate)}`;
-  const limit = 900 - BROADCAST_FOOTER.length - heading.length - 4;
+  const legend = 'R = ceiling (CE OI) · S = floor (PE OI) · watch = strike closest to close';
+  const limit = 900 - BROADCAST_FOOTER.length - heading.length - legend.length - 6;
   const kept = [];
   for (const line of lines) {
     if ([...kept, line].join('\n').length > limit) break;
     kept.push(line);
   }
   if (!kept.length) return null;
-  return `${heading}\n${kept.join('\n')}\n\n${BROADCAST_FOOTER}`;
+  return `${heading}\n${legend}\n${kept.join('\n')}\n\n${BROADCAST_FOOTER}`;
 }
 
 function recipientsFor(chatIds) {

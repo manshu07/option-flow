@@ -145,9 +145,9 @@ describe('15:45 subscriber EOD report', () => {
     expect(message).toContain('<b>Top movers</b>');
     expect(message).toContain('<b>Build-ups</b>');
     expect(message).toContain('<b>Levels touched</b>');
-    expect(message).toContain('<b>Journal outcomes</b>');
-    expect(message).toContain('Cards written 3 · 1 TGT1 · 1 SL · 0 open · 0 ambiguous');
-    expect(message).toContain('<b>Decision tally</b>');
+    expect(message).toContain('<b>Journal</b>');
+    expect(message).toContain('TGT1 hit? YES');
+    expect(message).toContain('TGT1 hit? NO (SL)');
     expect(message).toContain('not investment advice');
     expect(message).not.toContain('0.99');
     expect(message.length).toBeLessThan(900);
@@ -179,7 +179,7 @@ describe('15:45 subscriber EOD report', () => {
     expect(sent).toHaveLength(2);
     expect(sent.every(text => text.length < 900 && text.includes('not investment advice'))).toBe(true);
     expect(sent[0]).toContain('<b>Build-ups</b>');
-    expect(sent[1]).toContain('<b>Journal outcomes</b>');
+    expect(sent[1]).toContain('<b>Journal</b>');
   });
 });
 
@@ -224,7 +224,7 @@ describe('OI wall-shift digest', () => {
 
     await flushScheduledDigests({ digestState, now: Date.parse('2026-11-16T10:15:00Z'), broadcastChatIds: [701], send });
     expect(send).toHaveBeenCalledTimes(2);
-    expect(sent[1].text).toContain('<b>Wall shifts</b>');
+    expect(sent[1].text).toContain('<b>Support/Resistance moved</b>');
     expect(sent[1].options).toMatchObject({ chatId: 701, parseMode: 'HTML', retry: true });
     expect(sent[1].text).toContain('not investment advice');
   });
@@ -279,7 +279,7 @@ describe('gamma unwind digest', () => {
 
     await flushScheduledDigests({ digestState, now: Date.parse('2026-11-16T10:15:00Z'), broadcastChatIds: [711], send: sendMock });
     expect(sendMock).toHaveBeenCalledTimes(1);
-    expect(send[0].text).toContain('Γ unwind: <b>NIFTY');
+    expect(send[0].text).toContain('Big exit: <b>NIFTY');
     expect(send[0].text).toContain('OI');
     expect(send[0].text).toContain('not investment advice');
     expect(send[0].options).toMatchObject({ chatId: 711, parseMode: 'HTML', retry: true });
@@ -345,9 +345,9 @@ describe('next-day watchlist', () => {
   it('renders bias, close, OI and walls for fired build-up symbols with the next session date', () => {
     const message = nextDayPlanMessage(planMarket(), buildupEvents());
     expect(message).toContain('🎯 <b>Next-day watchlist</b> · 2026-11-17');
-    expect(message).toContain('<b>NIFTY</b> LONG BUILD-UP');
-    expect(message).toContain('close 25400.00 (+1.0%');
-    expect(message).toContain('walls 26000 CE (1.8M) / 25000 PE (1.5M)');
+    expect(message).toContain('<b>NIFTY</b> — Buy side');
+    expect(message).toContain('R1 26000 · R2 — · S1 25000 · S2 — · watch 26000 CE');
+    expect(message).toContain('R = ceiling (CE OI)');
     expect(message).toContain('📊 educational market-data digest');
     expect(message).not.toMatch(/jev|quality|advisor|watch probability/i);
   });

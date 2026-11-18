@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { marketMovers, nextDayPlanMessage } from '../server/alerts.mjs';
+import { eodJournalBody, marketMovers, nextDayPlanMessage } from '../server/alerts.mjs';
+import { loadObservations } from '../server/strikeAdvisor.mjs';
 import { sendTelegram } from '../server/telegram.mjs';
 import { activeChatIds, loadSubscribers } from '../server/subscribers.mjs';
 
@@ -19,9 +20,15 @@ const dailyEvents = new Map(buildups.map((mover, index) => [
 ]));
 
 const plan = nextDayPlanMessage(market, dailyEvents, { date: market.date });
-console.log('--- plan message ---');
-console.log(plan ?? '(null — no candidates)');
-if (!plan) process.exit(1);
+const observations = loadObservations(new URL('observations.json', DATA_DIR).pathname);
+const journal = eodJournalBody(observations, market.date, 700);
+const footer = '📊 educational market-data digest · not investment advice · /stop to opt out';
+const journalMessage = journal ? `${journal}\n\n${footer}` : null;
+
+console.log('--- watchlist ---');
+console.log(plan ?? '(null)');
+console.log('--- journal (sample: yesterday) ---');
+console.log(journalMessage ?? '(null)');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const ownerChatId = process.env.TELEGRAM_CHAT_ID ?? null;
@@ -30,7 +37,10 @@ const recipients = [...new Set([
   ...activeChatIds(loadSubscribers(new URL('subscribers.json', DATA_DIR).pathname)),
 ])];
 console.log('--- sending to ---', recipients);
-for (const chatId of recipients) {
-  const result = await sendTelegram(plan, { chatId, parseMode: 'HTML', retry: true });
-  console.log(chatId, result?.sent ? 'sent' : `NOT sent (${result?.reason ?? result?.status ?? 'unknown'})`);
+for (const message of [plan, journalMessage]) {
+  if (!message) continue;
+  for (const chatId of recipients) {
+    const result = await sendTelegram(message, { chatId, parseMode: 'HTML', retry: true });
+    console.log(chatId, result?.sent ? 'sent' : `NOT sent (${result?.reason ?? result?.status ?? 'unknown'})`);
+  }
 }
