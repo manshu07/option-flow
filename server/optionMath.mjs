@@ -59,6 +59,50 @@ export function optionIv({ premium, spot, strike, years, rate = 0.065, side, cap
   return Number.isFinite(inverted) && inverted > 0 ? inverted : null;
 }
 
+/** Black-Scholes price of a European option. */
+export function bsPrice({ spot, strike, years, iv, rate = 0.065, side }) {
+  if (!(spot > 0 && strike > 0 && iv > 0)) return null;
+  const call = side === 'CE' || side === 0;
+  if (!(years > 0)) return Math.max(0, call ? spot - strike : strike - spot);
+  const rootT = Math.sqrt(years);
+  const d1 = (Math.log(spot / strike) + (rate + iv * iv / 2) * years) / (iv * rootT);
+  const d2 = d1 - iv * rootT;
+  const disc = Math.exp(-rate * years);
+  return call
+    ? spot * cdf(d1) - strike * disc * cdf(d2)
+    : strike * disc * cdf(-d2) - spot * cdf(-d1);
+}
+
+/**
+ * The premium after the underlying reaches `level`, `days` later. Repricing
+ * beats a delta/gamma expansion here: a multi-session ATR move is far too big
+ * for a second-order Taylor term, which would price a stop ABOVE the entry.
+ */
+export function premiumAtLevel({ level, strike, years, iv, rate = 0.065, side, days = 0 }) {
+  return bsPrice({ spot: level, strike, years: Math.max(1 / (365 * 24), years - days / 365), iv, rate, side });
+}
+
+/** The underlying level a premium target needs `days` out — bisection on the price curve. */
+export function spotForPremium({ target, spot, strike, years, iv, rate = 0.065, side, days = 0 }) {
+  if (!(target > 0 && spot > 0 && years > 0 && iv > 0)) return null;
+  const call = side === 'CE' || side === 0;
+  let low = call ? spot : spot * 0.2;
+  let high = call ? spot * 3 : spot;
+  const price = level => premiumAtLevel({ level, strike, years, iv, rate, side, days });
+  const atLow = price(low);
+  const atHigh = price(high);
+  if (!(Number.isFinite(atLow) && Number.isFinite(atHigh))) return null;
+  if (call ? atLow >= target : atLow <= target) return low;
+  if (call ? atHigh < target : atHigh > target) return null; // unreachable inside 3x / 0.2x spot
+  for (let i = 0; i < 60; i++) {
+    const mid = (low + high) / 2;
+    const value = price(mid);
+    if (!Number.isFinite(value)) return null;
+    if (call ? value < target : value > target) low = mid; else high = mid;
+  }
+  return (low + high) / 2;
+}
+
 /** Premium after a favourable (or adverse, when negative) underlying move and `days` of decay. */
 export function premiumForMove({ entry, move, delta, gamma, thetaDay = 0, days = 0 }) {
   if (!(Number.isFinite(entry) && Number.isFinite(move) && Number.isFinite(delta))) return null;

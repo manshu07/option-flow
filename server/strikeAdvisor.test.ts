@@ -66,7 +66,7 @@ describe('candidateStrikes', () => {
   it('refuses to quote a premium target when decay eats an ATR-sized move', () => {
     const card = {
       symbol: 'X', side: 'CE', strike: 100, spot: 100, entry: 0.6, delta: 0.2, iv: 60,
-      expiry: '2026-11-19', atr: { value: 0.2, barMinutes: 15, state: 'compressed' },
+      expiry: '2026-11-19', atr: { value: 0.02, barMinutes: 15, state: 'compressed' },
     };
     const priced = adaptiveLevels(card, { holdDays: 2, now: Date.parse('2026-11-18T15:30:00+05:30') });
     expect(priced.levelsBasis).toBe('decay-too-heavy');

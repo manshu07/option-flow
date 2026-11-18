@@ -7,7 +7,7 @@ import { inFireWindow, marketMovers } from './alerts.mjs';
 import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
 import { atrSummary } from '../src/features/market-flow/atrModel.ts';
 import { openingRange, sessionVwap } from './orbModel.mjs';
-import { greeks, optionIv, premiumForMove, requiredMove, levelFor, yearsToExpiry } from './optionMath.mjs';
+import { greeks, optionIv, premiumAtLevel, spotForPremium, levelFor, yearsToExpiry } from './optionMath.mjs';
 
 /**
  * Strike setup advisor — observation cards for watched symbols, buy-side only.
@@ -424,18 +424,21 @@ export function orbStrategy(snapshot, card, now) {
  */
 export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now() } = {}) {
   const atr = card?.atr?.value;
-  const delta = card?.delta;
   const entry = card?.entry;
-  if (!(Number.isFinite(atr) && atr > 0 && Number.isFinite(delta) && Math.abs(delta) > 0 && Number.isFinite(entry) && entry > 0)) {
+  if (!(Number.isFinite(atr) && atr > 0 && Number.isFinite(entry) && entry > 0)) {
     return { ...card, levelsBasis: 'fixed' };
   }
   const spot = card?.spot;
   const years = yearsToExpiry(card?.expiry, now);
   const iv = years && spot > 0 ? optionIv({ premium: entry, spot, strike: card.strike, years, side: card.side, captured: card.iv }) : null;
   const g = iv ? greeks({ spot, strike: card.strike, years, iv, side: card.side }) : null;
+  // Captured delta wins when the feed has it; December legs often carry none,
+  // and the priced delta is the same number the chain would report.
+  const delta = Number.isFinite(card?.delta) && Math.abs(card.delta) > 0 ? card.delta : g?.delta ?? null;
 
-  // No greeks (no spot/expiry/IV): the old delta-scaled approximation, honestly labelled.
-  if (!g) {
+  // No greeks and no captured delta: the old approximation, honestly labelled.
+  if (!g || !(Number.isFinite(delta) && Math.abs(delta) > 0)) {
+    if (!(Number.isFinite(delta) && Math.abs(delta) > 0)) return { ...card, levelsBasis: 'fixed' };
     const move = Math.max(atr * Math.abs(delta), entry * 0.08);
     return {
       ...card,
@@ -450,10 +453,15 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
   // premium with gamma and the decay of the intended hold. The stock price each
   // level needs travels with the card, so a target is never a bare percentage.
   const days = Math.max(1, Math.min(holdDays, Math.floor(years * 365)));
-  const priced = move => round2(Math.max(0.05, premiumForMove({ entry, move, delta: g.delta, gamma: g.gamma, thetaDay: g.thetaDay, days })));
-  const slMove = ATR_STOP_MULT * atr;
-  const tgt1Move = ATR_TGT1_MULT * atr;
-  const tgt2Move = ATR_TGT2_MULT * atr;
+  // The ATR is measured on 15-minute bars; a multi-day hold needs the move of
+  // that many sessions, so scale it by the square root of the bar count.
+  const barMinutes = Number(card?.atr?.barMinutes) || 15;
+  const barsPerSession = Math.max(1, 375 / barMinutes);
+  const horizonAtr = atr * Math.sqrt(barsPerSession * days);
+  const priced = move => round2(Math.max(0.05, premiumAtLevel({ level: card.side === 'PE' ? spot - move : spot + move, strike: card.strike, years, iv, side: card.side, days }) ?? entry));
+  const slMove = ATR_STOP_MULT * horizonAtr;
+  const tgt1Move = ATR_TGT1_MULT * horizonAtr;
+  const tgt2Move = ATR_TGT2_MULT * horizonAtr;
   const needs = {
     sl: levelFor({ spot, move: -slMove, side: card.side }),
     tgt1: levelFor({ spot, move: tgt1Move, side: card.side }),
@@ -475,6 +483,8 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
     thetaDay: round2(g.thetaDay),
     ivUsed: round2(iv * 100),
     optionGamma: g.gamma,
+    deltaUsed: round2(Math.abs(delta)),
+    horizonAtr: round2(horizonAtr),
     needs: {
       sl: needs.sl && { level: round2(needs.sl.level), pct: round2(needs.sl.pct) },
       tgt1: needs.tgt1 && { level: round2(needs.tgt1.level), pct: round2(needs.tgt1.pct) },
@@ -483,8 +493,8 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
     // What the chosen premium targets imply, decay included — the honest check
     // that the target is reachable at all.
     requiredMovePct: (() => {
-      const move = requiredMove({ entry, target: tgt1, delta: g.delta, gamma: g.gamma, thetaDay: g.thetaDay, days });
-      return move == null || !(spot > 0) ? null : round2((move / spot) * 100);
+      const level = spotForPremium({ target: tgt1, spot, strike: card.strike, years, iv, side: card.side, days });
+      return level == null || !(spot > 0) ? null : round2((Math.abs(level - spot) / spot) * 100);
     })(),
   };
 }
