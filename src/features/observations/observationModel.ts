@@ -77,6 +77,8 @@ export interface ObservationCard {
   resistance: { strike: number; oi: number; changePct: number | null } | null;
   quality: number;
   strikePickProbability: number;
+  /** Set on code-computed early cards: build-fast (OI ≥5%) or momentum (OI flat/negative). */
+  early?: 'build-fast' | 'momentum' | null;
   oiChangePct: number | null;
   gamma?: ObservationGamma | null;
   atr?: { value: number; barMinutes: number; state: 'compressed' | 'normal' | 'expanded' } | null;

@@ -90,7 +90,7 @@ export function observationCaption(card) {
   const lines = [
     `🔍 <b>OBSERVATION</b> · ${symbol} ${strike}${side}${expiry ? ` · ${escapeHtml(expiry)}` : ''}${at ? ` · ${escapeHtml(at)}` : ''}`,
     '',
-    `Bias: <b>${escapeHtml(String(card?.bias ?? 'neutral').toLowerCase())}</b> · quality <b>${Number.isFinite(card?.quality) ? `${(card.quality * 100).toFixed(0)}%` : 'unavailable'}</b> · strike pick ${Number.isFinite(card?.strikePickProbability) ? `${(card.strikePickProbability * 100).toFixed(0)}%` : 'unavailable'}`,
+    `Bias: <b>${escapeHtml(String(card?.bias ?? 'neutral').toLowerCase())}</b> · ${card?.early ? `EARLY (${escapeHtml(card.early)})` : `quality <b>${Number.isFinite(card?.quality) ? `${(card.quality * 100).toFixed(0)}%` : 'unavailable'}</b>`} · strike pick ${Number.isFinite(card?.strikePickProbability) ? `${(card.strikePickProbability * 100).toFixed(0)}%` : 'unavailable'}`,
     '',
     '<b>Trade map</b> (premium)',
     `• Entry ~<b>${priceText(entry)}</b> · spot ${priceText(card?.spot)}${spotMove ? ` (${spotMove})` : ''}`,
@@ -164,6 +164,7 @@ export function renderObservationCardSvg(card) {
   const pin = dealerFlow && typeof card?.gamma?.pin === 'string' && card.gamma.pin ? ` · pin ${card.gamma.pin}` : '';
   const theta = thetaText(daysToExpiry(card?.date, card?.expiry));
   const quality = Number.isFinite(card?.quality) ? `${(card.quality * 100).toFixed(0)}%` : '—';
+  const qualityLabel = card?.early ? `Early ${escapeXml(card.early)}` : `Quality ${quality}`;
   const pickProbability = Number.isFinite(card?.strikePickProbability) ? `${(card.strikePickProbability * 100).toFixed(0)}%` : '—';
   const spot = priceText(card?.spot);
   const spotChange = signedPct(card?.spotChangePct);
@@ -189,7 +190,7 @@ export function renderObservationCardSvg(card) {
 <text x="72" y="124" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="13">${expiry}${time ? ` · ${time}` : ''}</text>
 <rect x="566" y="38" width="144" height="34" rx="17" fill="${pale}"/>
 <text x="638" y="60" fill="${accent}" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="800" letter-spacing="1">${bullish ? 'BULLISH' : 'BEARISH'}</text>
-<text x="570" y="101" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700">Quality ${quality}</text>
+<text x="570" y="101" fill="#171a20" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700">${qualityLabel}</text>
 <text x="570" y="122" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="11">Strike pick ${pickProbability}</text>
 <rect x="68" y="145" width="642" height="54" rx="10" fill="${pale}"/>
 <text x="84" y="167" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1">UNDERLYING SPOT</text>

@@ -337,7 +337,7 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
       <header className="obs-card__head">
         <h3 className="obs-card__symbol">{card.symbol}</h3>
         <span className={`obs-card__contract ${up ? 'is-up' : 'is-down'}`}>{card.strike}{card.side}{expiry ? ` · ${expiry}` : ''}</span>
-        <span className={`obs-card__bias ${up ? 'is-up' : 'is-down'}`}>{up ? 'bullish' : 'bearish'} · quality {(card.quality * 100).toFixed(0)}%</span>
+        <span className={`obs-card__bias ${up ? 'is-up' : 'is-down'}`}>{up ? 'bullish' : 'bearish'} · {card.early ? `EARLY (${card.early})` : Number.isFinite(card.quality) ? `quality ${(card.quality * 100).toFixed(0)}%` : 'quality unavailable'}</span>
         <time className="obs-card__time" dateTime={Number.isFinite(card.at) ? new Date(card.at).toISOString() : undefined}>
           {stamped ? `${stamped.date} · ${stamped.time} IST · ${ageLabel(card.at, Date.now())}` : 'Timestamp unavailable'}
         </time>
@@ -389,7 +389,7 @@ function ObservationTable({ cards, optionTicks }: {
               <td>{expiryDateLabel(card.expiry) ?? '—'}</td>
               <td className="is-numeric">{dte ?? '—'}</td>
               <td className={card.bias === 'bullish' ? 'is-up' : 'is-down'}>{card.bias}</td>
-              <td className="is-numeric">{Number.isFinite(card.quality) ? `${(card.quality * 100).toFixed(0)}%` : '—'}</td>
+              <td className="is-numeric">{card.early ? `early · ${card.early}` : Number.isFinite(card.quality) ? `${(card.quality * 100).toFixed(0)}%` : '—'}</td>
               <td className="is-numeric">{priceText(card.entry)}</td>
               <td className="is-numeric">{priceText(card.sl)}</td>
               <td className="is-numeric">{priceText(card.tgt1)}</td>
