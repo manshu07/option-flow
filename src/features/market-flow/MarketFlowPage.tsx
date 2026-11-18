@@ -11,7 +11,7 @@ import { FlowBoard, type FlowLayout } from './FlowBoard';
 import { ReplayControls } from './ReplayControls';
 import { FlowStatus } from './FlowStatus';
 import { DEFAULT_FLOW_SETTINGS, type FlowSettings } from './marketFlowModel';
-import { inUniverse, loadUniverse, saveUniverse, type FlowUniverse } from './nifty50';
+import { inExchange, inUniverse, loadExchange, loadUniverse, saveExchange, saveUniverse, type FlowExchange, type FlowUniverse } from './nifty50';
 import { useMarketFlow } from './useMarketFlow';
 import { useReplayFlow } from './useReplayFlow';
 
@@ -53,7 +53,14 @@ const UNIVERSES: Array<{ value: FlowUniverse; label: string; title: string }> = 
   { value: 'fno', label: 'All F&O', title: 'Every F&O underlying: stocks and indices' },
 ];
 
+/** Exchanges are viewed separately, never mixed (owner: "dono alag"). */
+const EXCHANGES: Array<{ value: FlowExchange; label: string; title: string }> = [
+  { value: 'NSE', label: 'NSE', title: 'National Stock Exchange underlyings' },
+  { value: 'BSE', label: 'BSE', title: 'BSE underlyings (Sensex family and BSE-only F&O stocks)' },
+];
+
 export function MarketFlowPage({ universe, tabs }: MarketFlowPageProps) {
+  const [exchange, setExchange] = useState<FlowExchange>(loadExchange);
   const [scope, setScope] = useState<FlowUniverse>(loadUniverse);
   const [replayRequested, setReplayRequested] = useState(false);
   const [replayDate, setReplayDate] = useState<string | null>(null);
@@ -66,8 +73,11 @@ export function MarketFlowPage({ universe, tabs }: MarketFlowPageProps) {
   const fits = layout === 'desktop' || layout === 'diagram';
   useFitScrollerHeight(pageRef, fits);
   useEffect(() => { saveUniverse(scope); }, [scope]);
+  useEffect(() => { saveExchange(exchange); }, [exchange]);
 
-  const shown = useMemo(() => universe.filter(item => inUniverse(item.symbol, scope)), [universe, scope]);
+  // The Nifty 50 / All F&O switch only makes sense inside NSE; BSE carries its
+  // own (small) list and would otherwise look empty.
+  const shown = useMemo(() => universe.filter(item => inExchange(exchange, item) && (exchange === 'BSE' || inUniverse(item.symbol, scope))), [universe, scope, exchange]);
   const live = useMarketFlow(shown, SETTINGS);
   const replay = useReplayFlow(shown, SETTINGS, { requested: replayRequested, date: replayDate ?? live.market?.date ?? getLatestTradingSessionDate(new Date()) });
   const isReplay = replayRequested;
@@ -95,7 +105,8 @@ export function MarketFlowPage({ universe, tabs }: MarketFlowPageProps) {
   const pageActions = (
     <>
       {tabs}
-      <CapsuleSegmented options={UNIVERSES} value={scope} onChange={setScope} ariaLabel="Underlyings" groupId="flow-universe" size="page" className="ui-flow-universe" />
+      <CapsuleSegmented options={EXCHANGES} value={exchange} onChange={setExchange} ariaLabel="Exchange" groupId="flow-exchange" size="page" className="ui-flow-exchange" />
+      {exchange === 'NSE' && <CapsuleSegmented options={UNIVERSES} value={scope} onChange={setScope} ariaLabel="Underlyings" groupId="flow-universe" size="page" className="ui-flow-universe" />}
       <button className={`ui-flow-replay${replayRequested ? ' is-active' : ''}`} type="button" data-testid="flow-replay-open" aria-label={replayRequested ? 'Close market replay' : 'Open market replay'} onClick={toggleReplay}>
         Replay
       </button>
@@ -104,7 +115,7 @@ export function MarketFlowPage({ universe, tabs }: MarketFlowPageProps) {
   );
 
   return (
-    <div className="ui-flow oi-design" data-window="day" data-universe={scope} data-layout={layout} data-fit={fits ? 'true' : undefined} ref={pageRef}>
+    <div className="ui-flow oi-design" data-window="day" data-exchange={exchange} data-universe={scope} data-layout={layout} data-fit={fits ? 'true' : undefined} ref={pageRef}>
       <h1 className="is-visually-hidden">Order Flow</h1>
       <PageBar current="Order Flow" crumbs={false} className="oi-design ui-flow-pagebar">{pageActions}</PageBar>
       {replayRequested && <ReplayControls manifest={replay.manifest} mode={replay.mode} loading={replay.loading} error={replay.error} notice={replay.notice} retryableFutures={replay.retryableFutures} retryingFutures={replay.retryingFutures} cursorLabel={replay.cursorLabel} onPlay={replay.togglePlay} onSeek={replay.seek} onRetry={replay.retry} onLive={closeReplay} days={replay.days} selectedDate={replay.selectedDate} selectedSource={replay.selectedSource} onSelectDay={replay.selectDay} window={replay.window} customStart={replay.customStart} customEnd={replay.customEnd} onWindow={replay.setWindow} speed={replay.speed} onSpeed={replay.setSpeed} phone={phone} />}

@@ -68,6 +68,19 @@ describe('MarketFlowPage', () => {
     expect(localStorage.getItem('orderFlow:universe:v1')).toBe('nifty50');
   });
 
+  it('keeps NSE and BSE separate: the BSE view carries only BSE underlyings and hides the Nifty 50 switch', () => {
+    const sensex = { symbol: 'SENSEX', name: 'Sensex', apiKey: 'BSE:SENSEX', lot: 20, kind: 'index', exch: 'BSE' } as Underlying;
+    const view = page([nifty, reliance, sensex]);
+    expect(hook.universe).toEqual(['NIFTY', 'RELIANCE']);
+    expect(view.container.querySelector('.ui-flow')).toHaveAttribute('data-exchange', 'NSE');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'BSE' }));
+    expect(hook.universe).toEqual(['SENSEX']);
+    expect(localStorage.getItem('orderFlow:exchange:v1')).toBe('BSE');
+    expect(view.container.querySelector('.ui-flow')).toHaveAttribute('data-exchange', 'BSE');
+    expect(screen.queryByRole('radio', { name: 'Nifty 50' })).not.toBeInTheDocument();
+  });
+
   it('keeps an open replay pinned to the session where it was opened', () => {
     hook.flow = { ...empty, date: '2026-10-09' };
     const view = page([nifty]);

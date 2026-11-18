@@ -29,3 +29,23 @@ export function loadUniverse(): FlowUniverse {
 export function saveUniverse(universe: FlowUniverse): void {
   try { localStorage.setItem(KEY, universe); } catch { /* A private window keeps the choice for this visit only. */ }
 }
+
+/**
+ * The exchange is its own switch, never a merge: the owner asked for NSE and
+ * BSE to be viewed separately ("make separate each other… dono alag").
+ */
+export type FlowExchange = 'NSE' | 'BSE';
+
+const EXCHANGE_KEY = 'orderFlow:exchange:v1';
+
+export function inExchange(exchange: FlowExchange, item: { exch?: string }): boolean {
+  return (item.exch === 'BSE' ? 'BSE' : 'NSE') === exchange;
+}
+
+export function loadExchange(): FlowExchange {
+  try { return localStorage.getItem(EXCHANGE_KEY) === 'BSE' ? 'BSE' : 'NSE'; } catch { return 'NSE'; }
+}
+
+export function saveExchange(exchange: FlowExchange): void {
+  try { localStorage.setItem(EXCHANGE_KEY, exchange); } catch { /* A private window keeps the choice for this visit only. */ }
+}
