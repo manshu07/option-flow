@@ -176,6 +176,37 @@ export function useMarketFeed() {
   return { market, loading: !market, error, status, rescan: () => setTick(value => value + 1) };
 }
 
+/** A live futures tick from the server's spot stream — the broker's number, not a minute close. */
+export interface LiveFutureTick { ltp: number; at: number }
+
+/**
+ * Live futures ticks for a small list (the big cards). The board's minute
+ * closes trail a broker's live quote by up to a couple of minutes, which reads
+ * as a wrong price on a fast mover; the server already streams the feed's own
+ * readings, so the cards quote those instead.
+ */
+export function useLiveFutures(symbols: readonly string[]): ReadonlyMap<string, LiveFutureTick> {
+  const key = symbols.slice(0, 12).join(',');
+  const [ticks, setTicks] = useState<ReadonlyMap<string, LiveFutureTick>>(() => new Map());
+  useEffect(() => {
+    if (!key || typeof EventSource === 'undefined') return undefined;
+    const source = new EventSource(`${API}/api/stream/spots?symbols=${encodeURIComponent(key)}`);
+    source.onmessage = event => {
+      try {
+        const payload = JSON.parse(event.data) as { t?: number; futures?: Record<string, { ltp?: number; at?: number | null }> };
+        const next = new Map<string, LiveFutureTick>();
+        for (const [symbol, reading] of Object.entries(payload.futures ?? {})) {
+          const ltp = Number(reading?.ltp);
+          if (Number.isFinite(ltp) && ltp > 0) next.set(symbol, { ltp, at: Number(reading?.at) || Number(payload.t) || Date.now() });
+        }
+        if (next.size) setTicks(next);
+      } catch { /* a malformed frame is ignored, the next one arrives in 3s */ }
+    };
+    return () => source.close();
+  }, [key]);
+  return ticks;
+}
+
 const WORKERS = 6;
 
 /** Last successful futures per session/symbol; survives page tab unmounts. */

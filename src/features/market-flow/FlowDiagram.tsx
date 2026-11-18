@@ -10,6 +10,7 @@ import { FlowPopup } from './FlowPopup';
 import { useRememberedChoice } from '@/lib/remembered';
 import { levelText, type FlowSector, type FlowSettings, type FlowStock, type MarketFlow } from './marketFlowModel';
 import { useBox } from './useBox';
+import { useLiveFutures, type LiveFutureTick } from './feed';
 
 /**
  * Order Flow on a wide desktop: one continuous diagram, read left to right.
@@ -153,6 +154,10 @@ function DiagramBody({ flow, settings, status, W, H }: FlowDiagramProps & { W: n
     const { boxes } = smallBoxes(layout, side, shown);
     return { side, demo, featured, shownList: rest.slice(0, shown), boxes, features: featureBoxes(layout, side) };
   }), [flow, layout]);
+  // The big cards quote the feed's live tick, not a minute close: a broker's
+  // number and the board's number must be the same number at the same second.
+  const featuredSymbols = useMemo(() => sides.flatMap(({ featured }) => featured.map(stock => stock.symbol)).slice(0, 12), [sides]);
+  const liveTicks = useLiveFutures(featuredSymbols);
   // Who has a card on the board: only they get a path to a card.
   const carded = useMemo(() => new Set(sides.flatMap(({ shownList, featured }) => [...shownList, ...featured].map(stock => stock.symbol))), [sides]);
 
@@ -464,7 +469,7 @@ function DiagramBody({ flow, settings, status, W, H }: FlowDiagramProps & { W: n
           {featured.map((stock, i) => features[i] && (
             <div key={stock.symbol}>
               <TallTile stock={stock} side={side} box={features[i].tall} demo={demo} />
-              <DiagramCard stock={stock} side={side} box={features[i].card} demo={demo} />
+              <DiagramCard stock={stock} side={side} box={features[i].card} demo={demo} live={liveTicks.get(stock.symbol) ?? null} />
             </div>
           ))}
         </section>
@@ -735,7 +740,7 @@ const CARD_TFS = ['auto', 1, 5, 15, 30] as const;
 type CardTf = 'auto' | 1 | 5 | 15 | 30;
 
 /** A large card: side badge, conviction ring, the move, price, support / zone / resistance, the range bar, and 5-minute candles with the levels. */
-const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false }: { stock: FlowStock; side: 'bullish' | 'bearish'; box: Box; demo?: boolean }) {
+const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false, live = null }: { stock: FlowStock; side: 'bullish' | 'bearish'; box: Box; demo?: boolean; live?: LiveFutureTick | null }) {
   const focus = useFlowFocus();
   const [tf] = useRememberedChoice<CardTf>('marketFlow.miniChart.tf:v1', CARD_TFS, 'auto');
   const held = stock.checks.filter(check => check.pass).length;
@@ -743,6 +748,12 @@ const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false }
   const chartW = Math.round(box.w * (box.w < 300 ? 0.46 : 0.54));
   const chartH = Math.max(40, box.h - 20 - 34);
   const compact = box.h < 172;
+  // Live tick wins over the minute close; the change is measured from the same
+  // baseline the window uses, so price and % never disagree.
+  const base = stock.fut?.priceFrom ?? null;
+  const price = live?.ltp ?? stock.fut?.price ?? stock.spot;
+  const change = live && base != null ? live.ltp - base : stock.fut?.priceChange ?? null;
+  const asOf = live ? clockText(live.at) : stock.fut ? clockText(stock.fut.to) : null;
   return (
     <article className={`mf-dgcard ${toneOf(stock)}${demo ? ' is-demo' : ''}`} data-sym={stock.symbol} data-sector={stock.sector} style={{ left: box.x, top: box.y, width: box.w, height: box.h, ...heatStyle(stock.changePct) }}>
       <TickFlash value={stock.changePct} />
@@ -762,10 +773,10 @@ const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false }
               the stock's own price beside it so nobody compares a futures
               quote with a broker's equity quote. */}
           <span className="mf-dgcard__price">
-            ₹{fmtPrice(stock.fut?.price ?? stock.spot)} <span className={`mf-tone is-${side}`}>{signedText(stock.fut?.priceChange)}</span>
+            ₹{fmtPrice(price)} <span className={`mf-tone is-${side}`}>{signedText(change)}</span>
             <span className="mf-dgcard__basis">{stock.fut ? `FUT ${expiryMonth(stock.expiry)}` : 'SPOT'}</span>
           </span>
-          <span className="mf-dgcard__spot">Stock ₹{fmtPrice(stock.spot)} <span className="mf-tone">{pctText(stock.spotChangePct)}</span></span>
+          <span className="mf-dgcard__spot">Stock ₹{fmtPrice(stock.spot)} <span className="mf-tone">{pctText(stock.spotChangePct)}</span>{asOf && <> · {live ? 'live' : 'close'} {asOf}</>}</span>
           {!compact && <RangeBar stock={stock} />}
         </span>
         <span className="mf-dgcard__chart"><CandleChart stock={stock} width={chartW} height={chartH} tf={tf} /></span>
@@ -778,6 +789,11 @@ const DiagramCard = memo(function DiagramCard({ stock, side, box, demo = false }
     </article>
   );
 });
+
+/** HH:MM:SS in IST — the card says which second its price stands for. */
+function clockText(at: number): string {
+  return new Date(at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+}
 
 /** The future's expiry as a short month tag (Dec), so a futures quote is never read as the stock's. */
 function expiryMonth(expiry: string): string {
