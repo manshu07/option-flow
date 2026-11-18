@@ -66,6 +66,14 @@ const MAX_PER_SECOND = Math.max(1, Number(process.env.DHAN_MAX_RPS) || 5);
 const FUTURES_MONTHS = Math.max(1, Math.min(3, Number(process.env.DHAN_FUTURES_MONTHS) || 2));
 const CHAIN_PER_8S = 10; // documented hard cap; do not raise
 const STRIKES_EACH_SIDE = 15;
+// Next-expiry capture (December spec): a narrower second window on the expiry
+// after the near one, so cards can sit on the slower-decaying month.
+// DHAN_NEXT_EXPIRY=0 disables everything; DHAN_NEXT_STRIKES sizes the window.
+const NEXT_EXPIRY_ENABLED = process.env.DHAN_NEXT_EXPIRY !== '0';
+const NEXT_EXPIRY_STRIKES_EACH_SIDE = Number(process.env.DHAN_NEXT_STRIKES) || 7;
+// Dhan hard caps: 5 connections × 5,000 instruments. Never subscribe past this;
+// the December window trims ±7 → ±5 → ±3, then drops entirely (near chain wins).
+const FEED_INSTRUMENT_CAP = 24_500;
 const QUOTES_EVERY_MS = 60_000;
 
 /** Universe symbols Dhan names differently in its scrip master. */
@@ -528,15 +536,20 @@ export function createDhanProvider(universe) {
   }
 
   function liveChain(held, expiry) {
-    if (!held.optionStrikes || held.optionStrikes.expiry !== expiry) return null;
+    const near = held.optionStrikes && held.optionStrikes.expiry === expiry ? held.optionStrikes : null;
+    const next = held.nextWindow && held.nextWindow.expiry === expiry ? held.nextWindow : null;
+    const source = near ?? next;
+    if (!source) return null;
     const { spot, prevClose } = underlyingQuote(held);
     if (!spot) return null;
-    const segByte = SEG_BYTE.NSE_FNO;
-    const strikes = [...held.optionStrikes.window]
+    // Option legs live on the UNDERLYING's FNO segment (NSE options on
+    // NSE_FNO, Sensex/BSE legs on BSE_FNO).
+    const segByte = SEG_BYTE[held.exchSeg] ?? SEG_BYTE.NSE_FNO;
+    const strikes = [...source.window]
       .sort((a, b) => a - b)
       .map(strike => {
-        const ceKey = held.optionStrikes.ids.get(strike)?.CE;
-        const peKey = held.optionStrikes.ids.get(strike)?.PE;
+        const ceKey = source.ids.get(strike)?.CE;
+        const peKey = source.ids.get(strike)?.PE;
         return {
           strike,
           call: ceKey ? legFromFeed(`${segByte}:${ceKey}`) : undefined,
@@ -689,7 +702,7 @@ export function createDhanProvider(universe) {
     return list.slice(Math.max(0, at - eachSide), at + eachSide + 1);
   }
 
-  function buildWindows(session) {
+  function buildWindows(session, nextEachSide = NEXT_EXPIRY_ENABLED ? NEXT_EXPIRY_STRIKES_EACH_SIDE : null) {
     const today = ymdIst(Date.now());
     const optionKeys = [], coreKeys = [];
     for (const held of map.values()) {
@@ -720,6 +733,22 @@ export function createDhanProvider(universe) {
         if (legs.PE) optionKeys.push(`${legSeg}:${legs.PE}`);
       }
       held.optionStrikes.center = spot;
+      // Second pass: the NEXT live expiry gets its own narrower window so the
+      // advisor can build slow-decay cards when the near week is too close.
+      held.nextWindow = null;
+      if (!nextEachSide) continue;
+      const nextExpiry = held.expiries.find(e => e > near);
+      const perExpiryNext = nextExpiry ? held.strikeMap.get(nextExpiry) : null;
+      if (!nextExpiry || !perExpiryNext?.size) continue;
+      const listedNext = [...perExpiryNext.keys()].sort((a, b) => a - b);
+      const windowNext = nearestStrikes(listedNext, spot, nextEachSide);
+      held.nextWindow = { expiry: nextExpiry, ids: perExpiryNext, window: windowNext, center: spot, eachSide: nextEachSide };
+      const nextLegSeg = SEG_BYTE[held.exchSeg] ?? SEG_BYTE.NSE_FNO;
+      for (const strike of windowNext) {
+        const legs = perExpiryNext.get(strike) ?? {};
+        if (legs.CE) optionKeys.push(`${nextLegSeg}:${legs.CE}`);
+        if (legs.PE) optionKeys.push(`${nextLegSeg}:${legs.PE}`);
+      }
     }
     return { coreKeys, optionKeys };
   }
@@ -752,6 +781,31 @@ export function createDhanProvider(universe) {
       }
       held.optionStrikes.window = fresh;
       held.optionStrikes.center = spot;
+      // Keep the December window in sync with the same centre-drift rule.
+      if (held.nextWindow?.window?.length && held.nextWindow.expiry >= today) {
+        const nSpot = underlyingQuote(held)?.spot;
+        if (nSpot && held.nextWindow.center && Math.abs(nSpot - held.nextWindow.center) / nSpot >= 0.004) {
+          const listedNext = [...held.nextWindow.ids.keys()].sort((a, b) => a - b);
+          const freshNext = nearestStrikes(listedNext, nSpot, held.nextWindow.eachSide ?? NEXT_EXPIRY_STRIKES_EACH_SIDE);
+          const oldNext = new Set(held.nextWindow.window);
+          const newNext = new Set(freshNext);
+          const nextLegSeg = SEG_BYTE[held.exchSeg] ?? SEG_BYTE.NSE_FNO;
+          for (const strike of oldNext) {
+            if (newNext.has(strike)) continue;
+            const legs = held.nextWindow.ids.get(strike) ?? {};
+            if (legs.CE) drops.push(`${nextLegSeg}:${legs.CE}`);
+            if (legs.PE) drops.push(`${nextLegSeg}:${legs.PE}`);
+          }
+          for (const strike of freshNext) {
+            if (oldNext.has(strike)) continue;
+            const legs = held.nextWindow.ids.get(strike) ?? {};
+            if (legs.CE) adds.push(`${nextLegSeg}:${legs.CE}`);
+            if (legs.PE) adds.push(`${nextLegSeg}:${legs.PE}`);
+          }
+          held.nextWindow.window = freshNext;
+          held.nextWindow.center = nSpot;
+        }
+      }
     }
     if (drops.length) unsubscribe(drops);
     if (adds.length) subscribe(adds, 'options');
@@ -862,16 +916,36 @@ export function createDhanProvider(universe) {
       // Open the feed: conn 0 carries underlyings + futures; the rest carry option strikes.
       conns.length = 0;
       conns.push({ socket: null, subs: new Set(), queue: [], unsubQueue: [], holds: null, draining: false, reconnectTimer: null });
-      for (let i = 1; i < 4; i++) conns.push({ socket: null, subs: new Set(), queue: [], unsubQueue: [], holds: new Set(), draining: false, reconnectTimer: null });
+      for (let i = 1; i < 5; i++) conns.push({ socket: null, subs: new Set(), queue: [], unsubQueue: [], holds: new Set(), draining: false, reconnectTimer: null });
 
       const session = ymdIst(Date.now());
-      const { coreKeys, optionKeys } = buildWindows(session);
+      let { coreKeys, optionKeys } = buildWindows(session);
+      let nextEachSide = NEXT_EXPIRY_ENABLED ? NEXT_EXPIRY_STRIKES_EACH_SIDE : null;
+      // Capacity guard: December trims ±7 → ±5 → ±3 to stay under the instrument
+      // cap; if even ±3 busts it, December drops entirely and the near chain is
+      // protected (a rejected subscribe would silently lose instruments).
+      if (nextEachSide != null && coreKeys.length + optionKeys.length > FEED_INSTRUMENT_CAP) {
+        for (const candidate of [5, 3]) {
+          ({ coreKeys, optionKeys } = buildWindows(session, candidate));
+          nextEachSide = candidate;
+          if (coreKeys.length + optionKeys.length <= FEED_INSTRUMENT_CAP) break;
+        }
+        if (coreKeys.length + optionKeys.length > FEED_INSTRUMENT_CAP) {
+          ({ coreKeys, optionKeys } = buildWindows(session, null));
+          nextEachSide = null;
+          console.warn(`dhan: instrument budget ${coreKeys.length + optionKeys.length} busts the ${FEED_INSTRUMENT_CAP} cap even at ±3 — December capture disabled, near chain protected`);
+        } else {
+          console.warn(`dhan: December window trimmed to ±${nextEachSide} to fit the ${FEED_INSTRUMENT_CAP} instrument cap`);
+        }
+      }
+      let nextLegCount = 0;
+      for (const held of map.values()) if (held.nextWindow?.window?.length) nextLegCount += held.nextWindow.window.length * 2;
       feedWant = new Set([...coreKeys, ...optionKeys]);
       conns[0].holds = new Set(coreKeys);
       for (let i = 1; i < conns.length; i++) {
         conns[i].holds = new Set(optionKeys.filter((_, j) => j % (conns.length - 1) === i - 1));
       }
-      console.log(`dhan: feed want ${feedWant.size} instruments (core ${coreKeys.length}, options ${optionKeys.length}); holds ${conns.map(c => c.holds.size).join('/')}`);
+      console.log(`dhan: feed want ${feedWant.size} instruments (core ${coreKeys.length}, near ${optionKeys.length - nextLegCount}, next ${nextLegCount}); holds ${conns.map(c => c.holds.size).join('/')}`);
       for (let i = 0; i < conns.length; i++) {
         // Stagger the connections: underlyings + futures land first, the option
         // subscriptions follow a second apart, so the first build has the core.
@@ -928,7 +1002,7 @@ export function createDhanProvider(universe) {
       // nothing changes at close, and re-fetching 215 chains over the paced REST
       // path turns every build into an eleven-minute crawl.
       if (feedStartedAt > 0 && Date.now() - (feedHealthyAt || 0) > 60_000) {
-        const cached = lastChain.get(u.symbol);
+        const cached = lastChain.get(`${u.symbol}:${expiry}`);
         if (cached && cached.expiry === expiry && Date.now() - cached.at < 6 * 3_600_000) return cached.chain;
       }
       // Feed boot: connections open and ~14k subscriptions land over the first
@@ -941,7 +1015,7 @@ export function createDhanProvider(universe) {
         const deadline = Date.now() + (feedHealthyAt ? 6000 : 25_000);
         let chain = feedHealthy() ? liveChain(held, expiry) : null;
         for (;;) {
-          if (chain && chain.strikes.filter(s => s.call || s.put).length >= 3) { if (chain.spot > 0) lastChain.set(u.symbol, { expiry, at: Date.now(), chain }); return chain; }
+          if (chain && chain.strikes.filter(s => s.call || s.put).length >= 3) { if (chain.spot > 0) lastChain.set(`${u.symbol}:${expiry}`, { expiry, at: Date.now(), chain }); return chain; }
           if (Date.now() > deadline) break;
           await sleep(1500);
           chain = feedHealthy() ? liveChain(held, expiry) : null;
@@ -950,11 +1024,11 @@ export function createDhanProvider(universe) {
         // build, a minute later, is full). During the first three minutes the
         // feed is still filling in, so a bare chain retries rather than falling
         // to REST chain calls, which Dhan answers with 429s.
-        if (chain && chain.strikes.filter(s => s.call || s.put).length >= 1) { if (chain.spot > 0) lastChain.set(u.symbol, { expiry, at: Date.now(), chain }); return chain; }
+        if (chain && chain.strikes.filter(s => s.call || s.put).length >= 1) { if (chain.spot > 0) lastChain.set(`${u.symbol}:${expiry}`, { expiry, at: Date.now(), chain }); return chain; }
         if (booting && Date.now() - (feedStartedAt || Date.now()) < 180_000) throw new Error('dhan: option feed warming up');
       }
       const rest = await restChain(u, expiry, held);
-      if (rest.spot > 0 && rest.strikes.length >= 3) lastChain.set(u.symbol, { expiry, at: Date.now(), chain: rest });
+      if (rest.spot > 0 && rest.strikes.length >= 3) lastChain.set(`${u.symbol}:${expiry}`, { expiry, at: Date.now(), chain: rest });
       if (rest.strikes.length) {
         fullChains.set(`${u.symbol}:${rest.at}`, createFullOptionChainSnapshot(u.symbol, ymdIst(rest.at), rest));
       }
