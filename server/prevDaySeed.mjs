@@ -40,11 +40,17 @@ export function seedPlan(seriesRow, windows, { session = null, snapshotSession =
   const nearMap = rowMapFor(seriesRow);
   const nextMap = seriesRow.next ? rowMapFor(seriesRow.next) : null;
   const nearExpiry = typeof seriesRow.e === 'string' ? seriesRow.e : null;
+  const nextExpiry = typeof seriesRow.next?.e === 'string' ? seriesRow.next.e : null;
   const earlierSession = Boolean(session && snapshotSession && snapshotSession < session);
   const plan = [];
   for (const entry of windows ?? []) {
     if (!entry || !Array.isArray(entry.window) || !entry.ids) continue;
-    const isNextWindow = nearExpiry != null && entry.expiry != null && entry.expiry !== nearExpiry;
+    // Which expiry block is this window? An unrecognised/absent expiry is
+    // skipped outright — guessing "near" is exactly how December legs once got
+    // the November baseline.
+    const isNextWindow = entry.expiry != null && nextExpiry != null && entry.expiry === nextExpiry && entry.expiry !== nearExpiry;
+    const isNearWindow = entry.expiry == null || entry.expiry === nearExpiry;
+    if (!isNextWindow && !isNearWindow) continue;
     if (isNextWindow && !nextMap) continue;
     // Same-session snapshot: the next expiry's own baseline never came from
     // upstream, so seeding it would copy the near expiry's numbers again.

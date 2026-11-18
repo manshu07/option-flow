@@ -36,6 +36,14 @@ describe('seedPlan', () => {
     ]);
   });
 
+  it('skips a window whose expiry matches neither block instead of guessing near', () => {
+    const plan = seedPlan(seriesRow, [
+      { expiry: '2026-12-31', window: [2000], ids: new Map([[2000, { CE: 'x-ce', PE: 'x-pe' }]]) },
+      { expiry: null, window: [2000], ids: new Map([[2000, { CE: 'near-ce' }]]) },
+    ], { session: SESSION, snapshotSession: '2026-11-17' });
+    expect(plan.map(item => item.legKey)).toEqual(['near-ce']);
+  });
+
   it('skips the next window when the snapshot has no next block', () => {
     const plan = seedPlan({ ...seriesRow, next: undefined }, windows, { session: SESSION, snapshotSession: '2026-11-17' });
     expect(plan.map(item => item.legKey)).toEqual(['near-ce', 'near-pe']);
