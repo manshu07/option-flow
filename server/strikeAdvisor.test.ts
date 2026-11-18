@@ -233,6 +233,35 @@ describe('runAdvisor gates', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('sends one upgrade note when a model card replaces an early signal', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-upgrade-'));
+    const obsPath = join(dir, 'observations.json');
+    writeFileSync(obsPath, JSON.stringify({ cards: [{ id: 'UPGTEST|2026-11-16', symbol: 'UPGTEST', date: '2026-11-16', early: 'momentum', entry: 4, expiry: '2026-11-19' }] }));
+    const marketSeries = { ...seriesFixture(), s: 'UPGTEST' };
+    const ask = async () => ({ quality_UPGTEST: { noul: 80 }, strike_UPGTEST: { choice: 'c1', probabilities: { c1: 0.9 } } });
+    const upgrades: string[] = [];
+    const sent: unknown[] = [];
+    try {
+      const result = await runAdvisor({ date: '2026-11-16', series: [marketSeries] }, {
+        obsPath,
+        watches: [{ symbol: 'UPGTEST', bias: 'bullish' }],
+        now: NOW,
+        ask,
+        send: async message => { sent.push(message); return { sent: true }; },
+        sendUpgrade: async text => { upgrades.push(text); return { sent: true }; },
+      });
+      expect(result.written).toBe(1);
+      // The upgrade replaces the early card in place, so it is not "fresh" — only the note goes out.
+      expect(sent).toHaveLength(0);
+      expect(upgrades).toHaveLength(1);
+      expect(upgrades[0]).toContain('Upgrade · UPGTEST');
+      expect(upgrades[0]).toContain('quality 80%');
+      expect(loadObservations(obsPath)[0]).toMatchObject({ symbol: 'UPGTEST', quality: 0.8 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('updates one symbol/session card but sends only one Telegram note', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'obs-once-'));
     const obsPath = join(dir, 'observations.json');

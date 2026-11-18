@@ -359,6 +359,7 @@ function saveObservations(path, cards) {
 }
 
 const notified = new Set(); // `symbol|sessionDate` — one Telegram note per card per day
+const upgradeNotified = new Set(); // `symbol|sessionDate` — one upgrade note per card per day
 
 function futuresAtr(snapshot, symbol, sessionDate, now) {
   if (typeof symbol !== 'string' || typeof sessionDate !== 'string' || !snapshot || snapshot.symbol !== symbol || snapshot.session !== sessionDate || !Array.isArray(snapshot.months)) return null;
@@ -451,7 +452,7 @@ async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, n
  * One advisor pass over the triage's watch list. Never throws; every failure
  * is logged and the observations file keeps its previous content.
  */
-export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null, readFuturesSnapshot = () => null, subscriberChatIds = [], sendSubscriber = (text, chatId) => sendTelegram(text, { chatId, parseMode: 'HTML', retry: true }) } = {}) {
+export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null, readFuturesSnapshot = () => null, subscriberChatIds = [], sendSubscriber = (text, chatId) => sendTelegram(text, { chatId, parseMode: 'HTML', retry: true }), sendUpgrade = text => sendTelegram(text, { parseMode: 'HTML', retry: true }) } = {}) {
   const sessionDate = typeof market?.date === 'string' ? market.date : null;
   if (!configured()) return { skipped: 'not configured' };
   if (!inFireWindow(now)) return { skipped: 'outside fire window' };
@@ -496,6 +497,18 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       const freshCards = dedupeObservations(cards);
       const existing = loadObservations(obsPath);
       const existingKeys = new Set(existing.map(observationKey).filter(Boolean));
+      // A model card that lands on a key an early signal already holds is a
+      // genuine upgrade: the same symbol/session, now confirmed by the model.
+      // The owner asked "then it will change later its quality score?" — this
+      // is the note that says so. Subscribers get nothing extra: their copy
+      // never mentions quality or the model.
+      const upgrades = freshCards.filter(card => {
+        const key = observationKey(card);
+        if (!key || !existingKeys.has(key) || card.early || card.quality == null) return false;
+        if (upgradeNotified.has(key)) return false;
+        const prior = existing.find(item => observationKey(item) === key);
+        return Boolean(prior?.early);
+      });
       const stored = retainObservations([...freshCards, ...existing]);
       saveObservations(obsPath, stored);
       const fresh = freshCards.filter(card => {
@@ -523,6 +536,17 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
               log(`telegram subscriber card ${chatId} failed: ${String(error?.message || error)}`);
             }
           }
+        }
+      }
+      for (const card of upgrades) {
+        const key = observationKey(card);
+        if (key) upgradeNotified.add(key);
+        const text = `🔁 <b>Upgrade · ${card.symbol} ${card.strike}${card.side}</b>\nThis is now a confirmed setup (quality ${Math.round(card.quality * 100)}%) instead of the earlier early signal — same symbol, same expiry ${card.expiry ?? 'nearest'}, entry ${card.entry}, SL ${card.sl}, TGT1 ${card.tgt1}.`;
+        try {
+          const result = await sendUpgrade(text);
+          log(`telegram upgrade ${result?.sent ? 'sent' : 'not sent'}: ${card.symbol} ${Math.round(card.quality * 100)}%`);
+        } catch (error) {
+          log(`telegram upgrade failed for ${card.symbol}: ${String(error?.message || error)}`);
         }
       }
     }
