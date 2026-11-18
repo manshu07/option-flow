@@ -6,6 +6,7 @@
  *   GET /api/market/<date>/<HHMM>    an earlier minute of today (the 15m / 1h windows)
  *   GET /api/futures/<SYMBOL>?session=YYYY-MM-DD   its futures months and 1-minute candles
  *   GET /api/orb                     the ORB scanner list for the current session
+ *   GET /api/participation           near vs next expiry OI shifts (rollover view)
  *   GET /api/replay/<date>/manifest  captured market minutes and futures coverage
  *   GET /api/replay/<date>/futures/<SYMBOL>?asOf=HHMM  persisted futures at a cursor
  *   GET /api/strikes/<SYMBOL>?date=&asOf=HHMM      one underlying's per-strike premium
@@ -44,6 +45,7 @@ import { futuresCoverage, persistFutures, readFutures, readReplayMinutes, Replay
 import { captureRequest, createCapture, withCaptureStatus } from './capture.mjs';
 import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAlerts } from './alerts.mjs';
 import { orbScan, orbSlotDue, orbMessage } from './orb.mjs';
+import { participation } from './participation.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { liveErrorMessage, liveSnapshotMessage, obsSnapshotMessage, oiSnapshotMessage } from './liveCommand.mjs';
@@ -1161,6 +1163,13 @@ async function handle(req, res) {
       scan = computeOrb(at, state.latest);
     }
     return send(res, 200, { at: scan.at, session: scan.session, leading: scan.leading, counts: scan.counts, rows: scan.rows });
+  }
+
+  if (p === '/api/participation') {
+    if (!state.latest) return send(res, 503, { error: 'The first market file is still being built.' }, 'application/json', { 'Retry-After': '5' });
+    const limit = Math.max(0, Math.min(300, Number(url.searchParams.get('limit')) || 0));
+    const result = participation(state.latest.series, { limit });
+    return send(res, 200, { at: result.at, session: state.latest.date, totals: result.totals, rows: result.rows });
   }
 
   if (p === '/api/observations') return send(res, 200, { cards: loadObservations(path.join(DATA_DIR, 'observations.json')) });
