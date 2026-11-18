@@ -61,6 +61,7 @@ import { fileURLToPath } from 'node:url';
 import { isMarketSessionTime } from '../../src/lib/marketSession.ts';
 import { createFullOptionChainSnapshot, normalizeDhanOptionChain } from '../optionChainSnapshots.mjs';
 import { readFutures } from '../replayStorage.mjs';
+import { seedPlan } from '../prevDaySeed.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MASTER_CACHE = path.join(ROOT, 'data', '.dhan-master.csv');
 const MAX_PER_SECOND = Math.max(1, Number(process.env.DHAN_MAX_RPS) || 5);
@@ -662,29 +663,24 @@ export function createDhanProvider(universe) {
         .sort()
         .reverse();
     } catch { return false; }
-    const seedFromSeries = (series, sourceLabel) => {
+    const seedFromSeries = (series, sourceLabel, snapshotSession = null) => {
       const bySymbol = new Map((Array.isArray(series) ? series : []).map(item => [item?.s, item]));
       let legs = 0;
       for (const held of map.values()) {
         const rows = bySymbol.get(held.symbol);
         if (!rows) continue;
-        const rowMap = new Map((Array.isArray(rows.r) ? rows.r : []).filter(row => Array.isArray(row)).map(row => [`${row[0]}:${row[1]}`, row]));
         const legSeg = SEG_BYTE[held.exchSeg] ?? SEG_BYTE.NSE_FNO;
         const windows = [
-          held.optionStrikes?.window?.length ? { window: held.optionStrikes.window, ids: held.optionStrikes.ids } : null,
-          held.nextWindow?.window?.length ? { window: held.nextWindow.window, ids: held.nextWindow.ids } : null,
+          held.optionStrikes?.window?.length ? { expiry: held.optionStrikes.expiry, window: held.optionStrikes.window, ids: held.optionStrikes.ids } : null,
+          held.nextWindow?.window?.length ? { expiry: held.nextWindow.expiry, window: held.nextWindow.window, ids: held.nextWindow.ids } : null,
         ].filter(Boolean);
-        for (const { window, ids } of windows) {
-          for (const strike of window) {
-            const legsById = ids.get(strike) ?? {};
-            for (const [side, legKey] of [[0, legsById.CE], [1, legsById.PE]]) {
-              const row = rowMap.get(`${strike}:${side}`);
-              const prevOi = num(row?.[5]);
-              if (!legKey || !row || prevOi == null) continue; // only real prev-day values count
-              record(legSeg, legKey, { prevOi, prevClose: num(row[3]), prevVolume: num(row[6]) });
-              legs += 1;
-            }
-          }
+        // Expiry-aware: a strike that exists in both expiries must not take the
+        // near leg's previous-day OI (it made every December OI change read as
+        // a −90% unwind). The next expiry only seeds from an earlier session's
+        // close OI, because Dhan reports previous_oi = 0 for those contracts.
+        for (const item of seedPlan(rows, windows, { session, snapshotSession })) {
+          record(legSeg, item.legKey, { prevOi: item.prevOi, prevClose: item.prevClose, prevVolume: item.prevVolume });
+          legs += 1;
         }
       }
       if (legs > 0) console.log(`dhan: prev-day seeded from ${sourceLabel} — ${legs} legs instantly (REST seed continues for IV/delta)`);
@@ -699,7 +695,7 @@ export function createDhanProvider(universe) {
       let snap;
       try { snap = JSON.parse(fs.readFileSync(path.join(dir, files[files.length - 1]), 'utf8')); }
       catch (error) { console.warn(`dhan: disk seed could not parse ${date}/${files[files.length - 1]}: ${error?.message || error}`); continue; }
-      if (seedFromSeries(snap?.series, `${date}/${files[files.length - 1]}`)) return true;
+      if (seedFromSeries(snap?.series, `${date}/${files[files.length - 1]}`, date)) return true;
     }
 
     // Raw minutes may be cleaned after archiving (or written pre-seed on a
@@ -719,7 +715,7 @@ export function createDhanProvider(universe) {
           last = minutes[keys[keys.length - 1]];
         }
         const series = Array.isArray(last) ? last[1]?.series : last?.series;
-        if (seedFromSeries(series, `archive ${gz}`)) return true;
+        if (seedFromSeries(series, `archive ${gz}`, gz.slice(0, 10))) return true;
       } catch (error) {
         console.warn(`dhan: disk seed could not read archive ${gz}: ${error?.message || error}`);
       }
