@@ -32,6 +32,14 @@ const STOP_FRACTION = 0.45;   // stop at −45% of entry premium (user's −40�
 const TGT1_FRACTION = 0.55;   // first target +55%
 const TGT2_FRACTION = 0.9;    // second target +90%
 const MIN_ENTRY_PREMIUM = 0.5; // skip near-zero premiums — no lottery strikes
+// Liquidity gate (P0-S2): dust strikes are never candidates.
+const LIQUIDITY_MIN_OI = 10_000;
+const LIQUIDITY_MIN_VOLUME = 1_000;
+const LIQUIDITY_MAX_SPREAD_PCT = 2;
+// ATR/delta-aware levels (P0-S2): premium move ≈ underlying ATR × |delta|.
+const ATR_STOP_MULT = 1.0;
+const ATR_TGT1_MULT = 1.5;
+const ATR_TGT2_MULT = 2.5;
 const QUALITY_YES = 0.65;
 const PICK_MIN = 0.5;
 const MAX_CARDS = 50;
@@ -70,6 +78,14 @@ export function candidateStrikes(series, bias) {
     const strike = atm + offset * step;
     const row = byStrike.get(strike);
     if (!row) continue;
+    // Liquidity gate (P0-S2): dust strikes with no OI/volume or a wide spread
+    // are never offered as candidates, whatever the premium looks like.
+    if (!(Number.isFinite(row[4]) && row[4] >= LIQUIDITY_MIN_OI)) continue;
+    if (!(Number.isFinite(row[6]) && row[6] >= LIQUIDITY_MIN_VOLUME)) continue;
+    if (Number.isFinite(row[10]) && Number.isFinite(row[11]) && row[10] > 0 && row[11] > 0) {
+      const mid = (row[10] + row[11]) / 2;
+      if (mid > 0 && ((row[11] - row[10]) / mid) * 100 > LIQUIDITY_MAX_SPREAD_PCT) continue;
+    }
     const oiChangePct = Number.isFinite(row[5]) && row[5] > 0 ? ((row[4] - row[5]) / row[5]) * 100 : null;
     const premiumChangePct = Number.isFinite(row[3]) && row[3] > 0 ? ((row[2] - row[3]) / row[3]) * 100 : null;
     const itm = side === 0 ? strike < spot : strike > spot;
@@ -77,6 +93,7 @@ export function candidateStrikes(series, bias) {
     candidates.push({
       id: `c${candidates.length + 1}`,
       strike, side, ltp: row[2], prevClose: row[3], premiumChangePct, oi: row[4], prevOi: row[5], oiChangePct,
+      delta: Number.isFinite(row[17]) ? row[17] : null,
       placement: itm ? 'in-the-money — moves faster, costs more' : otm ? 'out-of-the-money — cheaper, needs a bigger move' : 'at-the-money — the default pick',
     });
     if (candidates.length === 3) break;
@@ -227,6 +244,7 @@ export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, p
       quality,
       strikePickProbability: pick.probabilities[pick.choice],
       oiChangePct: chosen.oiChangePct,
+      delta: Number.isFinite(chosen.delta) ? chosen.delta : null,
       atr: null,
       disclaimer: DISCLAIMER,
     });
@@ -276,6 +294,7 @@ export function earlyCards(market, date, now, existing = [], { max = 2 } = {}) {
       quality: null,
       strikePickProbability: null,
       oiChangePct: candidate.oiChangePct,
+      delta: candidate.delta ?? null,
       early: strong ? 'build-fast' : 'momentum',
       atr: null,
       disclaimer: DISCLAIMER,
@@ -375,12 +394,35 @@ export function orbStrategy(snapshot, card, now) {
   return { qualifies: true, label: `Strategy: ORB ✓ — broke ${px(level)} · OI ${signedPct(oiPct)} · SL zone ${px(bullish ? low : high)}` };
 }
 
+/**
+ * ATR/delta-aware premium levels (P0-S2): with the underlying's 15-min ATR and
+ * the strike's captured delta, one bar's premium move ≈ ATR × |delta|; the stop
+ * sits one such move away and targets 1.5× / 2.5× it. Falls back to the fixed
+ * premium fractions (levelsBasis 'fixed') when either number is unavailable.
+ */
+export function adaptiveLevels(card) {
+  const atr = card?.atr?.value;
+  const delta = card?.delta;
+  const entry = card?.entry;
+  if (!(Number.isFinite(atr) && atr > 0 && Number.isFinite(delta) && Math.abs(delta) > 0 && Number.isFinite(entry) && entry > 0)) {
+    return { ...card, levelsBasis: 'fixed' };
+  }
+  const move = Math.max(atr * Math.abs(delta), entry * 0.08);
+  return {
+    ...card,
+    sl: round2(Math.max(entry * 0.5, entry - ATR_STOP_MULT * move)),
+    tgt1: round2(entry + ATR_TGT1_MULT * move),
+    tgt2: round2(entry + ATR_TGT2_MULT * move),
+    levelsBasis: 'ATR',
+  };
+}
+
 async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, now, log }) {
   if (typeof readFuturesSnapshot !== 'function') return cards;
   return Promise.all(cards.map(async card => {
     try {
       const snapshot = await readFuturesSnapshot(card.symbol, sessionDate);
-      return { ...card, atr: futuresAtr(snapshot, card.symbol, sessionDate, now), strategy: orbStrategy(snapshot, card, now) };
+      return adaptiveLevels({ ...card, atr: futuresAtr(snapshot, card.symbol, sessionDate, now), strategy: orbStrategy(snapshot, card, now) });
     } catch (error) {
       log(`advisor ATR unavailable for ${card.symbol}: ${String(error?.message || error)}`);
       return card;

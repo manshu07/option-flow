@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { candidateStrikes, chainWalls, chooseChain, orbStrategy, earlyCards, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { candidateStrikes, chainWalls, chooseChain, orbStrategy, earlyCards, adaptiveLevels, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { observationCaption } from './observationCardSvg.mjs';
 import { gammaProfile } from '../src/features/market-flow/gammaModel';
 
@@ -21,6 +21,28 @@ function seriesFixture() {
 }
 
 describe('candidateStrikes', () => {
+  it('skips dust strikes and wide spreads, and derives ATR/delta levels', () => {
+    const row18 = (strike: number, side: number, ltp: number, bid: number, ask: number, oi: number, volume: number, delta: number) => [
+      strike, side, ltp, ltp, oi, oi, volume, 0, ltp, 20, bid, ask, 100, 100, ltp, ltp, null, delta,
+    ];
+    const series = {
+      s: 'TEST', sp: 300, pc: 300, atm: 300, e: '2026-11-19',
+      r: [
+        row18(300, 0, 10, 1, 20, 500_000, 50_000, 0.5), // wide spread → skipped
+        row18(305, 0, 8, 7.95, 8.05, 400_000, 40_000, 0.4), // liquid → candidate
+        row18(310, 0, 6, 5.9, 6.1, 5_000, 40_000, 0.3), // OI too thin → skipped
+        row18(295, 0, 12, 11.9, 12.1, 400_000, 100, 0.6), // volume too thin → skipped
+      ],
+    };
+    const candidates = candidateStrikes(series, 'bullish');
+    expect(candidates.map(item => item.strike)).toEqual([305]);
+    expect(candidates[0].delta).toBe(0.4);
+
+    const card = { entry: 50, atr: { value: 100, barMinutes: 15, state: 'normal' }, delta: 0.6 };
+    expect(adaptiveLevels(card)).toMatchObject({ sl: 25, tgt1: 140, tgt2: 200, levelsBasis: 'ATR' });
+    expect(adaptiveLevels({ entry: 50 })).toMatchObject({ levelsBasis: 'fixed' });
+  });
+
   it('early cards catch momentum (flat OI) and strong build-ups the model gate skips', () => {
     const rows = (strike: number, mult: number) => [
       [strike, 0, 6, 5, Math.round(100_000 * mult), 100_000, 10_000],
@@ -288,7 +310,7 @@ describe('runAdvisor gates', () => {
     const dir = mkdtempSync(join(tmpdir(), 'obs-gamma-'));
     const obsPath = join(dir, 'observations.json');
     const row = (strike: number, side: number, ltp: number, oi: number, prevOi: number) => [
-      strike, side, ltp, Math.max(0.1, ltp - 1), oi, prevOi, 100, 80, ltp, 20,
+      strike, side, ltp, Math.max(0.1, ltp - 1), oi, prevOi, 5_000, 80, ltp, 20,
     ];
     const series = {
       s: 'NIFTY', sp: 100.4, pc: 99.4, atm: 100, t: NOW, e: '2026-11-17', lot: 50,
