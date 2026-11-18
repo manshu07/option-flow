@@ -453,7 +453,7 @@ export function eodJournalBody(observations, date, limit) {
     const label = `${escapeHtml(card.symbol)} ${escapeHtml(card.strike)}${card.side === 'PE' ? 'PE' : 'CE'}`;
     return [
       `• <b>${label}</b>`,
-      `Entry ${price(card.entry)} · TGT1 ${hitMark(card.tgt1, tgt1Hit, tgt1At)} · TGT2 ${hitMark(card.tgt2, tgt2Hit, tgt2At)} · SL ${slHit ? `${Number.isFinite(card.sl) ? `₹${card.sl.toFixed(2)} ` : ''}💥${slAt ? ` ${clock(slAt)}` : ''}` : resolved ? `${price(card.sl)} ✅ safe` : `${price(card.sl)} ⏳`}`,
+      `Entry ${price(card.entry)} · TGT1 ${hitMark(card.tgt1, tgt1Hit, tgt1At)} · TGT2 ${hitMark(card.tgt2, tgt2Hit, tgt2At)} · SL ${slHit ? `${Number.isFinite(card.sl) ? `₹${card.sl.toFixed(2)} ` : ''}💥${slAt ? ` ${clock(slAt)}` : ''}` : resolved ? price(card.sl) : `${price(card.sl)} ⏳`}`,
       `Status: ${statusWord[status] ?? status}`,
     ].join('\n');
   });
