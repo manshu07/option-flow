@@ -645,7 +645,7 @@ export function createDhanProvider(universe) {
    *  read instead of the ~11-minute REST sweep. The REST seed loop still runs
    *  afterwards for IV/delta and the full-chain snapshots. */
   function seedPrevDayFromDisk(session) {
-    const dataDir = path.join(ROOT, 'data', 'dhan');
+    const dataDir = path.join(ROOT, 'server', 'data', 'dhan');
     let dirs = [];
     try {
       dirs = fs.readdirSync(dataDir, { withFileTypes: true })
@@ -697,7 +697,7 @@ export function createDhanProvider(universe) {
     // Raw minutes may be cleaned after archiving (or written pre-seed on a
     // restart). The day's archive gz still holds every leg's prev-day OI —
     // read its LAST minute once (~3s) instead of the 11-minute REST sweep.
-    const archiveDir = path.join(ROOT, 'data', 'archives', 'dhan');
+    const archiveDir = path.join(ROOT, 'server', 'data', 'archives', 'dhan');
     let gzFiles = [];
     try { gzFiles = fs.readdirSync(archiveDir).filter(f => /^\d{4}-\d{2}-\d{2}\.json\.gz$/.test(f) && f.slice(0, 10) <= session).sort().reverse(); } catch { /* none */ }
     for (const gz of gzFiles) {
