@@ -1,4 +1,4 @@
-import { useCallback, useState, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react';
 import { useScopedKey } from '@/lib/widgetScope';
 
 /**
@@ -39,9 +39,16 @@ export function readRemembered<T>(key: string, parse: (raw: unknown) => T | unde
   }
 }
 
+/** Per-key subscribers for cross-component sync of a remembered choice. */
+const listeners = new Map<string, Set<(value: unknown) => void>>();
+
 export function remember(key: string, value: unknown): void {
   served.add(key);
   try { window.localStorage.setItem(key, JSON.stringify(value)); } catch { /* blocked or full: the choice lasts this visit */ }
+  // Live sync: every mounted hook on this key re-renders, so a choice made in
+  // one control (e.g. the popup timeframe) also updates other consumers
+  // (e.g. the big-card charts) without a remount.
+  listeners.get(key)?.forEach(listener => listener(value));
 }
 
 /** A `parse` that accepts only the values a control offers. */
@@ -61,6 +68,18 @@ export function useRemembered<T>(
   /* Inside a terminal widget the key is that widget's own (lib/widgetScope); on a route it is routeKey. */
   const key = useScopedKey(routeKey);
   const [value, setValue] = useState<T>(() => readRemembered(key, parse, fallback));
+  const parseRef = useRef(parse);
+  parseRef.current = parse;
+  useEffect(() => {
+    const set = listeners.get(key) ?? new Set<(v: unknown) => void>();
+    listeners.set(key, set);
+    const listener = (raw: unknown) => {
+      const next = parseRef.current(raw);
+      if (next !== undefined) setValue(next);
+    };
+    set.add(listener);
+    return () => { set.delete(listener); };
+  }, [key]);
   const update = useCallback((next: SetStateAction<T>) => {
     setValue(previous => {
       const resolved = typeof next === 'function' ? (next as (previous: T) => T)(previous) : next;
