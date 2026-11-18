@@ -31,9 +31,10 @@ export function legRow(strike, side, leg, keepIdle = false) {
 const byStrikeThenSide = (a, b) => a[0] - b[0] || a[1] - b[1];
 
 /** One chain → one series, or null when it has no priced spot. */
-export function encodeSeries(underlying, chain, readAt) {
+export function encodeSeries(underlying, chain, readAt, nextChain = null) {
   const spot = num(chain?.spot);
   if (!(spot > 0)) return null;
+  const next = nextChain ? encodeSeries(underlying, nextChain, readAt) : null;
   const rows = [];
   const idle = [];
   const ladder = [];
@@ -67,6 +68,9 @@ export function encodeSeries(underlying, chain, readAt) {
     r: rows.sort(byStrikeThenSide),
     ks: ladder,
     z: idle.sort(byStrikeThenSide),
+    // Next-expiry block (December spec): same row shape, own expiry. Omitted
+    // entirely when no next chain exists so files without it stay byte-identical.
+    ...(next ? { next } : {}),
   };
 }
 

@@ -41,6 +41,27 @@ describe('encodeSeries', () => {
   it('drops a chain without a priced spot', () => {
     expect(encodeSeries(nifty, { ...chain, spot: 0 }, 1)).toBeNull();
   });
+
+  it('carries the next-expiry block when given and omits it entirely when not', () => {
+    const withoutNext = encodeSeries(nifty, chain, 1_790_000_200_000);
+    expect(withoutNext).not.toHaveProperty('next');
+
+    const december = { ...chain, expiry: '2026-12-31', spot: 24_600, atm: 24_550 };
+    const withNext = encodeSeries(nifty, chain, 1_790_000_200_000, december);
+    expect(withNext?.next).toMatchObject({ e: '2026-12-31', sp: 24_600, atm: 24_550 });
+    expect(withNext?.next?.r.length).toBeGreaterThan(0);
+    // Near rows are untouched by the extra block.
+    expect(withNext?.r).toEqual(withoutNext!.r);
+
+    // A next chain with no priced spot is dropped, not encoded as garbage.
+    const dropped = encodeSeries(nifty, chain, 1_790_000_200_000, { ...december, spot: 0 });
+    expect(dropped).not.toHaveProperty('next');
+
+    // The next block round-trips the page parser as a nested additive key
+    // (the parser keeps the near chain and ignores unknown keys).
+    const parsed = parseMarketFile(marketFile({ at: 1_790_000_200_000, date: '2026-10-30', series: [withNext!], minutes: [], ladders: {} }));
+    expect(parsed!.series[0]).toMatchObject({ symbol: 'NIFTY', expiry: '2026-11-03' });
+  });
 });
 
 describe('the demo provider', () => {

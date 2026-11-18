@@ -252,6 +252,7 @@ async function build() {
   const ladders = {};
   const failed = [];
   let firstError = null;
+  let nextChainFailures = 0;
   let cursor = 0;
   const worker = async () => {
     while (cursor < universe.length) {
@@ -266,7 +267,21 @@ async function build() {
         ladders[u.symbol] = live;
         if (!live[0]) continue;
         const chain = await provider.optionChain(u, live[0]);
-        const encoded = encodeSeries(u, { ...chain, expiry: chain.expiry || live[0] }, now());
+        // December block: the next expiry rides along when captured. A next
+        // chain that fails must NOT fail the symbol — near chain wins, the
+        // series just omits `next` this build.
+        let nextChain = null;
+        if (live[1]) {
+          try {
+            const candidate = await provider.optionChain(u, live[1]);
+            if (candidate?.spot > 0 && Array.isArray(candidate.strikes) && candidate.strikes.length) {
+              nextChain = { ...candidate, expiry: candidate.expiry || live[1] };
+            }
+          } catch {
+            nextChainFailures += 1;
+          }
+        }
+        const encoded = encodeSeries(u, { ...chain, expiry: chain.expiry || live[0] }, now(), nextChain);
         if (encoded) series.push(encoded); else failed.push(u.symbol);
       } catch (error) {
         failed.push(u.symbol);
@@ -279,6 +294,7 @@ async function build() {
     const fullChainsWritten = persistProviderFullChains();
     if (fullChainsWritten) log(`full-chain snapshots: ${fullChainsWritten} persisted`);
     if (!series.length) throw new Error(firstError ? `No underlying answered: ${firstError}` : 'No underlying answered.');
+    if (nextChainFailures) log(`next-expiry chains unavailable for ${nextChainFailures} symbol(s) this build — near-only series kept`);
     const at = now();
     const sorted = series.sort((a, b) => a.s.localeCompare(b.s));
     const rawFile = marketFile({ at, date: session, series: sorted, minutes: [], ladders });
