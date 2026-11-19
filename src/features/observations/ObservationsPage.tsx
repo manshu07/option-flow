@@ -24,7 +24,8 @@ const OBSERVATIONS_URL = `${API}/api/observations`;
 const SPOTS_STREAM_URL = `${API}/api/stream/spots`;
 const MARKET_URL = `${API}/api/market`;
 const POLL_MS = 30_000;
-const PAGE_SIZE = 10;
+const PAGE_SIZES = ['10', '20', '30', '50', '100'] as const;
+const PAGE_SIZE_OPTIONS: readonly CapsuleOption<(typeof PAGE_SIZES)[number]>[] = PAGE_SIZES.map(value => ({ value, label: value }));
 const INDEX_SYMBOLS = ['NIFTY', 'BANKNIFTY', 'SENSEX'] as const;
 type ObservationView = 'cards' | 'table';
 const OBSERVATION_VIEWS: readonly CapsuleOption<ObservationView>[] = [
@@ -432,10 +433,12 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   const [failed, setFailed] = useState(false);
   const [view, setView] = useRememberedChoice('observations-view:v1', ['cards', 'table'] as const, 'cards');
   const [page, setPage] = useState(1);
+  const [pageSizeChoice, setPageSizeChoice] = useRememberedChoice('observations.pageSize:v1', PAGE_SIZES, '10');
+  const pageSize = Number(pageSizeChoice) || 10;
   const todayDate = marketParts(Date.now()).dateKey;
   const todayCount = cards?.filter(card => card.date === todayDate).length ?? 0;
-  const pageData = cards == null ? null : paginateObservationCards(cards, page, PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [cards?.length, view]);
+  const pageData = cards == null ? null : paginateObservationCards(cards, page, pageSize);
+  useEffect(() => { setPage(1); }, [cards?.length, view, pageSize]);
   // Always track the three indices' futures; add every card symbol + its exact option contract.
   const trackedSymbols = useMemo(
     () => [...new Set([...INDEX_SYMBOLS, ...(cards ?? []).map(card => card.symbol)])],
@@ -504,6 +507,15 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
           <button type="button" onClick={() => setPage(Math.max(1, pageData.page - 1))} disabled={pageData.page <= 1}>‹ Prev</button>
           <span>{pageData.start}–{pageData.end} of {pageData.total}</span>
           <button type="button" onClick={() => setPage(Math.min(pageData.totalPages, pageData.page + 1))} disabled={pageData.page >= pageData.totalPages}>Next ›</button>
+          <CapsuleSegmented
+            options={PAGE_SIZE_OPTIONS}
+            value={pageSizeChoice}
+            onChange={next => { setPageSizeChoice(next); setPage(1); }}
+            ariaLabel="Entries per page"
+            groupId="observations-page-size"
+            size="panel"
+            className="observations__pagesize"
+          />
         </nav>
       )}
     </div>

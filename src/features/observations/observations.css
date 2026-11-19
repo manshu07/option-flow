@@ -223,6 +223,7 @@
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.observations__pagesize { flex: 0 0 auto; }
 .observations__pagination button {
   min-height: 32px;
   padding: 4px 10px;

@@ -211,6 +211,29 @@ describe('ObservationsPage cards and table', () => {
     expect(container.textContent).not.toContain('Γ regime');
   });
 
+  it('lets the reader choose how many entries a page holds, and remembers it', async () => {
+    responseCards = Array.from({ length: 45 }, (_, index) => ({
+      ...card,
+      id: `size-${index}`,
+      symbol: `SZ${String(index).padStart(2, '0')}`,
+      at: card.at + index * 60_000,
+    }));
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+
+    expect(await screen.findByText('1–10 of 45')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: '20' }));
+    expect(await screen.findByText('1–20 of 45')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(20);
+    expect(localStorage.getItem('observations.pageSize:v1')).toBe('"20"'); // remembered store keeps JSON
+
+    fireEvent.click(screen.getByRole('radio', { name: '50' }));
+    expect(await screen.findByText('1–45 of 45')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(45);
+    // Changing the size returns to the first page.
+    fireEvent.click(screen.getByRole('radio', { name: '10' }));
+    expect(await screen.findByText('1–10 of 45')).toBeInTheDocument();
+  });
+
   it('renders ten newest cards per page in both views and remembers the table choice', async () => {
     responseCards = Array.from({ length: 21 }, (_, index) => ({
       ...card,
