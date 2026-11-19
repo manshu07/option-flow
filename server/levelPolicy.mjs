@@ -79,19 +79,24 @@ export function pricePair({ pair, spot, strike, entry, years, iv, side, days }) 
   const dir = side === 'PE' ? -1 : 1;
   const targetLevel = spot * (1 + dir * pair.targetPct / 100);
   const stopLevel = spot * (1 - dir * pair.stopPct / 100);
+  // The model's own price at spot is the reference: comparing a BS price with
+  // the market premium directly would fold any IV mismatch into the payoff.
+  // Take the model's RATIOS and apply them to the premium actually paid.
+  const modelNow = premiumAtLevel({ level: spot, strike, years, iv, side, days: 0 });
   const targetPremium = premiumAtLevel({ level: targetLevel, strike, years, iv, side, days });
   const stopPremium = premiumAtLevel({ level: stopLevel, strike, years, iv, side, days });
-  if (!Number.isFinite(targetPremium) || !Number.isFinite(stopPremium)) return null;
-  const gain = targetPremium - entry;
-  const risk = entry - stopPremium;
+  if (!Number.isFinite(targetPremium) || !Number.isFinite(stopPremium) || !(modelNow > 0)) return null;
+  const gain = entry * (targetPremium / modelNow - 1);
+  const risk = entry * (1 - stopPremium / modelNow);
   // Open trades are marked at their average underlying excursion.
   const openLevel = spot * (1 + dir * (pair.avgOpenR * pair.stopPct) / 100);
   const openPremium = premiumAtLevel({ level: openLevel, strike, years, iv, side, days });
-  const openGain = Number.isFinite(openPremium) ? openPremium - entry : 0;
+  const openGain = Number.isFinite(openPremium) ? entry * (openPremium / modelNow - 1) : 0;
   const expectancy = pair.winRate * gain - pair.lossRate * risk + pair.openRate * openGain;
   return {
     targetLevel, stopLevel,
-    targetPremium, stopPremium,
+    targetPremium: entry * (targetPremium / modelNow),
+    stopPremium: entry * (stopPremium / modelNow),
     gain, risk,
     rewardRisk: risk > 0 ? gain / risk : null,
     expectancyPremium: expectancy,

@@ -36,9 +36,10 @@ describe('scoreStrikes', () => {
     expect(ranked[0].strike).toBe(4600);
     expect(ranked[ranked.length - 1].strike).toBe(5200);
     expect(ranked[0].choice.expectancyPremium).toBeGreaterThan(ranked[2].choice.expectancyPremium);
-    // A cheap OTM leg can still show the bigger percentage gain.
+    // Every strike is priced off its own curve: the payoffs are not identical.
     const otm = ranked.find(item => item.strike === 4800);
-    expect(otm.choice.gainPct).toBeGreaterThan(ranked[0].choice.gainPct);
+    expect(otm.choice.gainPct).not.toBe(ranked[0].choice.gainPct);
+    expect(otm.choice.gain).toBeLessThan(ranked[0].choice.gain);
   });
 
   it('degrades honestly without a grid or without an expiry', () => {

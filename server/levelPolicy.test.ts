@@ -91,8 +91,8 @@ describe('pickPairForStrike', () => {
     scope: 'hold:2', regime: 'up', side: 'CE', samples: 500,
     pairs: [
       pair(0.5, 8, 0.80, 0.005, -0.1),   // never stopped, but pays nothing
-      pair(0.5, 1.5, 0.80, 0.16, 0.2),   // achievable AND payable
-      pair(3, 1.5, 0.11, 0.35, 0.3),     // big payoff, rarely reached
+      pair(3, 1.5, 0.75, 0.15, 0.2),    // achievable AND payable (target ≈ 2x stop)
+      pair(3, 0.5, 0.11, 0.35, 0.3),    // big payoff, rarely reached
     ],
   };
   const base = { cell, spot: 4648, strike: 4700, entry: 100, years: 41 / 365, iv: 0.22, side: 'CE', days: 2 };
@@ -101,7 +101,7 @@ describe('pickPairForStrike', () => {
     const chosen = pickPairForStrike(base);
     expect(chosen.pair).not.toBeNull();
     expect(chosen.pair.rewardRisk).toBeGreaterThanOrEqual(2);
-    expect(chosen.pair.targetPct).toBe(0.5);
+    expect(chosen.pair.targetPct).toBe(3);
     expect(chosen.pair.stopPct).toBe(1.5);
     expect(chosen.pair.constrained).toBe(true);
   });
