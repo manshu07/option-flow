@@ -123,15 +123,21 @@ const NEXT_EXPIRY_DTE = Number(process.env.ADVISOR_NEXT_EXPIRY_DTE) || 3;
  * ADVISOR_NEXT_EXPIRY_DTE days and the market file carries the next-expiry
  * block, build the card on the December block instead. Rationale: the near
  * weekly bleeds ~5–8%/day inside 3 DTE; the monthly decays ~1–1.5%/day.
+ * Also falls back to the next expiry outside that window when the near chain
+ * offers no liquid candidate at all (dust OI/volume or wide spreads) but the
+ * next one does — otherwise a tradeable monthly sits unused (AMBUJACEM).
  */
 export function chooseChain(series, now = Date.now()) {
   const next = series?.next;
   if (!next || typeof next.e !== 'string' || typeof series?.e !== 'string') return series;
   const expiryAt = Date.parse(`${series.e}T15:30:00+05:30`);
   if (!Number.isFinite(expiryAt)) return series;
+  const merged = { ...series, e: next.e, sp: next.sp, pc: next.pc, atm: next.atm, r: next.r, t: next.t ?? series.t, tp: next.tp ?? series.tp };
   const dte = (expiryAt - now) / (24 * 60 * 60_000);
-  if (dte > NEXT_EXPIRY_DTE) return series;
-  return { ...series, e: next.e, sp: next.sp, pc: next.pc, atm: next.atm, r: next.r, t: next.t ?? series.t, tp: next.tp ?? series.tp };
+  if (dte <= NEXT_EXPIRY_DTE) return merged;
+  const hasCandidate = chain => candidateStrikes(chain, 'bullish').length > 0 || candidateStrikes(chain, 'bearish').length > 0;
+  if (hasCandidate(series) || !hasCandidate(merged)) return series;
+  return merged;
 }
 
 /** Heaviest CE above spot (resistance) and PE below spot (support). */

@@ -167,7 +167,7 @@ describe('candidateStrikes', () => {
     expect(orbStrategy(null, card, NOW)).toBeNull();
   });
 
-  it('switches to the next-expiry block only when the near expiry is inside the DTE threshold', () => {
+  it('switches to the next-expiry block when the near expiry is inside the DTE threshold', () => {
     const next = { e: '2026-12-31', sp: 300.9, pc: 308.2, atm: 300, r: [[300, 0, 12, 11, 2_000_000, 1_800_000, 50_000]] };
     // Exactly 3 DTE (expiry 15:30 IST − same clock time) → the December block wins.
     const boundary = Date.parse('2026-11-16T15:30:00+05:30');
@@ -182,6 +182,24 @@ describe('candidateStrikes', () => {
     // No next block, or a broken expiry → unchanged.
     expect(chooseChain(seriesFixture(), NOW).e).toBe('2026-11-19');
     expect(chooseChain({ ...seriesFixture(), e: 'not-a-date', next }, NOW).e).toBe('not-a-date');
+  });
+
+  it('falls back to the next expiry when the near chain has no liquid candidate', () => {
+    // Wide spreads (>2%) on every near strike — OI/volume alone do not qualify.
+    const wide = (strike: number, side: number, ltp: number) => [strike, side, ltp, ltp, 500_000, 500_000, 50_000, 0, ltp, 20, ltp - 1, ltp + 1];
+    const dustNear = { ...seriesFixture(), e: '2026-11-24', r: [wide(300, 0, 6), wide(300, 1, 6), wide(305, 0, 4), wide(295, 1, 4)] };
+    const liquidNext = { e: '2026-12-31', sp: 300.9, pc: 308.2, atm: 300, r: [[300, 0, 12, 11, 2_000_000, 1_800_000, 50_000]] };
+    expect(candidateStrikes(dustNear, 'bullish')).toHaveLength(0);
+    expect(candidateStrikes(dustNear, 'bearish')).toHaveLength(0);
+    // 8 DTE — past the theta threshold — yet the liquid monthly wins.
+    const chosen = chooseChain({ ...dustNear, next: liquidNext }, NOW);
+    expect(chosen.e).toBe('2026-12-31');
+    expect(candidateStrikes(chosen, 'bullish').length).toBeGreaterThan(0);
+    // Both chains dust → no pointless switch; the near block stays.
+    const dustNext = { ...liquidNext, r: [wide(300, 0, 12)] };
+    expect(chooseChain({ ...dustNear, next: dustNext }, NOW).e).toBe('2026-11-24');
+    // A liquid near chain keeps its expiry even when a next block exists.
+    expect(chooseChain({ ...seriesFixture(), e: '2026-11-24', next: liquidNext }, NOW).e).toBe('2026-11-24');
   });
 
   it('returns buy-side candidates around ATM on the bias side', () => {
