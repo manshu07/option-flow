@@ -130,13 +130,22 @@ export function pickPairForStrike({
     return { pair: null, reason: `best reward:risk is 1:${best.rewardRisk.toFixed(2)} — below 1:${minRewardRisk}`, bestRewardRisk: best.rewardRisk };
   }
   const withinPolicy = payable.filter(item => item.candidate.winRate >= rule.minWin && item.candidate.lossRate <= rule.maxLoss);
-  const pool = withinPolicy.length ? withinPolicy : payable;
-  const best = [...pool].sort((a, b) => b.priced.expectancyPremium - a.priced.expectancyPremium)[0];
+  // No fallback to a lottery: if nothing is both achievable and payable, the
+  // honest answer is "no trade here", not a 13%-hit-rate punt.
+  if (!withinPolicy.length) {
+    const closest = [...payable].sort((a, b) => b.candidate.winRate - a.candidate.winRate)[0];
+    return {
+      pair: null,
+      reason: `nothing pays 1:${minRewardRisk} with a ${Math.round(rule.minWin * 100)}% hit rate — best achievable pays 1:${closest.rewardRisk.toFixed(2)} at ${Math.round(closest.candidate.winRate * 100)}%`,
+      bestWinRate: closest.candidate.winRate,
+    };
+  }
+  const best = [...withinPolicy].sort((a, b) => b.priced.expectancyPremium - a.priced.expectancyPremium)[0];
   return {
     pair: {
       ...best.candidate,
       policy: rule.label,
-      constrained: withinPolicy.length > 0,
+      constrained: true,
       samples: cell.samples,
       scope: cell.scope,
       regime: cell.regime,

@@ -497,6 +497,11 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
     tgt1: levelFor({ spot, move: tgt1Move, side: card.side }),
     tgt2: levelFor({ spot, move: tgt2Move, side: card.side }),
   };
+  // We have replayed history for this cell and it says no pair is both
+  // achievable and payable — then there is no card, not a weaker target.
+  if (cell && !useBacktest) {
+    return { ...card, levelsBasis: 'no-edge', levelsRejected: chosen.reason ?? 'no achievable pair', regime, needs: null, backtest: null };
+  }
   const tgt1 = priced(tgt1Move);
   // Decay can eat an ATR-sized target on a weekly leg; say so instead of
   // printing a target below the entry.
@@ -655,6 +660,10 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     const skipped = [];
     const kept = [];
     for (const card of cards) {
+      if (card?.levelsBasis === 'no-edge') {
+        skipped.push({ symbol: card.symbol, reason: card.levelsRejected ?? 'no achievable pair' });
+        continue;
+      }
       const exp = card?.backtest?.expectancyPremium;
       if (Number.isFinite(exp) && exp < minExpectancy) {
         skipped.push({ symbol: card.symbol, reason: `negative expectancy ₹${exp} over ${card.backtest.samples} past windows` });

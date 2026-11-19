@@ -111,9 +111,13 @@ export function observationCaption(card) {
     const days = Number.isFinite(card?.holdDays) ? `${card.holdDays} day${card.holdDays > 1 ? 's' : ''}` : 'the hold';
     const decay = Number.isFinite(card?.thetaDay) ? ` · decay ${priceText(Math.abs(card.thetaDay))}/day` : '';
     const hist = card?.history;
-    const reach = hist?.reach?.tgt1;
-    const evidence = Number.isFinite(reach) && hist?.samples
-      ? ` · reached in ${(reach * 100).toFixed(0)}% of ${hist.samples} past ${hist.holdDays || 'same'}-day windows`
+    const bt0 = card?.backtest;
+    // The path backtest supersedes the marginal percentile: it counts target
+    // BEFORE stop, which is what "achievable" actually means.
+    const reach = bt0?.winRate ?? hist?.reach?.tgt1;
+    const sampleCount = bt0?.samples ?? hist?.samples;
+    const evidence = Number.isFinite(reach) && sampleCount
+      ? ` · reached first in ${(reach * 100).toFixed(0)}% of ${sampleCount} past windows`
       : '';
     lines.push('', `🎯 TGT1 needs <b>${escapeHtml(symbol)} ${dir} ${priceText(needs.tgt1.level)}</b> (${needs.tgt1.pct?.toFixed?.(1) ?? '?'}% move) in ${days}${decay}${escapeHtml(evidence)}`);
     const bt = card?.backtest;
