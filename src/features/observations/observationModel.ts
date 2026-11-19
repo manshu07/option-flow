@@ -233,7 +233,7 @@ export type ObservationConfidence = 'all' | '65' | '80';
  * `early` cards are code-computed and carry no model confidence, so a
  * confidence floor excludes them rather than pretending they scored 0%.
  */
-export function filterObservationCards<T extends ObservationIdentity>(
+export function filterObservationCards<T extends ObservationIdentity & { early?: 'build-fast' | 'momentum' | null; quality?: number | null }>(
   cards: readonly T[],
   { signal = 'all', confidence = 'all' }: { signal?: ObservationSignal; confidence?: ObservationConfidence } = {},
 ): T[] {
