@@ -7,6 +7,7 @@ import { marketParts } from '@/lib/marketSession';
 import { useRememberedChoice } from '@/lib/remembered';
 import { clockOf } from '../market-flow/marketFlowModel';
 import {
+  filterObservationCards,
   highestObservedTarget,
   normalizeFollowThrough,
   paginateObservationCards,
@@ -28,6 +29,18 @@ const PAGE_SIZES = ['10', '20', '30', '50', '100'] as const;
 const PAGE_SIZE_OPTIONS: readonly CapsuleOption<(typeof PAGE_SIZES)[number]>[] = PAGE_SIZES.map(value => ({ value, label: value }));
 const INDEX_SYMBOLS = ['NIFTY', 'BANKNIFTY', 'SENSEX'] as const;
 type ObservationView = 'cards' | 'table';
+const SIGNAL_FILTERS = ['all', 'early', 'jev'] as const;
+const SIGNAL_OPTIONS: readonly CapsuleOption<(typeof SIGNAL_FILTERS)[number]>[] = [
+  { value: 'all', label: 'All' },
+  { value: 'early', label: 'Early' },
+  { value: 'jev', label: 'Jev' },
+];
+const CONFIDENCE_FILTERS = ['all', '65', '80'] as const;
+const CONFIDENCE_OPTIONS: readonly CapsuleOption<(typeof CONFIDENCE_FILTERS)[number]>[] = [
+  { value: 'all', label: 'Any %' },
+  { value: '65', label: '65%+' },
+  { value: '80', label: '80%+' },
+];
 const OBSERVATION_VIEWS: readonly CapsuleOption<ObservationView>[] = [
   { value: 'cards', label: 'Cards' },
   { value: 'table', label: 'Table' },
@@ -434,11 +447,17 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   const [view, setView] = useRememberedChoice('observations-view:v1', ['cards', 'table'] as const, 'cards');
   const [page, setPage] = useState(1);
   const [pageSizeChoice, setPageSizeChoice] = useRememberedChoice('observations.pageSize:v1', PAGE_SIZES, '10');
+  const [signal, setSignal] = useRememberedChoice('observations.signal:v1', SIGNAL_FILTERS, 'all');
+  const [confidence, setConfidence] = useRememberedChoice('observations.confidence:v1', CONFIDENCE_FILTERS, 'all');
   const pageSize = Number(pageSizeChoice) || 10;
   const todayDate = marketParts(Date.now()).dateKey;
   const todayCount = cards?.filter(card => card.date === todayDate).length ?? 0;
-  const pageData = cards == null ? null : paginateObservationCards(cards, page, pageSize);
-  useEffect(() => { setPage(1); }, [cards?.length, view, pageSize]);
+  const filtered = useMemo(
+    () => (cards == null ? null : filterObservationCards(cards, { signal, confidence })),
+    [cards, signal, confidence],
+  );
+  const pageData = filtered == null ? null : paginateObservationCards(filtered, page, pageSize);
+  useEffect(() => { setPage(1); }, [cards?.length, view, pageSize, signal, confidence]);
   // Always track the three indices' futures; add every card symbol + its exact option contract.
   const trackedSymbols = useMemo(
     () => [...new Set([...INDEX_SYMBOLS, ...(cards ?? []).map(card => card.symbol)])],
@@ -472,6 +491,22 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
         onChange={next => { setView(next); setPage(1); }}
         ariaLabel="Observation view"
         groupId="observations-view"
+        size="page"
+      />
+      <CapsuleSegmented
+        options={SIGNAL_OPTIONS}
+        value={signal}
+        onChange={next => { setSignal(next); setPage(1); }}
+        ariaLabel="Signal source"
+        groupId="observations-signal"
+        size="page"
+      />
+      <CapsuleSegmented
+        options={CONFIDENCE_OPTIONS}
+        value={confidence}
+        onChange={next => { setConfidence(next); setPage(1); }}
+        ariaLabel="Minimum Jev confidence"
+        groupId="observations-confidence"
         size="page"
       />
       <span className="ui-flow-spacer" aria-hidden="true" />

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  filterObservationCards,
   highestObservedTarget,
   normalizeFollowThrough,
   observationKey,
@@ -114,5 +115,24 @@ describe('Post-call follow-through evidence', () => {
     expect(normalizeFollowThrough({ ...current, futures: { ...futures, from: first - 60_000 } })?.futures).toBeNull();
     expect(normalizeFollowThrough({ ...current, futures: { ...futures, high: 'bad' } })?.futures).toBeNull();
     expect(normalizeFollowThrough({ ...current, futures: { ...futures, to: current.sessionCloseAt + 60_000 } })?.futures).toBeNull();
+  });
+});
+
+describe('filterObservationCards', () => {
+  const early = { id: 'e', symbol: 'E', date: '2026-11-19', at: 3, early: 'momentum' as const, quality: null as unknown as number };
+  const jevLow = { id: 'j1', symbol: 'J1', date: '2026-11-19', at: 2, early: null, quality: 0.7 };
+  const jevHigh = { id: 'j2', symbol: 'J2', date: '2026-11-19', at: 1, early: null, quality: 0.86 };
+  const cards = [early, jevLow, jevHigh];
+
+  it('splits early code signals from Jev model cards', () => {
+    expect(filterObservationCards(cards, { signal: 'early' }).map((c: { id: string }) => c.id)).toEqual(['e']);
+    expect(filterObservationCards(cards, { signal: 'jev' }).map((c: { id: string }) => c.id)).toEqual(['j1', 'j2']);
+    expect(filterObservationCards(cards, { signal: 'all' })).toHaveLength(3);
+  });
+
+  it('applies a confidence floor and drops early cards that have no score', () => {
+    expect(filterObservationCards(cards, { confidence: '65' }).map((c: { id: string }) => c.id)).toEqual(['j1', 'j2']);
+    expect(filterObservationCards(cards, { confidence: '80' }).map((c: { id: string }) => c.id)).toEqual(['j2']);
+    expect(filterObservationCards(cards, { signal: 'early', confidence: '80' })).toHaveLength(0);
   });
 });

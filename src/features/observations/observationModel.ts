@@ -224,6 +224,32 @@ export interface ObservationPage<T> {
 }
 
 /** Slice an already ordered card list, clamping the requested page to its bounds. */
+export type ObservationSignal = 'all' | 'early' | 'jev';
+export type ObservationConfidence = 'all' | '65' | '80';
+
+/**
+ * Signal and confidence filters.
+ *
+ * `early` cards are code-computed and carry no model confidence, so a
+ * confidence floor excludes them rather than pretending they scored 0%.
+ */
+export function filterObservationCards<T extends ObservationIdentity>(
+  cards: readonly T[],
+  { signal = 'all', confidence = 'all' }: { signal?: ObservationSignal; confidence?: ObservationConfidence } = {},
+): T[] {
+  const floor = confidence === 'all' ? null : Number(confidence) / 100;
+  return cards.filter(card => {
+    const isEarly = Boolean(card.early);
+    if (signal === 'early' && !isEarly) return false;
+    if (signal === 'jev' && isEarly) return false;
+    if (floor != null) {
+      const quality = Number(card.quality);
+      if (!Number.isFinite(quality) || quality < floor) return false;
+    }
+    return true;
+  });
+}
+
 export function paginateObservationCards<T>(cards: readonly T[], page: number, pageSize: number): ObservationPage<T> {
   const size = Number.isFinite(pageSize) && pageSize >= 1 ? Math.floor(pageSize) : 1;
   const total = cards.length;

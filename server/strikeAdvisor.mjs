@@ -54,7 +54,9 @@ const ATR_TGT1_MULT = 1.5;
 const ATR_TGT2_MULT = 2.5;
 const QUALITY_YES = 0.65;
 const PICK_MIN = 0.5;
-const MAX_CARDS = 50;
+// The owner reads the whole history, not just the last fifty: the store keeps
+// a large tail (env-tunable) and never evicts an unresolved card.
+const MAX_CARDS = Number(process.env.OBS_MAX_CARDS) || 2000;
 
 const DISCLAIMER = 'Educational observation from captured OI/price data — not trade advice. Final call and risk are yours.';
 
