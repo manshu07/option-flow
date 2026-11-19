@@ -38,6 +38,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { encodeSeries, marketFile } from './marketFile.mjs';
 import { createProvider } from './providers/index.mjs';
@@ -47,6 +48,7 @@ import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAle
 import { orbScan, orbSlotDue, orbMessage } from './orb.mjs';
 import { participation } from './participation.mjs';
 import { hoursLeft, tokenReminder } from './tokenWatch.mjs';
+import { historyRefreshDue, runHistoryRefresh, istParts } from './historyRefresh.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { liveErrorMessage, liveSnapshotMessage, obsSnapshotMessage, oiSnapshotMessage } from './liveCommand.mjs';
@@ -104,6 +106,8 @@ const alertDigestState = createAlertDigestState();
 const orbState = { session: null, sent: new Set(), last: null };
 // Dhan's token dies 24h after issue; one reminder per level per session.
 const tokenWatch = { sentFor: null };
+// Daily futures-history refresh (bhavcopy → capture fold → stats), after 19:30 IST.
+const historyState = { lastRun: null, running: false };
 const ORB_SECTORS = new Map(universe.filter(u => typeof u?.sector === 'string').map(u => [u.symbol, u.sector]));
 const journalMinuteIndexes = new Map();
 let previousOiSessionDate = null;
@@ -405,6 +409,27 @@ async function build() {
           log('dhan token reminder failed:', String(error?.message || error));
         }
       }
+    }
+    // Daily history refresh: the bhavcopy publishes in the evening, so this
+    // fires once after 19:30 IST and never blocks a build — each step is its
+    // own child process with its own heap.
+    if (!historyState.running && historyRefreshDue(at, historyState.lastRun)) {
+      historyState.running = true;
+      historyState.lastRun = istParts(at).date;
+      log('history refresh starting (bhavcopy → capture → futures stats)');
+      void runHistoryRefresh({
+        root: ROOT,
+        at,
+        log,
+        run: (script, args) => new Promise(resolve => {
+          const child = spawn(process.execPath, ['--max-old-space-size=6144', path.join(ROOT, script), ...args], { cwd: ROOT, stdio: 'ignore' });
+          child.on('exit', code => resolve(code ?? -1));
+          child.on('error', () => resolve(-1));
+        }),
+      })
+        .then(result => log(`history refresh done: ${result.results.map(item => `${item.step}=${item.code ?? 'error'}`).join(' ')}`))
+        .catch(error => log('history refresh failed:', String(error?.message || error)))
+        .finally(() => { historyState.running = false; });
     }
     // Throttled to TYPESAFE_TRIAGE_MIN (default 10); never blocks or fails the build.
     runTriage(file, { autoPath: path.join(DATA_DIR, 'alerts.auto.json'), now: at, log })
