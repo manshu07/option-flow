@@ -435,9 +435,10 @@ export function orbStrategy(snapshot, card, now) {
 export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now(), moveStats = null, levelGrid = null, policy = process.env.ADVISOR_LEVEL_POLICY || 'achievable' } = {}) {
   const atr = card?.atr?.value;
   const entry = card?.entry;
-  if (!(Number.isFinite(atr) && atr > 0 && Number.isFinite(entry) && entry > 0)) {
-    return { ...card, levelsBasis: 'fixed' };
-  }
+  // Only the premium is mandatory. History and the path backtest size levels
+  // from the STOCK's own distribution and need no ATR at all — gating on ATR
+  // first sent every "futures warming up" card back to the old fixed ±45/55%.
+  if (!(Number.isFinite(entry) && entry > 0)) return { ...card, levelsBasis: 'fixed' };
   const spot = card?.spot;
   const years = yearsToExpiry(card?.expiry, now);
   const iv = years && spot > 0 ? optionIv({ premium: entry, spot, strike: card.strike, years, side: card.side, captured: card.iv }) : null;
@@ -446,9 +447,9 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
   // and the priced delta is the same number the chain would report.
   const delta = Number.isFinite(card?.delta) && Math.abs(card.delta) > 0 ? card.delta : g?.delta ?? null;
 
-  // No greeks and no captured delta: the old approximation, honestly labelled.
+  // No greeks and no captured delta: the ATR approximation, honestly labelled.
   if (!g || !(Number.isFinite(delta) && Math.abs(delta) > 0)) {
-    if (!(Number.isFinite(delta) && Math.abs(delta) > 0)) return { ...card, levelsBasis: 'fixed' };
+    if (!(Number.isFinite(atr) && atr > 0) || !(Number.isFinite(delta) && Math.abs(delta) > 0)) return { ...card, levelsBasis: 'fixed' };
     const move = Math.max(atr * Math.abs(delta), entry * 0.08);
     return {
       ...card,
@@ -487,7 +488,9 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
   // move of that many sessions, so scale it by the square root of the bar count.
   const barMinutes = Number(card?.atr?.barMinutes) || 15;
   const barsPerSession = Math.max(1, 375 / barMinutes);
-  const horizonAtr = atr * Math.sqrt(barsPerSession * days);
+  const horizonAtr = Number.isFinite(atr) && atr > 0 ? atr * Math.sqrt(barsPerSession * days) : null;
+  // Neither history nor a backtest cell, and no ATR either: nothing to size on.
+  if (!useBacktest && !useHistory && horizonAtr == null) return { ...card, levelsBasis: 'fixed' };
   const priced = move => round2(Math.max(0.05, premiumAtLevel({ level: card.side === 'PE' ? spot - move : spot + move, strike: card.strike, years, iv, side: card.side, days }) ?? entry));
   const slMove = useBacktest ? spot * pair.stopPct / 100 : useHistory ? spot * histAdverse.pct / 100 : ATR_STOP_MULT * horizonAtr;
   const tgt1Move = useBacktest ? spot * pair.targetPct / 100 : useHistory ? spot * histTarget.pct / 100 : ATR_TGT1_MULT * horizonAtr;

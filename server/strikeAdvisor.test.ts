@@ -92,6 +92,31 @@ describe('candidateStrikes', () => {
     expect(priced.sl).toBeLessThan(priced.entry);
   });
 
+  it('sizes from history even when the futures ATR has not warmed up', () => {
+    const stats = {
+      instrument: 'EQ', entryTimes: ['09:30'], holds: [1, 2],
+      intraday: {},
+      daily: { 2: { recent: {
+        up: { n: 700, p30: 0.6, p50: 1.1, p70: 1.9, p85: 2.8, p95: 4.5 },
+        down: { n: 700, p30: 0.58, p50: 1.1, p70: 1.85, p85: 2.75, p95: 4.4 },
+      } } },
+    };
+    const card = {
+      symbol: 'IREDA', side: 'CE', strike: 128, spot: 126.89, entry: 1.85, delta: 0.35, iv: 45,
+      expiry: '2026-12-29', at: Date.parse('2026-11-19T10:32:00+05:30'), date: '2026-11-19',
+      atr: null, // "futures line warming up…"
+    };
+    const priced = adaptiveLevels(card, { holdDays: 2, now: Date.parse('2026-11-19T10:32:00+05:30'), moveStats: stats });
+    expect(priced.levelsBasis).toBe('history+decay');
+    expect(priced.needs?.tgt1?.level).toBeGreaterThan(126.89);
+    expect(Number.isFinite(priced.tgt1)).toBe(true);
+    // The same card on the weekly leg: decay eats the move, so it says so
+    // instead of falling back to the old fixed percentages.
+    const weekly = adaptiveLevels({ ...card, expiry: '2026-11-23' }, { holdDays: 2, now: Date.parse('2026-11-19T10:32:00+05:30'), moveStats: stats });
+    expect(['decay-too-heavy', 'history+decay']).toContain(weekly.levelsBasis);
+    expect(weekly.levelsBasis).not.toBe('fixed');
+  });
+
   it('refuses to quote a premium target when decay eats an ATR-sized move', () => {
     const card = {
       symbol: 'X', side: 'CE', strike: 100, spot: 100, entry: 0.6, delta: 0.2, iv: 60,
