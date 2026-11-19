@@ -513,3 +513,35 @@ describe('day rollover and history', () => {
     expect(resolvedOnly.map(item => item.symbol)).toEqual(['NEWEST', 'MIDDLE']);
   });
 });
+
+describe('resolveSwingDay', () => {
+  const card = {
+    id: 'SWING|2026-11-17', symbol: 'SWING', date: '2026-11-17', at: Date.parse('2026-11-17T10:00:00+05:30'),
+    strike: 100, side: 'CE', expiry: '2026-12-29', bias: 'bullish', entry: 10, sl: 8, tgt1: 14, tgt2: 18,
+    horizon: 'swing', holdTill: '2026-11-19',
+  };
+  const snap = (date: string, hhmm: string, ltp: number, high = ltp, low = ltp) => ({
+    date, t: Date.parse(`${date}T${hhmm}:00+05:30`),
+    series: [{ s: 'SWING', e: '2026-12-29', r: [[100, 0, ltp, 10, 1000, 1000, 100, 100, ltp, 20, ltp, ltp, 100, 100, high, low, null, 0.5]] }],
+  });
+
+  it('settles a later session against the original entry, stop and targets', async () => {
+    const { resolveSwingDay } = await import('./journal.mjs');
+    const minutes = [snap('2026-11-18', '09:20', 11), snap('2026-11-18', '10:00', 14.5)];
+    const result = resolveSwingDay(card, minutes, '2026-11-18');
+    expect(result.status).toBe('tgt1');
+    expect(result.day).toBe('2026-11-18');
+    expect(result.r).toBeCloseTo(2, 6);
+  });
+
+  it('marks the close when the day settles nothing, and refuses its own day', async () => {
+    const { resolveSwingDay } = await import('./journal.mjs');
+    const minutes = [snap('2026-11-18', '09:20', 11), snap('2026-11-18', '15:25', 12)];
+    const open = resolveSwingDay(card, minutes, '2026-11-18');
+    expect(open.status).toBe('open');
+    expect(open.closePremium).toBe(12);
+    expect(open.closeR).toBeCloseTo(1, 6);
+    expect(resolveSwingDay(card, minutes, '2026-11-17')).toBeNull();
+    expect(resolveSwingDay(card, [], '2026-11-18')).toBeNull();
+  });
+});

@@ -52,8 +52,13 @@ function round2(value) {
   return Math.round(value * 100) / 100;
 }
 
-function outcome(status, { r = null, mfe = 0, mae = 0, tgt2 = false, hitAt = null, minutes = 0, computedAt }) {
-  return { status, r, mfe: round2(mfe), mae: round2(mae), tgt2, hitAt, minutes, computedAt };
+function outcome(status, { r = null, mfe = 0, mae = 0, tgt2 = false, hitAt = null, minutes = 0, computedAt, day = null, closePremium = null, closeR = null }) {
+  const base = { status, r, mfe: round2(mfe), mae: round2(mae), tgt2, hitAt, minutes, computedAt };
+  // A swing card carries which session settled it, and its mark when still open.
+  if (day) base.day = day;
+  if (closePremium != null) base.closePremium = closePremium;
+  if (closeR != null) base.closeR = closeR;
+  return base;
 }
 
 /** Walk a card through its own date's ascending minute snapshots. */
@@ -119,6 +124,54 @@ export function resolveCard(card, minutes) {
   }
 
   return outcome('open', { mfe, mae, minutes: snapshots.length, computedAt: snapshots.at(-1).t });
+}
+
+/**
+ * A swing card on a LATER session: the entry, stop and targets stay the ones
+ * the card was issued with, but the path walked is this day's. Without this a
+ * multi-day card is graded only on its first day and then sits "open" forever.
+ *
+ * Returns the same outcome shape plus `day`, or null when the contract did not
+ * print that day (never a guess).
+ */
+export function resolveSwingDay(card, minutes, date) {
+  if (!validCard(card) || !date || date <= card.date) return null;
+  const snapshots = (Array.isArray(minutes) ? minutes : [])
+    .filter(snapshot => belongsToDate(snapshot, date) && rowFor(card, snapshot))
+    .sort((a, b) => a.t - b.t);
+  if (!snapshots.length) return null;
+  const bearish = card.bias === 'bearish';
+  const denominator = card.entry - card.sl;
+  const tgt1R = denominator > 0 ? round2((card.tgt1 - card.entry) / denominator) : null;
+  let mfe = 0;
+  let mae = 0;
+  let previousHigh = null;
+  let previousLow = null;
+  for (let index = 0; index < snapshots.length; index++) {
+    const snapshot = snapshots[index];
+    const row = rowFor(card, snapshot);
+    const premium = row?.[2];
+    if (!Number.isFinite(premium) || premium <= 0) continue;
+    mfe = Math.max(mfe, bearish ? card.entry - premium : premium - card.entry);
+    mae = Math.max(mae, bearish ? premium - card.entry : card.entry - premium);
+    const high = Math.max(premium, Number.isFinite(row[14]) ? row[14] : premium);
+    const low = Math.min(premium, Number.isFinite(row[15]) ? row[15] : premium);
+    const stopHit = premium <= card.sl || (previousLow != null && previousLow > card.sl && low <= card.sl);
+    const targetHit = premium >= card.tgt1 || (previousHigh != null && previousHigh < card.tgt1 && high >= card.tgt1);
+    const target2Hit = premium >= card.tgt2 || (previousHigh != null && previousHigh < card.tgt2 && high >= card.tgt2);
+    const base = { mfe, mae, tgt2: target2Hit, hitAt: snapshot.t, minutes: index + 1, computedAt: snapshot.t, day: date };
+    if (stopHit && targetHit) return outcome('ambiguous', { ...base, r: -1 });
+    if (stopHit) return outcome('sl', { ...base, r: -1 });
+    if (targetHit) return outcome('tgt1', { ...base, r: tgt1R });
+    previousHigh = high;
+    previousLow = low;
+  }
+  const last = snapshots[snapshots.length - 1];
+  const mark = rowFor(card, last)?.[2];
+  const closeR = Number.isFinite(mark) && denominator > 0
+    ? round2(((bearish ? card.entry - mark : mark - card.entry)) / denominator)
+    : null;
+  return outcome('open', { mfe, mae, minutes: snapshots.length, computedAt: last.t, day: date, closePremium: Number.isFinite(mark) ? mark : null, closeR });
 }
 
 /** Evidence through close, separate from the journal's first-exit result/R. */
@@ -351,10 +404,49 @@ export async function runJournal({ obsPath, readMinute, readFuturesSnapshot = ()
     }
   }
 
+  // Swing carry-over: a card issued earlier whose hold is still running gets
+  // graded on TODAY's path too, with its original entry/stop/targets.
+  const swingCards = cards.filter(card => validCard(card)
+    && card.horizon === 'swing' && card.date < sessionDate
+    && (!card.holdTill || sessionDate <= card.holdTill)
+    && (!card.outcome || card.outcome.status === 'open'));
+  if (swingCards.length && !snapshotsByDate.has(sessionDate)) {
+    const closeAt = sessionCloseAt(sessionDate);
+    const close = closeAt == null ? marketCloseMinuteFor(now) : marketCloseMinuteFor(closeAt);
+    const snapshots = [];
+    try {
+      for (let minute = FIRST_MINUTE; minute <= close; minute++) {
+        const hhmm = `${String(Math.floor(minute / 60)).padStart(2, '0')}${String(minute % 60).padStart(2, '0')}`;
+        const snapshot = await readMinute(sessionDate, hhmm);
+        if (snapshot && belongsToDate(snapshot, sessionDate)) snapshots.push(snapshot);
+      }
+    } catch (error) {
+      log(`journal swing minute read failed for ${sessionDate}: ${String(error?.message || error)}`);
+    }
+    snapshotsByDate.set(sessionDate, snapshots);
+  }
+  const swingResults = new Map();
+  for (const card of swingCards) {
+    const result = resolveSwingDay(card, snapshotsByDate.get(sessionDate) ?? [], sessionDate);
+    if (result) swingResults.set(journalCardKey(card), result);
+  }
+
   const resolvedByDate = new Map();
   let written = 0;
   const updates = new Map();
   const updated = cards.map(card => {
+    const swing = swingResults.get(journalCardKey(card));
+    if (swing) {
+      written++;
+      if (swing.status !== 'open') {
+        const dateCards = resolvedByDate.get(sessionDate) ?? [];
+        dateCards.push({ ...card, outcome: swing });
+        resolvedByDate.set(sessionDate, dateCards);
+      }
+      const marks = [...(card.marks ?? []), { date: sessionDate, status: swing.status, closePremium: swing.closePremium ?? null, closeR: swing.closeR ?? null }].slice(-20);
+      updates.set(journalCardKey(card), swing);
+      return { ...card, outcome: swing, marks };
+    }
     if (!validCard(card) || (card.outcome?.followThrough?.version === 1 && card.outcome.followThrough.coverage !== 'missing') || card.date > sessionDate) return card;
     const snapshots = snapshotsByDate.get(card.date);
     if (!snapshots) return card;

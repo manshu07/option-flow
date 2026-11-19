@@ -514,6 +514,21 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
     tgt1,
     tgt2: priced(tgt2Move),
     levelsBasis: useBacktest ? 'backtest+decay' : useHistory ? 'history+decay' : 'ATR+decay',
+    // A card sized on a multi-session move is a swing, and the journal keeps
+    // grading it until this date instead of leaving it open after day one.
+    horizon: days >= 1 ? 'swing' : 'intraday',
+    holdTill: (() => {
+      const start = Date.parse(`${card?.date ?? ''}T00:00:00+05:30`);
+      if (!Number.isFinite(start)) return null;
+      let left = days;
+      let t = start;
+      while (left > 0) {
+        t += 86_400_000;
+        const weekday = new Date(t + 19_800_000).getUTCDay();
+        if (weekday !== 0 && weekday !== 6) left--;
+      }
+      return new Date(t + 19_800_000).toISOString().slice(0, 10);
+    })(),
     regime,
     // What this stock's remaining session has actually delivered from this
     // time of day — the ceiling a target has to live under.
