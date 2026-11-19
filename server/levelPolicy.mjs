@@ -15,9 +15,16 @@ import { premiumAtLevel } from './optionMath.mjs';
 
 const cache = new Map();
 
+/** Buy-side options need reward:risk, not just a hit rate. */
+export const MIN_REWARD_RISK = Number(process.env.ADVISOR_MIN_RR ?? 2);
+
 export const POLICIES = {
   // The owner's stated preference: the target is reached often, the stop rarely.
-  achievable: { minWin: 0.7, maxLoss: 0.03, label: 'achievable' },
+  // Achievable: the target is reached often. A stop that never hits is
+  // impossible alongside a 1:2 payoff, so the loss limit is honest, not zero.
+  achievable: { minWin: 0.7, maxLoss: 0.2, label: 'achievable' },
+  // Rarely stopped, accepting a lower hit rate.
+  safe: { minWin: 0.5, maxLoss: 0.05, label: 'safe' },
   // Looser hit rate, still a rarely-hit stop.
   balanced: { minWin: 0.55, maxLoss: 0.05, label: 'balanced' },
   // Whatever earned the most, regardless of hit rate.
@@ -89,5 +96,54 @@ export function pricePair({ pair, spot, strike, entry, years, iv, side, days }) 
     rewardRisk: risk > 0 ? gain / risk : null,
     expectancyPremium: expectancy,
     expectancyPct: entry > 0 ? (expectancy / entry) * 100 : null,
+  };
+}
+/**
+ * Choose the pair FOR THIS STRIKE: price every candidate pair in premium terms
+ * (decay included), keep only those that pay at least `minRewardRisk`, honour
+ * the policy's hit/stop limits, and never place a target beyond the chain wall
+ * the stock has to break first. Ranked by rupee expectancy.
+ *
+ * Returns null with a reason when nothing qualifies — an honest "no trade here"
+ * beats a target that cannot pay.
+ */
+export function pickPairForStrike({
+  cell, spot, strike, entry, years, iv, side, days,
+  policy = 'achievable', minRewardRisk = MIN_REWARD_RISK, wall = null, minSamples = 120,
+}) {
+  if (!cell || cell.samples < minSamples) return { pair: null, reason: 'not enough history' };
+  const rule = POLICIES[policy] ?? POLICIES.achievable;
+  const dir = side === 'PE' ? -1 : 1;
+  const scored = [];
+  for (const candidate of cell.pairs) {
+    const priced = pricePair({ pair: candidate, spot, strike, entry, years, iv, side, days });
+    if (!priced || !(priced.risk > 0)) continue;
+    const rewardRisk = priced.gain / priced.risk;
+    // A target past the wall needs a breakout first — not an achievable ask.
+    if (Number.isFinite(wall) && wall > 0 && (dir > 0 ? priced.targetLevel > wall : priced.targetLevel < wall)) continue;
+    scored.push({ candidate, priced, rewardRisk });
+  }
+  if (!scored.length) return { pair: null, reason: 'no pair could be priced' };
+  const payable = scored.filter(item => item.rewardRisk >= minRewardRisk);
+  if (!payable.length) {
+    const best = [...scored].sort((a, b) => b.rewardRisk - a.rewardRisk)[0];
+    return { pair: null, reason: `best reward:risk is 1:${best.rewardRisk.toFixed(2)} — below 1:${minRewardRisk}`, bestRewardRisk: best.rewardRisk };
+  }
+  const withinPolicy = payable.filter(item => item.candidate.winRate >= rule.minWin && item.candidate.lossRate <= rule.maxLoss);
+  const pool = withinPolicy.length ? withinPolicy : payable;
+  const best = [...pool].sort((a, b) => b.priced.expectancyPremium - a.priced.expectancyPremium)[0];
+  return {
+    pair: {
+      ...best.candidate,
+      policy: rule.label,
+      constrained: withinPolicy.length > 0,
+      samples: cell.samples,
+      scope: cell.scope,
+      regime: cell.regime,
+      side: cell.side,
+      rewardRisk: best.rewardRisk,
+    },
+    priced: best.priced,
+    reason: null,
   };
 }

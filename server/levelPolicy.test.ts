@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadLevelGrid, cellFor, pickPair, pricePair, POLICIES } from './levelPolicy.mjs';
+import { loadLevelGrid, cellFor, pickPair, pickPairForStrike, pricePair, POLICIES } from './levelPolicy.mjs';
 
 const pair = (targetPct, stopPct, winRate, lossRate, expectancyPct, avgOpenR = 0) => ({
   targetPct, stopPct, winRate, lossRate, openRate: Math.max(0, 1 - winRate - lossRate),
@@ -82,5 +82,45 @@ describe('pricePair', () => {
     expect(priced.rewardRisk).toBeGreaterThan(0);
     expect(Number.isFinite(priced.expectancyPremium)).toBe(true);
     expect(pricePair({ pair: null, spot: 1, strike: 1, entry: 1, years: 0.1, iv: 0.2, side: 'CE', days: 1 })).toBeNull();
+  });
+});
+
+describe('pickPairForStrike', () => {
+  // A tight stop is what makes a 1:2 payoff possible on a bought option.
+  const cell = {
+    scope: 'hold:2', regime: 'up', side: 'CE', samples: 500,
+    pairs: [
+      pair(0.5, 8, 0.80, 0.005, -0.1),   // never stopped, but pays nothing
+      pair(0.5, 1.5, 0.80, 0.16, 0.2),   // achievable AND payable
+      pair(3, 1.5, 0.11, 0.35, 0.3),     // big payoff, rarely reached
+    ],
+  };
+  const base = { cell, spot: 4648, strike: 4700, entry: 100, years: 41 / 365, iv: 0.22, side: 'CE', days: 2 };
+
+  it('demands at least 1:2 in premium and prefers the achievable pair', () => {
+    const chosen = pickPairForStrike(base);
+    expect(chosen.pair).not.toBeNull();
+    expect(chosen.pair.rewardRisk).toBeGreaterThanOrEqual(2);
+    expect(chosen.pair.targetPct).toBe(0.5);
+    expect(chosen.pair.stopPct).toBe(1.5);
+    expect(chosen.pair.constrained).toBe(true);
+  });
+
+  it('refuses a target beyond the chain wall', () => {
+    // Resistance sits below every target level → nothing is achievable.
+    const blocked = pickPairForStrike({ ...base, wall: 4650 });
+    expect(blocked.pair).toBeNull();
+    expect(blocked.reason).toContain('no pair could be priced');
+  });
+
+  it('says so when nothing pays 1:2 instead of quoting a bad trade', () => {
+    const wideOnly = { ...cell, pairs: [pair(0.3, 8, 0.8, 0.005, -0.1)] };
+    const chosen = pickPairForStrike({ ...base, cell: wideOnly });
+    expect(chosen.pair).toBeNull();
+    expect(chosen.reason).toContain('reward:risk');
+  });
+
+  it('needs enough history', () => {
+    expect(pickPairForStrike({ ...base, cell: { ...cell, samples: 20 } }).reason).toBe('not enough history');
   });
 });

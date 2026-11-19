@@ -10,8 +10,9 @@ import { atrSummary } from '../src/features/market-flow/atrModel.ts';
 import { openingRange, sessionVwap } from './orbModel.mjs';
 import { greeks, optionIv, premiumAtLevel, spotForPremium, levelFor, yearsToExpiry } from './optionMath.mjs';
 import { loadMoveStats, moveFor, reachRate } from './moveStats.mjs';
-import { loadLevelGrid, cellFor, pickPair, pricePair } from './levelPolicy.mjs';
+import { loadLevelGrid, cellFor, pickPairForStrike } from './levelPolicy.mjs';
 import { liveRegime } from './moveRegime.mjs';
+import { scoreStrikes } from './strikeChoice.mjs';
 
 const MOVE_STATS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data', 'move-stats');
 const LEVEL_GRID_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data', 'level-grid');
@@ -475,8 +476,12 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
   // came before the stop, under the regime this stock is in right now.
   const regime = liveRegime(moveStats?.recentCloses, spot);
   const cell = cellFor({ grid: levelGrid, holdDays: days, hhmm, regime, side: card.side });
-  const pair = pickPair(cell, { policy });
-  const pairPriced = pair ? pricePair({ pair, spot, strike: card.strike, entry, years, iv, side: card.side, days }) : null;
+  // The wall the stock must clear first: a target beyond resistance (CE) or
+  // below support (PE) is a breakout bet, not an achievable one.
+  const wall = card.side === 'PE' ? card?.support?.strike : card?.resistance?.strike;
+  const chosen = pickPairForStrike({ cell, spot, strike: card.strike, entry, years, iv, side: card.side, days, policy, wall });
+  const pair = chosen.pair;
+  const pairPriced = chosen.priced ?? null;
   const useBacktest = Boolean(pair && pairPriced);
   // Fallback: the ATR is measured on 15-minute bars; a multi-day hold needs the
   // move of that many sessions, so scale it by the square root of the bar count.
@@ -505,6 +510,7 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
     tgt2: priced(tgt2Move),
     levelsBasis: useBacktest ? 'backtest+decay' : useHistory ? 'history+decay' : 'ATR+decay',
     regime,
+    levelsRejected: useBacktest ? null : chosen.reason ?? null,
     backtest: useBacktest ? {
       policy: pair.policy,
       constrained: pair.constrained,
@@ -519,6 +525,8 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
       premiumGain: round2(pairPriced.gain),
       premiumRisk: round2(pairPriced.risk),
       rewardRisk: pairPriced.rewardRisk == null ? null : round2(pairPriced.rewardRisk),
+      wall: Number.isFinite(wall) ? wall : null,
+      rejected: null,
       expectancyPremium: round2(pairPriced.expectancyPremium),
       expectancyPremiumPct: pairPriced.expectancyPct == null ? null : round2(pairPriced.expectancyPct),
     } : null,
@@ -588,7 +596,22 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     const spotChangePct = spot !== null && Number.isFinite(series?.pc) && series.pc > 0 ? round2((spot / series.pc - 1) * 100) : null;
     const walls = chainWalls(series);
     const candidatesWithGamma = gammaCandidateData(series, candidates, watch.bias, walls, now);
-    prepared.push({ ...watch, at: now, date: sessionDate, expiry: series?.e ?? null, spot, spotChangePct, candidates: candidatesWithGamma, walls });
+    // Strike and target are chosen together: the same stock move pays very
+    // differently per strike, so each candidate carries its priced outcome.
+    const scored = scoreStrikes({
+      candidates: candidatesWithGamma,
+      spot,
+      expiry: series?.e ?? null,
+      side: watch.bias === 'bearish' ? 'PE' : 'CE',
+      now,
+      moveStats: loadMoveStats(MOVE_STATS_DIR, watch.symbol),
+      levelGrid: loadLevelGrid(LEVEL_GRID_DIR, watch.symbol),
+    });
+    // The chain still picks the strike (OI/liquidity/ATM); the priced outcome
+    // rides along as information, it does not re-order the candidates.
+    const byId = new Map(scored.ranked.map(item => [item.id, item]));
+    const informed = candidatesWithGamma.map(item => ({ ...item, choice: byId.get(item.id)?.choice ?? null }));
+    prepared.push({ ...watch, at: now, date: sessionDate, expiry: series?.e ?? null, spot, spotChangePct, candidates: informed, walls });
   }
   if (!prepared.length) return { skipped: 'no readable chains on watched symbols' };
   try {
