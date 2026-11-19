@@ -228,16 +228,19 @@ export type ObservationSignal = 'all' | 'early' | 'jev';
 export type ObservationConfidence = 'all' | '65' | '80';
 
 /**
- * Signal and confidence filters.
+ * Signal, confidence and free-text filters.
  *
  * `early` cards are code-computed and carry no model confidence, so a
  * confidence floor excludes them rather than pretending they scored 0%.
+ * `query` matches symbol, contract (e.g. 128CE) and expiry, case-insensitive;
+ * every whitespace-separated token must match.
  */
-export function filterObservationCards<T extends ObservationIdentity & { early?: 'build-fast' | 'momentum' | null; quality?: number | null }>(
+export function filterObservationCards<T extends ObservationIdentity & { early?: 'build-fast' | 'momentum' | null; quality?: number | null; strike?: number | null; side?: string | null; expiry?: string | null }>(
   cards: readonly T[],
-  { signal = 'all', confidence = 'all' }: { signal?: ObservationSignal; confidence?: ObservationConfidence } = {},
+  { signal = 'all', confidence = 'all', query = '' }: { signal?: ObservationSignal; confidence?: ObservationConfidence; query?: string } = {},
 ): T[] {
   const floor = confidence === 'all' ? null : Number(confidence) / 100;
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return cards.filter(card => {
     const isEarly = Boolean(card.early);
     if (signal === 'early' && !isEarly) return false;
@@ -245,6 +248,11 @@ export function filterObservationCards<T extends ObservationIdentity & { early?:
     if (floor != null) {
       const quality = Number(card.quality);
       if (!Number.isFinite(quality) || quality < floor) return false;
+    }
+    if (tokens.length) {
+      const contract = typeof card.strike === 'number' && typeof card.side === 'string' ? `${card.strike}${card.side}` : '';
+      const haystack = `${typeof card.symbol === 'string' ? card.symbol : ''} ${contract} ${typeof card.expiry === 'string' ? card.expiry : ''}`.toLowerCase();
+      if (!tokens.every(token => haystack.includes(token))) return false;
     }
     return true;
   });

@@ -4,7 +4,7 @@ import { PageBar } from '@/components/chrome/PageBar';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
 import { applyTheme } from '@/lib/applyTheme';
 import { marketParts } from '@/lib/marketSession';
-import { useRememberedChoice } from '@/lib/remembered';
+import { useRemembered, useRememberedChoice } from '@/lib/remembered';
 import { clockOf } from '../market-flow/marketFlowModel';
 import {
   filterObservationCards,
@@ -449,15 +449,16 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   const [pageSizeChoice, setPageSizeChoice] = useRememberedChoice('observations.pageSize:v1', PAGE_SIZES, '10');
   const [signal, setSignal] = useRememberedChoice('observations.signal:v1', SIGNAL_FILTERS, 'all');
   const [confidence, setConfidence] = useRememberedChoice('observations.confidence:v1', CONFIDENCE_FILTERS, 'all');
+  const [search, setSearch] = useRemembered('observations.search:v1', raw => (typeof raw === 'string' ? raw : undefined), '');
   const pageSize = Number(pageSizeChoice) || 10;
   const todayDate = marketParts(Date.now()).dateKey;
   const todayCount = cards?.filter(card => card.date === todayDate).length ?? 0;
   const filtered = useMemo(
-    () => (cards == null ? null : filterObservationCards(cards, { signal, confidence })),
-    [cards, signal, confidence],
+    () => (cards == null ? null : filterObservationCards(cards, { signal, confidence, query: search })),
+    [cards, signal, confidence, search],
   );
   const pageData = filtered == null ? null : paginateObservationCards(filtered, page, pageSize);
-  useEffect(() => { setPage(1); }, [cards?.length, view, pageSize, signal, confidence]);
+  useEffect(() => { setPage(1); }, [cards?.length, view, pageSize, signal, confidence, search]);
   // Always track the three indices' futures; add every card symbol + its exact option contract.
   const trackedSymbols = useMemo(
     () => [...new Set([...INDEX_SYMBOLS, ...(cards ?? []).map(card => card.symbol)])],
@@ -509,6 +510,14 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
         groupId="observations-confidence"
         size="page"
       />
+      <input
+        type="search"
+        className="observations__search"
+        value={search}
+        onChange={event => { setSearch(event.target.value); setPage(1); }}
+        placeholder="Search symbol / strike…"
+        aria-label="Search observations"
+      />
       <span className="ui-flow-spacer" aria-hidden="true" />
       <ThemeToggle onChange={theme => applyTheme(theme)} />
     </>
@@ -528,6 +537,13 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
         <div className="observations__list">
           <section className="observations__empty" role="status">
             <div><h2>No observations yet</h2><p>When the advisor promotes a build-up to a watch (quality ≥ 70%), its strike observation card appears here — with entry, stop and targets computed from the captured chain.</p></div>
+          </section>
+        </div>
+      )}
+      {cards != null && cards.length > 0 && pageData?.total === 0 && (
+        <div className="observations__list">
+          <section className="observations__empty" role="status">
+            <div><h2>No matches</h2><p>No cards match the current search or filters — clear the search or widen the signal/confidence choice.</p></div>
           </section>
         </div>
       )}

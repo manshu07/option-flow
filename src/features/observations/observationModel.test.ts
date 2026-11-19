@@ -135,4 +135,23 @@ describe('filterObservationCards', () => {
     expect(filterObservationCards(cards, { confidence: '80' }).map((c: { id: string }) => c.id)).toEqual(['j2']);
     expect(filterObservationCards(cards, { signal: 'early', confidence: '80' })).toHaveLength(0);
   });
+
+  it('searches symbol, contract and expiry case-insensitively', () => {
+    const searchable = [
+      { id: 'a', symbol: 'IREDA', date: '2026-11-19', at: 3, strike: 128, side: 'CE', expiry: '2026-11-23' },
+      { id: 'b', symbol: 'TITAN', date: '2026-11-19', at: 2, strike: 3400, side: 'PE', expiry: '2026-12-28' },
+    ];
+    expect(filterObservationCards(searchable, { query: 'ireda' }).map(c => c.id)).toEqual(['a']);
+    expect(filterObservationCards(searchable, { query: '128ce' }).map(c => c.id)).toEqual(['a']);
+    expect(filterObservationCards(searchable, { query: '2026-12' }).map(c => c.id)).toEqual(['b']);
+    expect(filterObservationCards(searchable, { query: 'titan pe' }).map(c => c.id)).toEqual(['b']);
+    expect(filterObservationCards(searchable, { query: 'zzz' })).toHaveLength(0);
+  });
+
+  it('treats a blank query as no search and combines with the signal filter', () => {
+    expect(filterObservationCards(cards, { query: '   ' })).toHaveLength(3);
+    expect(filterObservationCards(cards, {})).toHaveLength(3);
+    expect(filterObservationCards(cards, { signal: 'jev', query: 'j2' }).map((c: { id: string }) => c.id)).toEqual(['j2']);
+    expect(filterObservationCards(cards, { signal: 'early', query: 'j' })).toHaveLength(0);
+  });
 });

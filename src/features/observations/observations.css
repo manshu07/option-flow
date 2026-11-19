@@ -16,6 +16,32 @@
   flex-wrap: wrap;
 }
 
+/* Search box in the page bar — same pill recipe as the strike-nav search. */
+.observations__search {
+  min-width: 0;
+  flex: 0 1 180px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-card, var(--surface));
+  color: var(--text);
+  font: 600 12px/1 var(--font-sans);
+}
+
+.observations__search::placeholder {
+  color: var(--text-subtle, var(--text2));
+  font-weight: 500;
+}
+
+/* The shared double ring (FINISH-RECIPE), not the heavy global outline. */
+.observations .observations__search.observations__search:focus,
+.observations .observations__search.observations__search:focus-visible {
+  border-color: var(--line-strong) !important;
+  outline: none !important;
+  box-shadow: var(--focus-ring-double) !important;
+}
+
 /* Index strip — one row, all three indices, same 30s live poll as the cards. */
 .obs-indices {
   display: flex;

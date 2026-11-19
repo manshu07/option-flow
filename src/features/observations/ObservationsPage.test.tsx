@@ -234,6 +234,31 @@ describe('ObservationsPage cards and table', () => {
     expect(await screen.findByText('1–10 of 45')).toBeInTheDocument();
   });
 
+  it('searches cards before pagination, resets to page 1, and remembers the query', async () => {
+    responseCards = Array.from({ length: 25 }, (_, index) => ({
+      ...card,
+      id: `search-${index}`,
+      symbol: index % 5 === 0 ? `IREDA${index}` : `SYM${String(index).padStart(2, '0')}`,
+      at: card.at + index * 60_000,
+    }));
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    expect(await screen.findByText('1–10 of 25')).toBeInTheDocument();
+
+    const search = screen.getByRole('searchbox', { name: 'Search observations' });
+    fireEvent.change(search, { target: { value: 'ireda' } });
+    // 5 IREDA cards survive the search; the count reflects the filtered list.
+    expect(await screen.findByText('1–5 of 5')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(5);
+    expect(localStorage.getItem('observations.search:v1')).toBe('"ireda"');
+
+    fireEvent.change(search, { target: { value: 'zzz-no-match' } });
+    expect(await screen.findByText('No matches')).toBeInTheDocument();
+    expect(screen.queryAllByRole('article')).toHaveLength(0);
+
+    fireEvent.change(search, { target: { value: '' } });
+    expect(await screen.findByText('1–10 of 25')).toBeInTheDocument();
+  });
+
   it('renders ten newest cards per page in both views and remembers the table choice', async () => {
     responseCards = Array.from({ length: 21 }, (_, index) => ({
       ...card,
