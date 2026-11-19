@@ -116,6 +116,12 @@ export function observationCaption(card) {
       ? ` · reached in ${(reach * 100).toFixed(0)}% of ${hist.samples} past ${hist.holdDays || 'same'}-day windows`
       : '';
     lines.push('', `🎯 TGT1 needs <b>${escapeHtml(symbol)} ${dir} ${priceText(needs.tgt1.level)}</b> (${needs.tgt1.pct?.toFixed?.(1) ?? '?'}% move) in ${days}${decay}${escapeHtml(evidence)}`);
+    const bt = card?.backtest;
+    if (bt) {
+      const pctText = value => Number.isFinite(value) ? `${(value * 100).toFixed(0)}%` : '—';
+      lines.push(`📊 Past ${bt.samples} ${escapeHtml(String(bt.scope))} windows (${escapeHtml(String(card?.regime ?? '?'))} regime): target first <b>${pctText(bt.winRate)}</b> · stop first ${pctText(bt.lossRate)} · still open ${pctText(bt.openRate)}`);
+      lines.push(`💰 reward ₹${priceText(bt.premiumGain)} vs risk ₹${priceText(bt.premiumRisk)} · average outcome ₹${priceText(bt.expectancyPremium)} (${bt.expectancyPremiumPct ?? '—'}% of entry)`);
+    }
     if (needs.sl && Number.isFinite(needs.sl.level)) lines.push(`🛑 SL if ${escapeHtml(symbol)} ${side === 'PE' ? '≥' : '≤'} ${priceText(needs.sl.level)}`);
   } else if (card?.levelsBasis === 'decay-too-heavy') {
     lines.push('', '⚠️ Decay on this expiry eats an ATR-sized target — no premium target quoted.');
@@ -166,9 +172,11 @@ export function observationSubscriberCaption(card) {
   if (card?.needs?.tgt1 && Number.isFinite(card.needs.tgt1.level)) {
     const dir = side === 'PE' ? 'at or below' : 'at or above';
     const days = Number.isFinite(card?.holdDays) ? ` in ${card.holdDays} day${card.holdDays > 1 ? 's' : ''}` : '';
-    const reach = card?.history?.reach?.tgt1;
-    const proof = Number.isFinite(reach) ? ` (${(reach * 100).toFixed(0)}% of past windows got there)` : '';
+    const bt = card?.backtest;
+    const reach = bt?.winRate ?? card?.history?.reach?.tgt1;
+    const proof = Number.isFinite(reach) ? ` — got there first in ${(reach * 100).toFixed(0)}% of past windows` : '';
     lines.push(`TGT1 needs ${symbol} ${dir} ${price(card.needs.tgt1.level)}${days}${proof}`);
+    if (bt && Number.isFinite(bt.lossRate)) lines.push(`Stop hit in ${(bt.lossRate * 100).toFixed(1)}% of those windows`);
   }
   const theta = thetaText(daysToExpiry(card?.date, card?.expiry));
   if (theta) lines.push(escapeHtml(theta));

@@ -10,8 +10,11 @@ import { atrSummary } from '../src/features/market-flow/atrModel.ts';
 import { openingRange, sessionVwap } from './orbModel.mjs';
 import { greeks, optionIv, premiumAtLevel, spotForPremium, levelFor, yearsToExpiry } from './optionMath.mjs';
 import { loadMoveStats, moveFor, reachRate } from './moveStats.mjs';
+import { loadLevelGrid, cellFor, pickPair, pricePair } from './levelPolicy.mjs';
+import { liveRegime } from './moveRegime.mjs';
 
 const MOVE_STATS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data', 'move-stats');
+const LEVEL_GRID_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data', 'level-grid');
 const IST_OFFSET = 19_800_000;
 const hhmmIst = at => { const d = new Date(at + IST_OFFSET); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
 
@@ -428,7 +431,7 @@ export function orbStrategy(snapshot, card, now) {
  * sits one such move away and targets 1.5× / 2.5× it. Falls back to the fixed
  * premium fractions (levelsBasis 'fixed') when either number is unavailable.
  */
-export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now(), moveStats = null } = {}) {
+export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now(), moveStats = null, levelGrid = null, policy = process.env.ADVISOR_LEVEL_POLICY || 'achievable' } = {}) {
   const atr = card?.atr?.value;
   const entry = card?.entry;
   if (!(Number.isFinite(atr) && atr > 0 && Number.isFinite(entry) && entry > 0)) {
@@ -468,15 +471,22 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
   const histStretch = moveStats ? moveFor({ stats: moveStats, hhmm, holdDays: days, side: card.side, percentile: 70 }) : null;
   const histAdverse = moveStats ? moveFor({ stats: moveStats, hhmm, holdDays: days, side: card.side === 'PE' ? 'CE' : 'PE', percentile: 85 }) : null;
   const useHistory = Boolean(histTarget && histStretch && histAdverse && spot > 0);
+  // Strongest basis: the pair whose PATH was replayed — how often the target
+  // came before the stop, under the regime this stock is in right now.
+  const regime = liveRegime(moveStats?.recentCloses, spot);
+  const cell = cellFor({ grid: levelGrid, holdDays: days, hhmm, regime, side: card.side });
+  const pair = pickPair(cell, { policy });
+  const pairPriced = pair ? pricePair({ pair, spot, strike: card.strike, entry, years, iv, side: card.side, days }) : null;
+  const useBacktest = Boolean(pair && pairPriced);
   // Fallback: the ATR is measured on 15-minute bars; a multi-day hold needs the
   // move of that many sessions, so scale it by the square root of the bar count.
   const barMinutes = Number(card?.atr?.barMinutes) || 15;
   const barsPerSession = Math.max(1, 375 / barMinutes);
   const horizonAtr = atr * Math.sqrt(barsPerSession * days);
   const priced = move => round2(Math.max(0.05, premiumAtLevel({ level: card.side === 'PE' ? spot - move : spot + move, strike: card.strike, years, iv, side: card.side, days }) ?? entry));
-  const slMove = useHistory ? spot * histAdverse.pct / 100 : ATR_STOP_MULT * horizonAtr;
-  const tgt1Move = useHistory ? spot * histTarget.pct / 100 : ATR_TGT1_MULT * horizonAtr;
-  const tgt2Move = useHistory ? spot * histStretch.pct / 100 : ATR_TGT2_MULT * horizonAtr;
+  const slMove = useBacktest ? spot * pair.stopPct / 100 : useHistory ? spot * histAdverse.pct / 100 : ATR_STOP_MULT * horizonAtr;
+  const tgt1Move = useBacktest ? spot * pair.targetPct / 100 : useHistory ? spot * histTarget.pct / 100 : ATR_TGT1_MULT * horizonAtr;
+  const tgt2Move = useBacktest ? spot * Math.min(pair.targetPct * 2, pair.targetPct + 1) / 100 : useHistory ? spot * histStretch.pct / 100 : ATR_TGT2_MULT * horizonAtr;
   const needs = {
     sl: levelFor({ spot, move: -slMove, side: card.side }),
     tgt1: levelFor({ spot, move: tgt1Move, side: card.side }),
@@ -493,7 +503,25 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
     sl: priced(-slMove),
     tgt1,
     tgt2: priced(tgt2Move),
-    levelsBasis: useHistory ? 'history+decay' : 'ATR+decay',
+    levelsBasis: useBacktest ? 'backtest+decay' : useHistory ? 'history+decay' : 'ATR+decay',
+    regime,
+    backtest: useBacktest ? {
+      policy: pair.policy,
+      constrained: pair.constrained,
+      scope: pair.scope,
+      samples: pair.samples,
+      targetPct: pair.targetPct,
+      stopPct: pair.stopPct,
+      winRate: pair.winRate,
+      lossRate: pair.lossRate,
+      openRate: pair.openRate,
+      expectancyPct: pair.expectancyPct,
+      premiumGain: round2(pairPriced.gain),
+      premiumRisk: round2(pairPriced.risk),
+      rewardRisk: pairPriced.rewardRisk == null ? null : round2(pairPriced.rewardRisk),
+      expectancyPremium: round2(pairPriced.expectancyPremium),
+      expectancyPremiumPct: pairPriced.expectancyPct == null ? null : round2(pairPriced.expectancyPct),
+    } : null,
     history: useHistory ? {
       instrument: moveStats.instrument,
       era: histTarget.era,
@@ -533,7 +561,7 @@ async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, n
   return Promise.all(cards.map(async card => {
     try {
       const snapshot = await readFuturesSnapshot(card.symbol, sessionDate);
-      return adaptiveLevels({ ...card, atr: futuresAtr(snapshot, card.symbol, sessionDate, now), strategy: orbStrategy(snapshot, card, now) }, { now, moveStats: loadMoveStats(MOVE_STATS_DIR, card.symbol) });
+      return adaptiveLevels({ ...card, atr: futuresAtr(snapshot, card.symbol, sessionDate, now), strategy: orbStrategy(snapshot, card, now) }, { now, moveStats: loadMoveStats(MOVE_STATS_DIR, card.symbol), levelGrid: loadLevelGrid(LEVEL_GRID_DIR, card.symbol) });
     } catch (error) {
       log(`advisor ATR unavailable for ${card.symbol}: ${String(error?.message || error)}`);
       return card;
@@ -585,7 +613,24 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...decisions.cards]);
     if (early.length) log(`advisor early signals: ${early.map(card => `${card.symbol} ${card.strike}${card.side} (${card.early})`).join(', ')}`);
     const cards = await enrichWithFuturesAtr([...decisions.cards, ...early], { readFuturesSnapshot, sessionDate, now, log });
-    const { skipped } = decisions;
+    // A card whose measured premium expectancy is negative is not an
+    // observation worth acting on — the owner's rule is that a card's target
+    // should be achievable, not just possible.
+    const minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0);
+    const skipped = [];
+    const kept = [];
+    for (const card of cards) {
+      const exp = card?.backtest?.expectancyPremium;
+      if (Number.isFinite(exp) && exp < minExpectancy) {
+        skipped.push({ symbol: card.symbol, reason: `negative expectancy ₹${exp} over ${card.backtest.samples} past windows` });
+        continue;
+      }
+      kept.push(card);
+    }
+    cards.length = 0;
+    cards.push(...kept);
+    const { skipped: modelSkipped } = decisions;
+    skipped.push(...modelSkipped);
     if (cards.length) {
       const freshCards = dedupeObservations(cards);
       const existing = loadObservations(obsPath);
