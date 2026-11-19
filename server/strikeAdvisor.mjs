@@ -510,6 +510,18 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
     tgt2: priced(tgt2Move),
     levelsBasis: useBacktest ? 'backtest+decay' : useHistory ? 'history+decay' : 'ATR+decay',
     regime,
+    // What this stock's remaining session has actually delivered from this
+    // time of day — the ceiling a target has to live under.
+    dayReach: (() => {
+      if (!moveStats?.intraday) return null;
+      const times = Object.keys(moveStats.intraday).filter(t => t <= hhmm).sort();
+      const bucket = times[times.length - 1];
+      const set = bucket ? (moveStats.intraday[bucket]?.recent ?? moveStats.intraday[bucket]?.all) : null;
+      const dir = card.side === 'PE' ? 'down' : 'up';
+      const values = set?.[dir];
+      if (!values) return null;
+      return { bucket, side: dir, p50: values.p50, p70: values.p70, p95: values.p95, max: values.max, samples: values.n };
+    })(),
     levelsRejected: useBacktest ? null : chosen.reason ?? null,
     backtest: useBacktest ? {
       policy: pair.policy,
