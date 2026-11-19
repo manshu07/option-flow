@@ -110,7 +110,7 @@ describe('pickPairForStrike', () => {
     // Resistance sits below every target level → nothing is achievable.
     const blocked = pickPairForStrike({ ...base, wall: 4650 });
     expect(blocked.pair).toBeNull();
-    expect(blocked.reason).toContain('no pair could be priced');
+    expect(blocked.reason).toContain('decay eats every target');
   });
 
   it('says so when nothing pays 1:2 instead of quoting a bad trade', () => {

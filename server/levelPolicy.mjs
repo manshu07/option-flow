@@ -123,12 +123,14 @@ export function pickPairForStrike({
   for (const candidate of cell.pairs) {
     const priced = pricePair({ pair: candidate, spot, strike, entry, years, iv, side, days });
     if (!priced || !(priced.risk > 0)) continue;
+    // A target the decay already ate is not a payoff — never quote a negative ratio.
+    if (!(priced.gain > 0)) continue;
     const rewardRisk = priced.gain / priced.risk;
     // A target past the wall needs a breakout first — not an achievable ask.
     if (Number.isFinite(wall) && wall > 0 && (dir > 0 ? priced.targetLevel > wall : priced.targetLevel < wall)) continue;
     scored.push({ candidate, priced, rewardRisk });
   }
-  if (!scored.length) return { pair: null, reason: 'no pair could be priced' };
+  if (!scored.length) return { pair: null, reason: 'decay eats every target at this expiry (or the wall blocks it)' };
   const payable = scored.filter(item => item.rewardRisk >= minRewardRisk);
   if (!payable.length) {
     const best = [...scored].sort((a, b) => b.rewardRisk - a.rewardRisk)[0];
