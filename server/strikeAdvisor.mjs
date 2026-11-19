@@ -1,4 +1,5 @@
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { sendTelegram, sendTelegramObservationCard } from './telegram.mjs';
 import { observationSubscriberCaption } from './observationCardSvg.mjs';
@@ -8,6 +9,11 @@ import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/featu
 import { atrSummary } from '../src/features/market-flow/atrModel.ts';
 import { openingRange, sessionVwap } from './orbModel.mjs';
 import { greeks, optionIv, premiumAtLevel, spotForPremium, levelFor, yearsToExpiry } from './optionMath.mjs';
+import { loadMoveStats, moveFor, reachRate } from './moveStats.mjs';
+
+const MOVE_STATS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data', 'move-stats');
+const IST_OFFSET = 19_800_000;
+const hhmmIst = at => { const d = new Date(at + IST_OFFSET); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
 
 /**
  * Strike setup advisor — observation cards for watched symbols, buy-side only.
@@ -422,7 +428,7 @@ export function orbStrategy(snapshot, card, now) {
  * sits one such move away and targets 1.5× / 2.5× it. Falls back to the fixed
  * premium fractions (levelsBasis 'fixed') when either number is unavailable.
  */
-export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now() } = {}) {
+export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now(), moveStats = null } = {}) {
   const atr = card?.atr?.value;
   const entry = card?.entry;
   if (!(Number.isFinite(atr) && atr > 0 && Number.isFinite(entry) && entry > 0)) {
@@ -453,15 +459,24 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
   // premium with gamma and the decay of the intended hold. The stock price each
   // level needs travels with the card, so a target is never a bare percentage.
   const days = Math.max(1, Math.min(holdDays, Math.floor(years * 365)));
-  // The ATR is measured on 15-minute bars; a multi-day hold needs the move of
-  // that many sessions, so scale it by the square root of the bar count.
+  // Preferred basis: what THIS stock has actually done over the same hold,
+  // from the owner's equity history (spot — the option's own underlying).
+  // p30 is the move 70% of past windows reached; the stop sits at the adverse
+  // p85, which only 15% of windows exceeded.
+  const hhmm = hhmmIst(Number.isFinite(card?.at) ? card.at : now);
+  const histTarget = moveStats ? moveFor({ stats: moveStats, hhmm, holdDays: days, side: card.side, percentile: 30 }) : null;
+  const histStretch = moveStats ? moveFor({ stats: moveStats, hhmm, holdDays: days, side: card.side, percentile: 70 }) : null;
+  const histAdverse = moveStats ? moveFor({ stats: moveStats, hhmm, holdDays: days, side: card.side === 'PE' ? 'CE' : 'PE', percentile: 85 }) : null;
+  const useHistory = Boolean(histTarget && histStretch && histAdverse && spot > 0);
+  // Fallback: the ATR is measured on 15-minute bars; a multi-day hold needs the
+  // move of that many sessions, so scale it by the square root of the bar count.
   const barMinutes = Number(card?.atr?.barMinutes) || 15;
   const barsPerSession = Math.max(1, 375 / barMinutes);
   const horizonAtr = atr * Math.sqrt(barsPerSession * days);
   const priced = move => round2(Math.max(0.05, premiumAtLevel({ level: card.side === 'PE' ? spot - move : spot + move, strike: card.strike, years, iv, side: card.side, days }) ?? entry));
-  const slMove = ATR_STOP_MULT * horizonAtr;
-  const tgt1Move = ATR_TGT1_MULT * horizonAtr;
-  const tgt2Move = ATR_TGT2_MULT * horizonAtr;
+  const slMove = useHistory ? spot * histAdverse.pct / 100 : ATR_STOP_MULT * horizonAtr;
+  const tgt1Move = useHistory ? spot * histTarget.pct / 100 : ATR_TGT1_MULT * horizonAtr;
+  const tgt2Move = useHistory ? spot * histStretch.pct / 100 : ATR_TGT2_MULT * horizonAtr;
   const needs = {
     sl: levelFor({ spot, move: -slMove, side: card.side }),
     tgt1: levelFor({ spot, move: tgt1Move, side: card.side }),
@@ -478,7 +493,21 @@ export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOL
     sl: priced(-slMove),
     tgt1,
     tgt2: priced(tgt2Move),
-    levelsBasis: 'ATR+decay',
+    levelsBasis: useHistory ? 'history+decay' : 'ATR+decay',
+    history: useHistory ? {
+      instrument: moveStats.instrument,
+      era: histTarget.era,
+      holdDays: histTarget.holdDays ?? 0,
+      samples: histTarget.samples,
+      targetPct: histTarget.pct,
+      stretchPct: histStretch.pct,
+      adversePct: histAdverse.pct,
+      reach: {
+        tgt1: reachRate({ stats: moveStats, hhmm, holdDays: days, side: card.side, pct: histTarget.pct }),
+        tgt2: reachRate({ stats: moveStats, hhmm, holdDays: days, side: card.side, pct: histStretch.pct }),
+        sl: reachRate({ stats: moveStats, hhmm, holdDays: days, side: card.side === 'PE' ? 'CE' : 'PE', pct: histAdverse.pct }),
+      },
+    } : null,
     holdDays: days,
     thetaDay: round2(g.thetaDay),
     ivUsed: round2(iv * 100),
@@ -504,7 +533,7 @@ async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, n
   return Promise.all(cards.map(async card => {
     try {
       const snapshot = await readFuturesSnapshot(card.symbol, sessionDate);
-      return adaptiveLevels({ ...card, atr: futuresAtr(snapshot, card.symbol, sessionDate, now), strategy: orbStrategy(snapshot, card, now) });
+      return adaptiveLevels({ ...card, atr: futuresAtr(snapshot, card.symbol, sessionDate, now), strategy: orbStrategy(snapshot, card, now) }, { now, moveStats: loadMoveStats(MOVE_STATS_DIR, card.symbol) });
     } catch (error) {
       log(`advisor ATR unavailable for ${card.symbol}: ${String(error?.message || error)}`);
       return card;

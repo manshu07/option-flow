@@ -63,6 +63,35 @@ describe('candidateStrikes', () => {
     expect(priced.tgt1).toBeGreaterThan(2.53);
   });
 
+  it('sizes levels from the stock\'s own history when move stats exist, and reports the reach rate', () => {
+    const stats = {
+      instrument: 'EQ', entryTimes: ['09:30', '14:30'], holds: [1, 2, 5],
+      intraday: {},
+      daily: {
+        2: { recent: {
+          up: { n: 713, p30: 0.6, p50: 1.16, p70: 1.89, p85: 2.82, p95: 4.56 },
+          down: { n: 713, p30: 0.58, p50: 1.14, p70: 1.85, p85: 2.75, p95: 4.4 },
+        } },
+      },
+    };
+    const card = {
+      symbol: 'TITAN', side: 'PE', strike: 4700, spot: 4648, entry: 121.25, delta: -0.5, iv: 22,
+      expiry: '2026-12-29', at: Date.parse('2026-11-18T10:00:00+05:30'),
+      atr: { value: 3.4, barMinutes: 15, state: 'normal' },
+    };
+    const priced = adaptiveLevels(card, { holdDays: 2, now: Date.parse('2026-11-18T15:30:00+05:30'), moveStats: stats });
+    expect(priced.levelsBasis).toBe('history+decay');
+    expect(priced.history.instrument).toBe('EQ');
+    expect(priced.history.samples).toBe(713);
+    // TGT1 asks for the p30 move (reached by ~70% of past 2-day windows).
+    expect(priced.history.targetPct).toBe(0.58);
+    expect(priced.needs.tgt1.level).toBeLessThan(4648); // a PE needs the stock lower
+    expect(priced.history.reach.tgt1).toBeGreaterThan(0.6);
+    expect(priced.history.reach.tgt2).toBeLessThan(priced.history.reach.tgt1);
+    expect(priced.tgt1).toBeGreaterThan(priced.entry);
+    expect(priced.sl).toBeLessThan(priced.entry);
+  });
+
   it('refuses to quote a premium target when decay eats an ATR-sized move', () => {
     const card = {
       symbol: 'X', side: 'CE', strike: 100, spot: 100, entry: 0.6, delta: 0.2, iv: 60,
