@@ -60,6 +60,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMarketSessionTime } from '../../src/lib/marketSession.ts';
 import { createFullOptionChainSnapshot, normalizeDhanOptionChain } from '../optionChainSnapshots.mjs';
+import { feedReinitDue } from '../feedRecovery.mjs';
 import { readFutures } from '../replayStorage.mjs';
 import { seedPlan } from '../prevDaySeed.mjs';
 import { tokenExpiryAt } from '../tokenWatch.mjs';
@@ -155,6 +156,9 @@ export function createDhanProvider(universe) {
   /** The feed: one connection for underlyings + futures, the rest for option strikes. */
   const conns = [];
   let feedHealthyAt = 0, feedStartedAt = 0, feedWant = new Set(), rebalanceTimer = null, watchdogTimer = null;
+  // Full-drop supervisor state: when every connection is gone/stuck the
+  // per-conn watchdog cannot recover, so a sustained unhealthy feed re-inits.
+  let feedDownSince = 0, lastFeedReinitAt = 0, feedReinitInFlight = false;
   // Resource ledger (owner ask): every REST call, WS packet, and the heap are
   // counted so usage jumps are traceable instead of guessed at.
   const usage = {
@@ -455,6 +459,9 @@ export function createDhanProvider(universe) {
       parseFeed(buf);
     };
     socket.onclose = () => {
+      // A stale socket's close must not clobber a newer one (reopenFeed closes
+      // old sockets then opens replacements; their onclose fires afterwards).
+      if (conn.socket !== socket) return;
       conn.socket = null;
       scheduleReconnect(conn, hostIdx);
     };
@@ -469,8 +476,31 @@ export function createDhanProvider(universe) {
     conn.reconnectAttempts = (conn.reconnectAttempts ?? 0) + 1;
     conn.reconnectTimer = setTimeout(async () => {
       conn.reconnectTimer = null;
-      await openConn(conns.indexOf(conn), hostIdx + 1);
+      try {
+        await openConn(conns.indexOf(conn), hostIdx + 1);
+      } catch (error) {
+        // An uncaught throw here used to orphan the connection forever (no
+        // socket, no timer) — reschedule so the reconnect chain never breaks.
+        console.warn(`dhan: feed reconnect failed: ${error?.message || error} — retrying`);
+        scheduleReconnect(conn, hostIdx + 1);
+      }
     }, delay);
+  }
+
+  // Full feed re-init: close every socket, clear pending reconnects, and reopen
+  // all connections (staggered). onopen rebuilds each connection's subscriptions
+  // from feedWant ∩ holds, so no separate resubscribe step is needed.
+  async function reopenFeed() {
+    for (const conn of conns) {
+      if (conn.reconnectTimer) { clearTimeout(conn.reconnectTimer); conn.reconnectTimer = null; }
+      conn.reconnectAttempts = 0;
+      try { conn.socket?.close(); } catch { /* already closing */ }
+      conn.socket = null;
+    }
+    for (let i = 0; i < conns.length; i++) {
+      if (i) await sleep(1000);
+      await openConn(i);
+    }
   }
 
   // ── Quotes and previous closes (REST, sparingly) ──────────────────────────
@@ -1146,12 +1176,39 @@ export function createDhanProvider(universe) {
         const now = Date.now();
         for (let i = 0; i < conns.length; i++) {
           const conn = conns[i];
-          if (conn.socket?.readyState !== 1) continue;
+          const state = conn.socket?.readyState;
+          // A socket stuck CONNECTING (half-open TCP) never fires onclose, so it
+          // would never reconnect — close it past 30s to trigger the reconnect.
+          if (state === 0 && now - (conn.openedAt ?? now) > 30_000) {
+            console.warn(`dhan: feed ${i} stuck connecting >30s — closing to reconnect`);
+            try { conn.socket.close(); } catch { /* already closing */ }
+            continue;
+          }
+          // An orphaned connection (no socket AND no pending reconnect) would sit
+          // dead forever — restart its reconnect chain.
+          if (!conn.socket && !conn.reconnectTimer && !feedReinitInFlight) {
+            scheduleReconnect(conn, 0);
+            continue;
+          }
+          if (state !== 1) continue;
           const silent = conn.lastPacketAt ? now - conn.lastPacketAt > 45_000 : now - (conn.openedAt ?? now) > 60_000;
           if (silent) {
             console.warn(`dhan: feed ${i} silent for ${conn.lastPacketAt ? Math.round((now - conn.lastPacketAt) / 1000) : '60+'}s (${conn.packets ?? 0} packets so far) — forcing reconnect`);
             try { conn.socket.close(); } catch { /* already closing */ }
           }
+        }
+        // Supervisor: a full feed drop (no healthy feed for 90s in session)
+        // auto re-inits every connection. The per-conn watchdog above cannot
+        // recover a state where all sockets are gone/stuck — HTTP stays 200
+        // while the board goes stale; this is the self-heal for that. Cooldown
+        // 120s so a refusing endpoint is never hammered with re-init storms.
+        const reinit = feedReinitDue(now, { inSession: isMarketSessionTime(now), healthy: feedHealthy(), downSince: feedDownSince, lastReinitAt: lastFeedReinitAt, inFlight: feedReinitInFlight });
+        feedDownSince = reinit.downSince;
+        if (reinit.due) {
+          lastFeedReinitAt = now;
+          feedReinitInFlight = true;
+          console.warn(`dhan: feed fully down ${Math.round((now - feedDownSince) / 1000)}s — auto re-init of all ${conns.length} connections`);
+          void reopenFeed().finally(() => { feedReinitInFlight = false; feedDownSince = 0; });
         }
         if (process.env.DHAN_DEBUG) {
           const sensexHeld = map.get('SENSEX');
