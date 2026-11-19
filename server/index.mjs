@@ -141,6 +141,9 @@ function persistProviderFullChains() {
   try {
     const written = persistFullOptionChainSnapshots(SCAN_DIR, pending);
     for (const snapshot of pending) persistedFullChainCaptures.add(`${snapshot.session}:${snapshot.symbol}:${snapshot.capturedAt}`);
+    // Once on disk, drop them from RAM — the timestamp-keyed Map otherwise
+    // grows all session and OOMs the API. Keys match the provider's Map.
+    provider.drainFullChainSnapshots?.(pending.map(snapshot => `${snapshot.symbol}:${snapshot.capturedAt}`));
     return written;
   } catch (error) {
     log('full-chain snapshot persistence failed:', String(error?.message || error));
@@ -331,7 +334,7 @@ async function build() {
   try {
     await Promise.all(Array.from({ length: WORKERS }, worker));
     const fullChainsWritten = persistProviderFullChains();
-    if (fullChainsWritten) log(`full-chain snapshots: ${fullChainsWritten} persisted`);
+    if (fullChainsWritten) log(`full-chain snapshots: ${fullChainsWritten} persisted, ${provider.fullChainSnapshotCount?.() ?? '?'} retained in RAM`);
     if (!series.length) throw new Error(firstError ? `No underlying answered: ${firstError}` : 'No underlying answered.');
     if (nextChainFailures) log(`next-expiry chains unavailable for ${nextChainFailures} symbol(s) this build — near-only series kept`);
     const at = now();

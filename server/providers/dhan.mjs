@@ -1326,6 +1326,20 @@ export function createDhanProvider(universe) {
       return [...fullChains.values()];
     },
 
+    // Persisted snapshots must leave RAM: fullChains is keyed by capture
+    // timestamp, so without a drain it grows all session and OOMs the API
+    // (the 2026-11-19 crash-loop). The server removes exactly the keys it
+    // wrote to disk; unpersisted captures stay for the next pass.
+    drainFullChainSnapshots(keys) {
+      let removed = 0;
+      for (const key of Array.isArray(keys) ? keys : []) if (fullChains.delete(key)) removed += 1;
+      return removed;
+    },
+
+    fullChainSnapshotCount() {
+      return fullChains.size;
+    },
+
     // Live tick readings for named contracts: the nearest future per symbol
     // and specific option strikes (symbol|strike|side|expiry). Entries whose
     // contract is unknown or hasn't ticked yet are absent. Never throws.
