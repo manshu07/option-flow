@@ -143,6 +143,10 @@ export function createDhanProvider(universe) {
   const fullChains = new Map();
   /** symbol+session → underlying's previous close, when neither the feed nor quotes had it. */
   const prevCloseCache = new Map();
+  /** symbol:expiry → Dhan rejected the expiry outright (Invalid Expiry Date).
+   *  Without this, every build re-runs the live-wait + REST retry loop for the
+   *  same dead expiry — the retry crawl is what stretched builds past 30s. */
+  const deadExpiries = new Set();
   /** Whole-universe quotes (one REST request per refresh): seg → id → { last_price, ohlc }. */
   let quotes = null, quotesAt = 0, quotesInFlight = null;
   /** Global Data-API bucket (5 requests a second) for every REST call. */
@@ -472,7 +476,11 @@ export function createDhanProvider(universe) {
     if (conn.reconnectTimer) return;
     // Exponential backoff so a refusing endpoint is never hammered — Dhan
     // throttling rapid reconnect loops would hurt the next market session.
-    const delay = Math.min(3_000 * 2 ** (conn.reconnectAttempts ?? 0), 60_000);
+    // Outside a session a 5-minute retry is plenty — the feed is quiet and
+    // rapid loops only invite Dhan throttling. In-session, exponential to 60s.
+    const delay = isMarketSessionTime(Date.now())
+      ? Math.min(3_000 * 2 ** (conn.reconnectAttempts ?? 0), 60_000)
+      : 300_000;
     conn.reconnectAttempts = (conn.reconnectAttempts ?? 0) + 1;
     conn.reconnectTimer = setTimeout(async () => {
       conn.reconnectTimer = null;
@@ -616,10 +624,21 @@ export function createDhanProvider(universe) {
   }
 
   async function restChain(u, expiry, held) {
-    const [data] = await Promise.all([
-      (async () => { await chainGate(); return post('/optionchain', { UnderlyingScrip: held.underlyingId, UnderlyingSeg: held.underSeg, Expiry: expiry }); })(),
-      ensureQuotes(),
-    ]);
+    const quotesInFlight = ensureQuotes().catch(() => undefined);
+    let data;
+    try {
+      await chainGate();
+      data = await post('/optionchain', { UnderlyingScrip: held.underlyingId, UnderlyingSeg: held.underSeg, Expiry: expiry });
+    } catch (error) {
+      // Dhan rejects some ladder expiries outright (Invalid Expiry Date).
+      // Remember it so no later build re-crawls REST for the same dead expiry.
+      if (/Invalid Expiry/i.test(String(error?.message))) {
+        deadExpiries.add(`${u.symbol}:${expiry}`);
+        console.warn(`dhan: expiry ${expiry} rejected for ${u.symbol} — blacklisted for this session`);
+      }
+      throw error;
+    }
+    await quotesInFlight;
     const fallback = underlyingQuote(held);
     let prevClose = fallback?.prevClose || null;
     if (!prevClose) prevClose = await underlyingPrevClose(held, ymdIst(Date.now()));
@@ -1174,27 +1193,33 @@ export function createDhanProvider(universe) {
       usageTick();
       watchdogTimer = setInterval(() => {
         const now = Date.now();
-        for (let i = 0; i < conns.length; i++) {
-          const conn = conns[i];
-          const state = conn.socket?.readyState;
-          // A socket stuck CONNECTING (half-open TCP) never fires onclose, so it
-          // would never reconnect — close it past 30s to trigger the reconnect.
-          if (state === 0 && now - (conn.openedAt ?? now) > 30_000) {
-            console.warn(`dhan: feed ${i} stuck connecting >30s — closing to reconnect`);
-            try { conn.socket.close(); } catch { /* already closing */ }
-            continue;
-          }
-          // An orphaned connection (no socket AND no pending reconnect) would sit
-          // dead forever — restart its reconnect chain.
-          if (!conn.socket && !conn.reconnectTimer && !feedReinitInFlight) {
-            scheduleReconnect(conn, 0);
-            continue;
-          }
-          if (state !== 1) continue;
-          const silent = conn.lastPacketAt ? now - conn.lastPacketAt > 45_000 : now - (conn.openedAt ?? now) > 60_000;
-          if (silent) {
-            console.warn(`dhan: feed ${i} silent for ${conn.lastPacketAt ? Math.round((now - conn.lastPacketAt) / 1000) : '60+'}s (${conn.packets ?? 0} packets so far) — forcing reconnect`);
-            try { conn.socket.close(); } catch { /* already closing */ }
+        // Outside a session the feed is intentionally quiet — forcing
+        // reconnects on silence churned sockets all night (90 forced
+        // reconnects/day) and invited Dhan throttling. The supervisor's
+        // in-session re-init brings feeds back at the open.
+        if (isMarketSessionTime(now)) {
+          for (let i = 0; i < conns.length; i++) {
+            const conn = conns[i];
+            const state = conn.socket?.readyState;
+            // A socket stuck CONNECTING (half-open TCP) never fires onclose, so it
+            // would never reconnect — close it past 30s to trigger the reconnect.
+            if (state === 0 && now - (conn.openedAt ?? now) > 30_000) {
+              console.warn(`dhan: feed ${i} stuck connecting >30s — closing to reconnect`);
+              try { conn.socket.close(); } catch { /* already closing */ }
+              continue;
+            }
+            // An orphaned connection (no socket AND no pending reconnect) would sit
+            // dead forever — restart its reconnect chain.
+            if (!conn.socket && !conn.reconnectTimer && !feedReinitInFlight) {
+              scheduleReconnect(conn, 0);
+              continue;
+            }
+            if (state !== 1) continue;
+            const silent = conn.lastPacketAt ? now - conn.lastPacketAt > 45_000 : now - (conn.openedAt ?? now) > 60_000;
+            if (silent) {
+              console.warn(`dhan: feed ${i} silent for ${conn.lastPacketAt ? Math.round((now - conn.lastPacketAt) / 1000) : '60+'}s (${conn.packets ?? 0} packets so far) — forcing reconnect`);
+              try { conn.socket.close(); } catch { /* already closing */ }
+            }
           }
         }
         // Supervisor: a full feed drop (no healthy feed for 90s in session)
@@ -1220,7 +1245,10 @@ export function createDhanProvider(universe) {
     },
 
     async expiries(u) {
-      return entry(u.symbol).expiries;
+      const ladder = entry(u.symbol).expiries;
+      // Hide expiries Dhan has already rejected — the build's next-expiry fetch
+      // would otherwise repeat the same Invalid Expiry 400 every minute.
+      return Array.isArray(ladder) ? ladder.filter(e => !deadExpiries.has(`${u.symbol}:${e}`)) : ladder;
     },
 
     getUsage() {
@@ -1230,6 +1258,13 @@ export function createDhanProvider(universe) {
 
     async optionChain(u, expiry) {
       const held = entry(u.symbol);
+      // A ladder expiry Dhan has already rejected would burn the whole
+      // live-wait + REST retry loop again — fail fast instead.
+      if (deadExpiries.has(`${u.symbol}:${expiry}`)) {
+        const cached = lastChain.get(`${u.symbol}:${expiry}`);
+        if (cached && cached.expiry === expiry && Date.now() - cached.at < 6 * 3_600_000) return cached.chain;
+        throw new Error(`dhan: expiry ${expiry} known invalid for ${u.symbol} — skipped`);
+      }
       // After the session (feed quiet for a minute), serve the last good chain:
       // nothing changes at close, and re-fetching 215 chains over the paced REST
       // path turns every build into an eleven-minute crawl.
