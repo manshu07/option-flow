@@ -288,14 +288,30 @@ export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, p
 }
 
 /**
+ * The owner's actionable-card gate: a level pair must exist (not no-edge) and
+ * its measured premium expectancy must not be negative. Shared by the early
+ * path (so a rejected candidate never consumes a cap slot) and runAdvisor.
+ */
+function acceptCheck(card, minExpectancy) {
+  if (card?.levelsBasis === 'no-edge') return { ok: false, reason: card.levelsRejected ?? 'no achievable pair' };
+  const exp = card?.backtest?.expectancyPremium;
+  if (Number.isFinite(exp) && exp < minExpectancy) return { ok: false, reason: `negative expectancy ₹${exp} over ${card.backtest.samples} past windows` };
+  return { ok: true };
+}
+
+/**
  * Early-signal cards, computed by code (no model gate). The owner wants early
  * grabs at the bottom, not only model-confirmed setups, so a fast price move
  * still scores a card when either (a) chain OI is adding strongly (build-up)
- * or (b) OI is flat/falling (momentum / short covering — the model gate was
- * skipping exactly these). Cap: two early cards per pass, one per symbol/day.
+ * or (b) OI is flat OR unwinding (momentum — short covering on a rally and
+ * long unwinding on a fall both ride here; only a mild fresh build-up of 2–5%
+ * waits for confirmation). Each candidate is priced and gated BEFORE it counts
+ * toward the cap, so a permanently-rejectable name cannot starve real setups.
+ * Cap: two early cards per pass, one per symbol/day.
  */
-export function earlyCards(market, date, now, existing = [], { max = 2 } = {}) {
+export function earlyCards(market, date, now, existing = [], { max = 2, minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0), priceCard } = {}) {
   if (!market || typeof date !== 'string') return [];
+  const price = priceCard ?? (card => adaptiveLevels(card, { now, moveStats: loadMoveStats(MOVE_STATS_DIR, card.symbol), levelGrid: loadLevelGrid(LEVEL_GRID_DIR, card.symbol) }));
   const seen = new Set((Array.isArray(existing) ? existing : []).map(card => observationKey(card)).filter(Boolean));
   const out = [];
   for (const mover of marketMovers(market)) {
@@ -303,7 +319,7 @@ export function earlyCards(market, date, now, existing = [], { max = 2 } = {}) {
     if (!Number.isFinite(mover.changePct) || Math.abs(mover.changePct) < 1.5) continue;
     const oiPct = Number.isFinite(mover.oiPct) ? mover.oiPct : 0;
     const strong = oiPct >= 5;
-    const momentum = Math.abs(oiPct) < 2;
+    const momentum = oiPct < 2;
     if (!strong && !momentum) continue;
     const key = `${mover.symbol}|${date}`;
     if (seen.has(key)) continue;
@@ -313,8 +329,7 @@ export function earlyCards(market, date, now, existing = [], { max = 2 } = {}) {
     const bias = mover.changePct > 0 ? 'bullish' : 'bearish';
     const candidate = candidateStrikes(chain, bias)[0];
     if (!candidate || !(candidate.ltp > MIN_ENTRY_PREMIUM)) continue;
-    seen.add(key);
-    out.push({
+    const card = {
       id: key,
       at: now,
       date,
@@ -334,7 +349,12 @@ export function earlyCards(market, date, now, existing = [], { max = 2 } = {}) {
       early: strong ? 'build-fast' : 'momentum',
       atr: null,
       disclaimer: DISCLAIMER,
-    });
+    };
+    // Gate before counting the slot: a no-edge / negative-expectancy candidate
+    // is dropped here and the next mover gets its chance (MOTILALOFS starvation).
+    if (!acceptCheck(price(card), minExpectancy).ok) continue;
+    seen.add(key);
+    out.push(card);
   }
   return out;
 }
@@ -686,13 +706,9 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     const skipped = [];
     const kept = [];
     for (const card of cards) {
-      if (card?.levelsBasis === 'no-edge') {
-        skipped.push({ symbol: card.symbol, reason: card.levelsRejected ?? 'no achievable pair' });
-        continue;
-      }
-      const exp = card?.backtest?.expectancyPremium;
-      if (Number.isFinite(exp) && exp < minExpectancy) {
-        skipped.push({ symbol: card.symbol, reason: `negative expectancy ₹${exp} over ${card.backtest.samples} past windows` });
+      const check = acceptCheck(card, minExpectancy);
+      if (!check.ok) {
+        skipped.push({ symbol: card.symbol, reason: check.reason });
         continue;
       }
       kept.push(card);

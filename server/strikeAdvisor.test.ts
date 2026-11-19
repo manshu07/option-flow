@@ -147,6 +147,43 @@ describe('candidateStrikes', () => {
     expect(earlyCards(market, '2026-11-16', NOW, cards)).toHaveLength(0);
   });
 
+  it('early cards ride short covering and long unwinding, not just flat OI', () => {
+    // Chain OI −10% (90k vs 100k per row); liquid ATM, no bid/ask spread gate.
+    const rows = (strike: number) => [
+      [strike, 0, 6, 5, 90_000, 100_000, 10_000],
+      [strike, 1, 6, 5, 90_000, 100_000, 10_000],
+    ];
+    const covering = { s: 'COVER', sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: [...rows(104), ...rows(105)] };
+    const unwind = { s: 'UNWIND', sp: 96, pc: 100, atm: 96, e: '2026-11-19', r: [...rows(96), ...rows(95)] };
+    const mildRows = (strike: number) => [[strike, 0, 6, 5, 103_000, 100_000, 10_000], [strike, 1, 6, 5, 103_000, 100_000, 10_000]];
+    const mild = { s: 'MILD', sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: [...mildRows(104), ...mildRows(105)] };
+    const market = { date: '2026-11-16', series: [covering, unwind, mild] };
+    const cards = earlyCards(market, '2026-11-16', NOW, [], { max: 3 });
+    const cover = cards.find(card => card.symbol === 'COVER');
+    const unw = cards.find(card => card.symbol === 'UNWIND');
+    expect(cover?.early).toBe('momentum');
+    expect(cover?.bias).toBe('bullish');
+    expect(cover?.side).toBe('CE');
+    expect(unw?.early).toBe('momentum');
+    expect(unw?.bias).toBe('bearish');
+    expect(unw?.side).toBe('PE');
+    // A mild fresh build-up (+3% OI) still waits for confirmation.
+    expect(cards.some(card => card.symbol === 'MILD')).toBe(false);
+  });
+
+  it('a rejected early candidate does not consume the cap slot', () => {
+    const rows = (strike: number) => [[strike, 0, 6, 5, 100_000, 100_000, 10_000], [strike, 1, 6, 5, 100_000, 100_000, 10_000]];
+    const bad = { s: 'BAD', sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: [...rows(104), ...rows(105)] };
+    const good = { s: 'GOOD', sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: [...rows(104), ...rows(105)] };
+    const market = { date: '2026-11-16', series: [bad, good] };
+    const priceCard = (card: { symbol: string }) => card.symbol === 'BAD'
+      ? { levelsBasis: 'no-edge', levelsRejected: 'test reject' }
+      : { levelsBasis: 'backtest+decay', backtest: { expectancyPremium: 1, samples: 10 } };
+    // One slot: the old cap handed it to BAD (then skipped) and starved GOOD.
+    const cards = earlyCards(market, '2026-11-16', NOW, [], { max: 1, priceCard });
+    expect(cards.map(card => card.symbol)).toEqual(['GOOD']);
+  });
+
   it('tags a card with the owner ORB playbook at build time', () => {
     const open = Date.parse('2026-11-16T09:15:00+05:30');
     const candles = [0, 1, 2, 3, 4].map(minute => ({
