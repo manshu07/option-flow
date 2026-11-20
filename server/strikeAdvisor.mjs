@@ -307,11 +307,14 @@ function acceptCheck(card, minExpectancy) {
  * long unwinding on a fall both ride here; only a mild fresh build-up of 2–5%
  * waits for confirmation). Each candidate is priced and gated BEFORE it counts
  * toward the cap, so a permanently-rejectable name cannot starve real setups.
- * Cap: two early cards per pass, one per symbol/day.
+ * Momentum candidates additionally must not oppose the symbol's or the index's
+ * 15-minute futures slope (trendFor lookup) — counter-trend momentum was the
+ * 2026-11-19 SL cluster. Cap: two early cards per pass, one per symbol/day.
  */
-export function earlyCards(market, date, now, existing = [], { max = 2, minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0), priceCard } = {}) {
+export function earlyCards(market, date, now, existing = [], { max = 2, minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0), priceCard, trendFor, log = () => {} } = {}) {
   if (!market || typeof date !== 'string') return [];
   const price = priceCard ?? (card => adaptiveLevels(card, { now, moveStats: loadMoveStats(MOVE_STATS_DIR, card.symbol), levelGrid: loadLevelGrid(LEVEL_GRID_DIR, card.symbol) }));
+  const trendGateMin = Number(process.env.MOMENTUM_TREND_GATE_PCT) || 0.1;
   const seen = new Set((Array.isArray(existing) ? existing : []).map(card => observationKey(card)).filter(Boolean));
   const out = [];
   for (const mover of marketMovers(market)) {
@@ -321,12 +324,27 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
     const strong = oiPct >= 5;
     const momentum = oiPct < 2;
     if (!strong && !momentum) continue;
+    const bias = mover.changePct > 0 ? 'bullish' : 'bearish';
+    // Momentum entries die to the opening whipsaw when they run against the
+    // live trend — the 2026-11-19 SL cluster (4/12 counter-trend, 5 more
+    // index-against). A momentum card must not oppose the symbol's or the
+    // index's 15-minute futures slope; build-fast keeps its OI confirmation
+    // and skips this gate. Unknown trend (sparse candles) passes — data
+    // availability first.
+    if (momentum && trendFor) {
+      const against = tr => tr != null && (bias === 'bullish' ? tr <= -trendGateMin : tr >= trendGateMin);
+      const symTr = trendFor(mover.symbol, now);
+      const idxTr = trendFor('NIFTY', now);
+      if (against(symTr) || against(idxTr)) {
+        log(`advisor momentum trend-gate: ${mover.symbol} ${bias} sym ${symTr ?? '?'}% nifty ${idxTr ?? '?'}% — skipped`);
+        continue;
+      }
+    }
     const key = `${mover.symbol}|${date}`;
     if (seen.has(key)) continue;
     const series = (market.series ?? []).find(item => item?.s === mover.symbol);
     const chain = chooseChain(series, now);
     if (!chain) continue;
-    const bias = mover.changePct > 0 ? 'bullish' : 'bearish';
     const candidate = candidateStrikes(chain, bias)[0];
     if (!candidate || !(candidate.ltp > MIN_ENTRY_PREMIUM)) continue;
     const card = {
@@ -694,9 +712,27 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     for (const p of prepared) Object.assign(questions, advisorQuestions(p.symbol, p.bias, p.candidates));
     const answers = await ask(state, questions);
     const decisions = advisorDecisions(prepared, answers);
-    // Code-computed early grabs ride alongside the model's cards.
+    // Code-computed early grabs ride alongside the model's cards. The momentum
+    // trend gate reads the session futures snapshot: the 15-minute futures
+    // slope at `now` for the symbol and for NIFTY.
     const existingForDedupe = loadObservations(obsPath);
-    const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...decisions.cards]);
+    const trendFor = readFuturesSnapshot ? (symbol, at) => {
+      try {
+        const snap = readFuturesSnapshot(symbol, sessionDate);
+        // Only trust a snapshot that is really this symbol's this-session data —
+        // corrupt/cross-symbol/future-dated snapshots return null (gate passes).
+        if (snap?.symbol !== symbol || snap?.session !== sessionDate) return null;
+        const candles = snap?.months?.[0]?.candles;
+        if (!Array.isArray(candles)) return null;
+        const end = candles.filter(c => Number.isFinite(c?.at) && c.at <= at).at(-1);
+        const start = candles.filter(c => Number.isFinite(c?.at) && c.at <= at - 15 * 60_000).at(-1);
+        if (!Number.isFinite(end?.close) || !Number.isFinite(start?.close) || !start.close) return null;
+        return +(((end.close - start.close) / start.close) * 100).toFixed(2);
+      } catch {
+        return null;
+      }
+    } : null;
+    const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...decisions.cards], { trendFor, log });
     if (early.length) log(`advisor early signals: ${early.map(card => `${card.symbol} ${card.strike}${card.side} (${card.early})`).join(', ')}`);
     const cards = await enrichWithFuturesAtr([...decisions.cards, ...early], { readFuturesSnapshot, sessionDate, now, log });
     // A card whose measured premium expectancy is negative is not an

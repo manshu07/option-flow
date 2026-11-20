@@ -184,6 +184,36 @@ describe('candidateStrikes', () => {
     expect(cards.map(card => card.symbol)).toEqual(['GOOD']);
   });
 
+  it('drops momentum cards that run against the live futures trend', () => {
+    const rows = (strike: number) => [[strike, 0, 6, 5, 100_000, 100_000, 10_000], [strike, 1, 6, 5, 100_000, 100_000, 10_000]];
+    const mk = (symbol: string, sp: number, pc: number) => ({ s: symbol, sp, pc, atm: sp, e: '2026-11-19', r: [...rows(sp), ...rows(sp + 1)] });
+    const market = { date: '2026-11-16', series: [mk('AGAINST', 100, 98), mk('ALIGNED', 104, 100), mk('FLATSYM', 104, 100), mk('NIFTY', 25000, 25000)] };
+    const trendFor = (symbol: string) => symbol === 'AGAINST' ? -0.5 : symbol === 'NIFTY' ? 0.4 : symbol === 'FLATSYM' ? 0.05 : 0.4;
+    const cards = earlyCards(market, '2026-11-16', NOW, [], { max: 5, trendFor });
+    expect(cards.map(card => card.symbol).sort()).toEqual(['ALIGNED', 'FLATSYM']);
+  });
+
+  it('drops momentum cards when the index trend runs against the bias', () => {
+    const rows = (strike: number) => [[strike, 0, 6, 5, 100_000, 100_000, 10_000], [strike, 1, 6, 5, 100_000, 100_000, 10_000]];
+    const mk = (symbol: string, sp: number, pc: number) => ({ s: symbol, sp, pc, atm: sp, e: '2026-11-19', r: [...rows(sp), ...rows(sp + 1)] });
+    const market = { date: '2026-11-16', series: [mk('BULLA', 104, 100), mk('NIFTY', 25000, 25000)] };
+    const idxAgainst = (symbol: string) => symbol === 'NIFTY' ? -0.5 : 0.6;
+    expect(earlyCards(market, '2026-11-16', NOW, [], { max: 5, trendFor: idxAgainst })).toHaveLength(0);
+    // Index aligned again → the same card returns.
+    const idxAligned = (symbol: string) => symbol === 'NIFTY' ? 0.3 : 0.6;
+    expect(earlyCards(market, '2026-11-16', NOW, [], { max: 5, trendFor: idxAligned }).map(card => card.symbol)).toEqual(['BULLA']);
+  });
+
+  it('keeps build-fast cards even when the trend gate would object', () => {
+    // OI +20% → build-fast path; trend against — the OI confirmation wins.
+    const rows = (strike: number) => [[strike, 0, 6, 5, 120_000, 100_000, 10_000], [strike, 1, 6, 5, 120_000, 100_000, 10_000]];
+    const mk = (symbol: string, sp: number, pc: number) => ({ s: symbol, sp, pc, atm: sp, e: '2026-11-19', r: [...rows(sp), ...rows(sp + 1)] });
+    const market = { date: '2026-11-16', series: [mk('STRONG', 104, 100), mk('NIFTY', 25000, 25000)] };
+    const cards = earlyCards(market, '2026-11-16', NOW, [], { max: 5, trendFor: () => -0.5 });
+    expect(cards.map(card => card.symbol)).toEqual(['STRONG']);
+    expect(cards[0].early).toBe('build-fast');
+  });
+
   it('tags a card with the owner ORB playbook at build time', () => {
     const open = Date.parse('2026-11-16T09:15:00+05:30');
     const candles = [0, 1, 2, 3, 4].map(minute => ({
