@@ -1513,6 +1513,12 @@ export function createDhanProvider(universe) {
           const leg = `${seg}:${id}`;
           if (pinnedLegs.get(key) === leg) continue;
           pinnedLegs.set(key, leg);
+          // Subscribe immediately — waiting for a drift-triggered rebalance
+          // could leave the leg unticked for minutes. Also record the strike
+          // in the window so the next drift pass cannot drop it.
+          subscribe([leg], 'options');
+          const win = expiry === held.optionStrikes.expiry ? held.optionStrikes : held.nextWindow;
+          if (win?.window && !win.window.includes(option.strike)) win.window.push(option.strike);
           added += 1;
         } catch { /* one bad entry never blocks the rest */ }
       }
