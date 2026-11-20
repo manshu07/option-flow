@@ -141,6 +141,11 @@ export function createDhanProvider(universe) {
   const lastChain = new Map();
   /** Full responses already fetched by the paced seed/fallback path, by symbol. */
   const fullChains = new Map();
+  /** Card/SSE-pinned option legs: key "symbol|expiry|strike|side" → "SEG:id".
+   *  Rebalance keeps these subscribed even when the strike falls outside the
+   *  ±15 window, so observation-card live prices keep ticking. Capped FIFO. */
+  const pinnedLegs = new Map();
+  const PINNED_LEG_CAP = 64;
   /** symbol+session → underlying's previous close, when neither the feed nor quotes had it. */
   const prevCloseCache = new Map();
   /** symbol:expiry → Dhan rejected the expiry outright (Invalid Expiry Date).
@@ -992,6 +997,14 @@ export function createDhanProvider(universe) {
       if (Math.abs(spot - held.optionStrikes.center) / spot < 0.004) continue;
       const listed = [...held.optionStrikes.ids.keys()].sort((a, b) => a - b);
       const fresh = nearestStrikes(listed, spot, STRIKES_EACH_SIDE);
+      // Pinned card legs survive the window drift — the live-card SSE asks for
+      // them and their ticks must not die when spot moves away.
+      for (const key of pinnedLegs.keys()) {
+        const [pSym, pExpiry, pStrike] = key.split('|');
+        if (pSym !== held.symbol || pExpiry !== held.optionStrikes.expiry) continue;
+        const strikeNum = Number(pStrike);
+        if (listed.includes(strikeNum) && !fresh.includes(strikeNum)) fresh.push(strikeNum);
+      }
       const oldSet = new Set(held.optionStrikes.window);
       const newSet = new Set(fresh);
       for (const strike of oldSet) {
@@ -1014,6 +1027,12 @@ export function createDhanProvider(universe) {
         if (nSpot && held.nextWindow.center && Math.abs(nSpot - held.nextWindow.center) / nSpot >= 0.004) {
           const listedNext = [...held.nextWindow.ids.keys()].sort((a, b) => a - b);
           const freshNext = nearestStrikes(listedNext, nSpot, held.nextWindow.eachSide ?? NEXT_EXPIRY_STRIKES_EACH_SIDE);
+          for (const key of pinnedLegs.keys()) {
+            const [pSym, pExpiry, pStrike] = key.split('|');
+            if (pSym !== held.symbol || pExpiry !== held.nextWindow.expiry) continue;
+            const strikeNum = Number(pStrike);
+            if (listedNext.includes(strikeNum) && !freshNext.includes(strikeNum)) freshNext.push(strikeNum);
+          }
           const oldNext = new Set(held.nextWindow.window);
           const newNext = new Set(freshNext);
           const nextLegSeg = SEG_BYTE[held.exchSeg] ?? SEG_BYTE.NSE_FNO;
@@ -1474,6 +1493,34 @@ export function createDhanProvider(universe) {
         if (Number.isFinite(reading?.ltp) && reading.ltp > 0) out.options[`${option.symbol}|${option.strike}|${option.side}|${expiry}`] = { ltp: reading.ltp, at: reading.t ?? null };
       }
       return out;
+    },
+
+    // The board's live-card SSE asks for specific contracts; remember them so
+    // rebalance keeps their subscriptions alive even when the strike falls
+    // outside the ±15 window. Idempotent; capped FIFO (oldest pin drops first).
+    trackOptions(options) {
+      let added = 0;
+      for (const option of Array.isArray(options) ? options : []) {
+        try {
+          const held = map.get(option?.symbol);
+          if (!held) continue;
+          const expiry = held.expiries.includes(option.expiry) ? option.expiry : held.expiries[0];
+          if (!expiry) continue;
+          const id = held.strikeMap.get(expiry)?.get(option.strike)?.[option.side];
+          const seg = SEG_BYTE[held.exchSeg] ?? SEG_BYTE.NSE_FNO;
+          if (!id) continue;
+          const key = `${option.symbol}|${expiry}|${option.strike}|${option.side}`;
+          const leg = `${seg}:${id}`;
+          if (pinnedLegs.get(key) === leg) continue;
+          pinnedLegs.set(key, leg);
+          added += 1;
+        } catch { /* one bad entry never blocks the rest */ }
+      }
+      while (pinnedLegs.size > PINNED_LEG_CAP) {
+        const oldest = pinnedLegs.keys().next().value;
+        pinnedLegs.delete(oldest);
+      }
+      return added;
     },
 
     // Read-only feed health for /api/health: the sockets that should be open,

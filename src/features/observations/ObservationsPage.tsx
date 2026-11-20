@@ -464,9 +464,12 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
     () => [...new Set([...INDEX_SYMBOLS, ...(cards ?? []).map(card => card.symbol)])],
     [cards],
   );
+  // Only TODAY's cards get option-tick streams: a historical card has no
+  // "live price", and asking for the whole store would blow past the server's
+  // 16-contract stream cap and starve the live cards.
   const trackedOptions = useMemo(
-    () => (cards ?? []).filter(card => card.expiry).map(card => `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`),
-    [cards],
+    () => (cards ?? []).filter(card => card.expiry && card.date === todayDate).map(card => `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`),
+    [cards, todayDate],
   );
   const { spots, futuresTicks, optionTicks, asOf, failed: spotFailed } = useMarketSnapshot(trackedSymbols, trackedOptions);
   useEffect(() => {

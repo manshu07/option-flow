@@ -1113,10 +1113,13 @@ async function handle(req, res) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     const push = () => {
       try {
+        // Pin the requested contracts so the feed keeps ticking them even when
+        // the ±15 rebalance window drifts away from a card's strike.
+        provider.trackOptions?.(streamOptions);
         const ticks = provider.ticksFor?.({ symbols: streamSymbols, options: streamOptions }) ?? { futures: {}, options: {} };
         res.write(`data: ${JSON.stringify({ t: now(), spots: provider.spots?.() ?? {}, futures: ticks.futures, optionTicks: ticks.options })}\n\n`);
       }
-      catch { clearInterval(timer); }
+      catch (error) { console.warn('dhan: stream/spots tick push failed:', String(error?.message || error)); }
     };
     push();
     const timer = setInterval(push, 3000);
