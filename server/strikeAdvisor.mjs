@@ -308,13 +308,20 @@ function acceptCheck(card, minExpectancy) {
  * waits for confirmation). Each candidate is priced and gated BEFORE it counts
  * toward the cap, so a permanently-rejectable name cannot starve real setups.
  * Momentum candidates additionally must not oppose the symbol's or the index's
- * 15-minute futures slope (trendFor lookup) — counter-trend momentum was the
- * 2026-11-19 SL cluster. Cap: two early cards per pass, one per symbol/day.
+ * 15-minute futures slope (trendFor lookup), must wait out the opening chop,
+ * and need the option premium itself confirming the move (not flat, not a
+ * late chase) — counter-trend/premature/late momentum was the 2026-11-19 SL
+ * cluster. Cap: two early cards per pass, one per symbol/day.
  */
 export function earlyCards(market, date, now, existing = [], { max = 2, minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0), priceCard, trendFor, log = () => {} } = {}) {
   if (!market || typeof date !== 'string') return [];
   const price = priceCard ?? (card => adaptiveLevels(card, { now, moveStats: loadMoveStats(MOVE_STATS_DIR, card.symbol), levelGrid: loadLevelGrid(LEVEL_GRID_DIR, card.symbol) }));
   const trendGateMin = Number(process.env.MOMENTUM_TREND_GATE_PCT) || 0.1;
+  // Opening chop: the first minutes after 09:15 produced the 09:40-10:34 SL
+  // cluster — momentum waits MOMENTUM_SKIP_OPEN_MIN minutes (default 15).
+  const skipOpenMin = Number(process.env.MOMENTUM_SKIP_OPEN_MIN) || 15;
+  const openTotal = 9 * 60 + 15 + skipOpenMin;
+  const openCutoff = `${String(Math.floor(openTotal / 60)).padStart(2, '0')}:${String(openTotal % 60).padStart(2, '0')}`;
   const seen = new Set((Array.isArray(existing) ? existing : []).map(card => observationKey(card)).filter(Boolean));
   const out = [];
   for (const mover of marketMovers(market)) {
@@ -347,6 +354,23 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
     if (!chain) continue;
     const candidate = candidateStrikes(chain, bias)[0];
     if (!candidate || !(candidate.ltp > MIN_ENTRY_PREMIUM)) continue;
+    // Momentum needs the premium itself to confirm: a premium that barely
+    // moved while the spot ran is a divergence, and one that already ran
+    // >25% is a late chase. Plus the opening-chop window above. build-fast
+    // (OI-confirmed) stays exempt from all three.
+    if (momentum) {
+      const pchg = candidate.premiumChangePct;
+      const premiumMin = Number(process.env.MOMENTUM_PREMIUM_MIN_PCT) || 5;
+      const premiumMax = Number(process.env.MOMENTUM_PREMIUM_MAX_PCT) || 25;
+      if (hhmmIst(now) < openCutoff) {
+        log(`advisor momentum open-chop gate: ${mover.symbol} at ${hhmmIst(now)} < ${openCutoff} IST — skipped`);
+        continue;
+      }
+      if (pchg != null && (pchg < premiumMin || pchg > premiumMax)) {
+        log(`advisor momentum premium-gate: ${mover.symbol} premium ${pchg.toFixed(1)}% (need ${premiumMin}..${premiumMax}%) — skipped`);
+        continue;
+      }
+    }
     const card = {
       id: key,
       at: now,

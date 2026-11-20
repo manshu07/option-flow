@@ -214,6 +214,25 @@ describe('candidateStrikes', () => {
     expect(cards[0].early).toBe('build-fast');
   });
 
+  it('momentum premium must confirm the move — flat and late-chase premiums are skipped', () => {
+    const row = (strike: number, ltp: number, prev: number) => [[strike, 0, ltp, prev, 100_000, 100_000, 10_000], [strike, 1, ltp, prev, 100_000, 100_000, 10_000]];
+    const mk = (symbol: string, ltp: number, prev: number) => ({ s: symbol, sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: [...row(104, ltp, prev), ...row(105, ltp, prev)] });
+    const market = { date: '2026-11-16', series: [mk('FLATPREM', 5.1, 5), mk('GOODPREM', 6, 5), mk('LATEPREM', 7, 5), { s: 'NIFTY', sp: 25000, pc: 25000, atm: 25000, e: '2026-11-19', r: [...row(25000, 6, 5), ...row(25001, 6, 5)] }] };
+    // FLATPREM +2% (divergence); GOODPREM +20% (confirms); LATEPREM +40% (late chase).
+    const cards = earlyCards(market, '2026-11-16', NOW, [], { max: 5 });
+    expect(cards.map(card => card.symbol)).toEqual(['GOODPREM']);
+  });
+
+  it('momentum waits out the opening chop; build-fast does not', () => {
+    const mom = (symbol: string) => ({ s: symbol, sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: [[104, 0, 6, 5, 100_000, 100_000, 10_000], [104, 1, 6, 5, 100_000, 100_000, 10_000], [105, 0, 6, 5, 100_000, 100_000, 10_000], [105, 1, 6, 5, 100_000, 100_000, 10_000]] });
+    const strongRows = [[104, 0, 6, 5, 120_000, 100_000, 10_000], [104, 1, 6, 5, 120_000, 100_000, 10_000], [105, 0, 6, 5, 120_000, 100_000, 10_000], [105, 1, 6, 5, 120_000, 100_000, 10_000]];
+    const market = { date: '2026-11-16', series: [{ s: 'MOM', sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: mom('MOM').r }, { s: 'STRONG', sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: strongRows }, { s: 'NIFTY', sp: 25000, pc: 25000, atm: 25000, e: '2026-11-19', r: mom('NIFTY').r }] };
+    const now0920 = Date.parse('2026-11-16T03:50:00Z'); // 09:20 IST — inside the chop
+    expect(earlyCards(market, '2026-11-16', now0920, [], { max: 5 }).map(card => card.symbol)).toEqual(['STRONG']);
+    const now0935 = Date.parse('2026-11-16T04:05:00Z'); // 09:35 IST — chop over
+    expect(earlyCards(market, '2026-11-16', now0935, [], { max: 5 }).map(card => card.symbol).sort()).toEqual(['MOM', 'STRONG']);
+  });
+
   it('tags a card with the owner ORB playbook at build time', () => {
     const open = Date.parse('2026-11-16T09:15:00+05:30');
     const candles = [0, 1, 2, 3, 4].map(minute => ({
