@@ -11,7 +11,7 @@ import { openingRange, sessionVwap } from './orbModel.mjs';
 import { greeks, optionIv, premiumAtLevel, spotForPremium, levelFor, yearsToExpiry } from './optionMath.mjs';
 import { loadMoveStats, moveFor, reachRate } from './moveStats.mjs';
 import { loadLevelGrid, cellFor, pickPairForStrike } from './levelPolicy.mjs';
-import { liveRegime } from './moveRegime.mjs';
+import { liveRegime, REGIME_LOOKBACK } from './moveRegime.mjs';
 import { scoreStrikes } from './strikeChoice.mjs';
 
 const MOVE_STATS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data', 'move-stats');
@@ -311,15 +311,18 @@ function acceptCheck(card, minExpectancy) {
  * waits for confirmation). Each candidate is priced and gated BEFORE it counts
  * toward the cap, so a permanently-rejectable name cannot starve real setups.
  * Momentum candidates additionally must not oppose the symbol's or the index's
- * 15-minute futures slope (trendFor lookup), must wait out the opening chop,
- * and need the option premium itself confirming the move (not flat, not a
- * late chase) — counter-trend/premature/late momentum was the 2026-11-19 SL
- * cluster. Cap: two early cards per pass, one per symbol/day.
+ * 15-minute futures slope, must not fight a sharp PCR shift, and must wait out
+ * the opening chop and get option-premium confirmation. The shared range gate
+ * applies to both momentum and build-fast cards. All filters run before a card
+ * takes one of the two per-pass slots.
  */
-export function earlyCards(market, date, now, existing = [], { max = 2, minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0), priceCard, trendFor, log = () => {} } = {}) {
+export function earlyCards(market, date, now, existing = [], { max = 2, minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0), priceCard, trendFor, pcrShiftFor = null, regimeFor = null, log = () => {} } = {}) {
   if (!market || typeof date !== 'string') return [];
   const price = priceCard ?? (card => adaptiveLevels(card, { now, moveStats: loadMoveStats(MOVE_STATS_DIR, card.symbol), levelGrid: loadLevelGrid(LEVEL_GRID_DIR, card.symbol) }));
   const trendGateMin = Number(process.env.MOMENTUM_TREND_GATE_PCT) || 0.1;
+  const configuredPcrGate = Number(process.env.MOMENTUM_PCR_GATE_PCT ?? 3);
+  const pcrGateMin = Number.isFinite(configuredPcrGate) && configuredPcrGate > 0 ? configuredPcrGate : 3;
+  const rangeGateEnabled = process.env.ADVISOR_RANGE_GATE !== '0';
   // Opening chop: the first minutes after 09:15 produced the 09:40-10:34 SL
   // cluster — momentum waits MOMENTUM_SKIP_OPEN_MIN minutes (default 15).
   const skipOpenMin = Number(process.env.MOMENTUM_SKIP_OPEN_MIN) || 15;
@@ -347,6 +350,24 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
       const idxTr = trendFor('NIFTY', now);
       if (against(symTr) || against(idxTr)) {
         log(`advisor momentum trend-gate: ${mover.symbol} ${bias} sym ${symTr ?? '?'}% nifty ${idxTr ?? '?'}% — skipped`);
+        continue;
+      }
+    }
+    if (momentum && typeof pcrShiftFor === 'function') {
+      let pcrDelta = null;
+      try { pcrDelta = pcrShiftFor(mover.symbol, now); } catch { /* missing history passes */ }
+      const against = Number.isFinite(pcrDelta) && (bias === 'bullish' ? pcrDelta >= pcrGateMin : pcrDelta <= -pcrGateMin);
+      if (against) {
+        const value = `${pcrDelta >= 0 ? '+' : ''}${pcrDelta.toFixed(1)}%`;
+        log(`advisor momentum pcr-gate: ${mover.symbol} ${bias} pcrDelta ${value} — skipped`);
+        continue;
+      }
+    }
+    if (rangeGateEnabled && typeof regimeFor === 'function') {
+      let regime = null;
+      try { regime = regimeFor(mover.symbol, now); } catch { /* unknown regime passes */ }
+      if (regime === 'range') {
+        log(`advisor regime gate: ${mover.symbol} ${bias} regime=range — skipped`);
         continue;
       }
     }
@@ -705,7 +726,7 @@ async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, n
  * One advisor pass over the triage's watch list. Never throws; every failure
  * is logged and the observations file keeps its previous content.
  */
-export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null, readFuturesSnapshot = () => null, subscriberChatIds = [], sendSubscriber = (text, chatId) => sendTelegram(text, { chatId, parseMode: 'HTML', retry: true }), sendUpgrade = text => sendTelegram(text, { parseMode: 'HTML', retry: true }) } = {}) {
+export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null, readFuturesSnapshot = () => null, pcrShiftFor = null, subscriberChatIds = [], sendSubscriber = (text, chatId) => sendTelegram(text, { chatId, parseMode: 'HTML', retry: true }), sendUpgrade = text => sendTelegram(text, { parseMode: 'HTML', retry: true }) } = {}) {
   const sessionDate = typeof market?.date === 'string' ? market.date : null;
   if (!configured()) return { skipped: 'not configured' };
   if (!inFireWindow(now)) return { skipped: 'outside fire window' };
@@ -755,9 +776,8 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     for (const p of prepared) Object.assign(questions, advisorQuestions(p.symbol, p.bias, p.candidates));
     const answers = await ask(state, questions);
     const decisions = advisorDecisions(prepared, answers);
-    // Code-computed early grabs ride alongside the model's cards. The momentum
-    // trend gate reads the session futures snapshot: the 15-minute futures
-    // slope at `now` for the symbol and for NIFTY.
+    // Code-computed early grabs ride alongside the model's cards. They reuse
+    // the same session PCR history, futures slope and live regime as pricing.
     const existingForDedupe = loadObservations(obsPath);
     const trendFor = readFuturesSnapshot ? (symbol, at) => {
       try {
@@ -775,7 +795,27 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
         return null;
       }
     } : null;
-    const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...decisions.cards], { trendFor, log });
+    const regimeFor = (symbol, at) => {
+      const series = seriesFor(symbol);
+      const moveStats = loadMoveStats(MOVE_STATS_DIR, symbol);
+      const closes = (Array.isArray(moveStats?.recentCloses) ? moveStats.recentCloses : [])
+        .map(item => Number(item?.close ?? item))
+        .filter(value => Number.isFinite(value) && value > 0);
+      const livePrice = Number.isFinite(series?.sp) && series.sp > 0 ? series.sp : null;
+      const closesUsed = closes.length + (livePrice == null ? 0 : 1);
+      if (closesUsed < REGIME_LOOKBACK) {
+        log(`advisor regime history: ${symbol} ${closesUsed}/${REGIME_LOOKBACK} closes — classified as range (thin history)`);
+      }
+      // Match adaptiveLevels exactly: use its liveRegime classifier and this
+      // market build's spot, without changing historical regime semantics.
+      return liveRegime(moveStats?.recentCloses, livePrice);
+    };
+    const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...decisions.cards], {
+      trendFor,
+      pcrShiftFor,
+      regimeFor,
+      log,
+    });
     if (early.length) log(`advisor early signals: ${early.map(card => `${card.symbol} ${card.strike}${card.side} (${card.early})`).join(', ')}`);
     // RE-ENTRY (owner rule): an SL-hit card whose contract recovers back to
     // the original entry gets ONE fresh best-strike card tagged RE-ENTRY.

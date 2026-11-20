@@ -231,6 +231,89 @@ describe('candidateStrikes', () => {
     expect(cards[0].early).toBe('build-fast');
   });
 
+  it('momentum PCR gate rejects opposing PCR shifts, passes unknown/aligned shifts, and exempts build-fast', () => {
+    vi.stubEnv('MOMENTUM_PCR_GATE_PCT', '3');
+    const rows = (strike: number, oi = 100_000, prevOi = 100_000) => [
+      [strike, 0, 6, 5, oi, prevOi, 10_000],
+      [strike, 1, 6, 5, oi, prevOi, 10_000],
+    ];
+    const mk = (symbol: string, spot: number, pc: number, oi = 100_000, prevOi = 100_000) => ({
+      s: symbol, sp: spot, pc, atm: spot, e: '2026-11-19', r: [...rows(spot, oi, prevOi), ...rows(spot + (spot > pc ? 1 : -1), oi, prevOi)],
+    });
+    const market = { date: '2026-11-16', series: [
+      mk('BULL_RISING', 104, 100),
+      mk('BEAR_FALLING', 96, 100),
+      mk('PCR_UNKNOWN', 104, 100),
+      mk('PCR_ALIGNED', 104, 100),
+      mk('PCR_BUILD_FAST', 104, 100, 120_000, 100_000),
+    ] };
+    const shifts: Record<string, number | null> = {
+      BULL_RISING: 3,
+      BEAR_FALLING: -3,
+      PCR_UNKNOWN: null,
+      PCR_ALIGNED: 2.99,
+      PCR_BUILD_FAST: 8,
+    };
+    const logs: string[] = [];
+    const cards = earlyCards(market, '2026-11-16', NOW, [], {
+      max: 5,
+      pcrShiftFor: symbol => shifts[symbol] ?? null,
+      priceCard: () => ({ levelsBasis: 'backtest+decay', backtest: { expectancyPremium: 1, samples: 10 } }),
+      log: message => logs.push(message),
+    });
+
+    expect(cards.map(card => card.symbol).sort()).toEqual(['PCR_ALIGNED', 'PCR_BUILD_FAST', 'PCR_UNKNOWN']);
+    expect(cards.find(card => card.symbol === 'PCR_BUILD_FAST')?.early).toBe('build-fast');
+    expect(logs).toContain('advisor momentum pcr-gate: BULL_RISING bullish pcrDelta +3.0% — skipped');
+    expect(logs).toContain('advisor momentum pcr-gate: BEAR_FALLING bearish pcrDelta -3.0% — skipped');
+    expect(logs).toHaveLength(2);
+
+    const oneSlot = earlyCards(market, '2026-11-16', NOW, [], {
+      max: 1,
+      pcrShiftFor: symbol => shifts[symbol] ?? null,
+      priceCard: () => ({ levelsBasis: 'backtest+decay', backtest: { expectancyPremium: 1, samples: 10 } }),
+    });
+    expect(oneSlot.map(card => card.symbol)).toEqual(['PCR_UNKNOWN']);
+  });
+
+  it('range-gates momentum and build-fast, keeps trend/unknown regimes, and can be disabled', () => {
+    vi.stubEnv('ADVISOR_RANGE_GATE', '1');
+    const rows = (strike: number, oi = 100_000, prevOi = 100_000) => [
+      [strike, 0, 6, 5, oi, prevOi, 10_000],
+      [strike, 1, 6, 5, oi, prevOi, 10_000],
+    ];
+    const mk = (symbol: string, spot: number, pc: number, oi = 100_000, prevOi = 100_000) => ({
+      s: symbol, sp: spot, pc, atm: spot, e: '2026-11-19', r: [...rows(spot, oi, prevOi), ...rows(spot + (spot > pc ? 1 : -1), oi, prevOi)],
+    });
+    const market = { date: '2026-11-16', series: [
+      mk('RANGE_MOM', 104, 100),
+      mk('RANGE_BUILD_FAST', 104, 100, 120_000, 100_000),
+      mk('TREND_UP', 104, 100),
+      mk('REGIME_UNKNOWN', 104, 100),
+    ] };
+    const regimes: Record<string, string | null> = {
+      RANGE_MOM: 'range',
+      RANGE_BUILD_FAST: 'range',
+      TREND_UP: 'up',
+      REGIME_UNKNOWN: null,
+    };
+    const logs: string[] = [];
+    const options = {
+      max: 5,
+      regimeFor: (symbol: string) => regimes[symbol],
+      priceCard: () => ({ levelsBasis: 'backtest+decay', backtest: { expectancyPremium: 1, samples: 10 } }),
+      log: (message: string) => logs.push(message),
+    };
+    const cards = earlyCards(market, '2026-11-16', NOW, [], options);
+    expect(cards.map(card => card.symbol).sort()).toEqual(['REGIME_UNKNOWN', 'TREND_UP']);
+    expect(logs).toContain('advisor regime gate: RANGE_MOM bullish regime=range — skipped');
+    expect(logs).toContain('advisor regime gate: RANGE_BUILD_FAST bullish regime=range — skipped');
+
+    vi.stubEnv('ADVISOR_RANGE_GATE', '0');
+    const disabled = earlyCards(market, '2026-11-16', NOW, [], options);
+    expect(disabled.map(card => card.symbol).sort()).toEqual(['RANGE_BUILD_FAST', 'RANGE_MOM', 'REGIME_UNKNOWN', 'TREND_UP']);
+  });
+
   it('momentum premium must confirm the move — flat and late-chase premiums are skipped', () => {
     const row = (strike: number, ltp: number, prev: number) => [[strike, 0, ltp, prev, 100_000, 100_000, 10_000], [strike, 1, ltp, prev, 100_000, 100_000, 10_000]];
     const mk = (symbol: string, ltp: number, prev: number) => ({ s: symbol, sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: [...row(104, ltp, prev), ...row(105, ltp, prev)] });
