@@ -1,0 +1,6003 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-20T06:23:23.113Z",
+  "dates": {
+    "from": "2026-11-18",
+    "to": "2026-11-20"
+  },
+  "configuration": {
+    "minRewardRisk": 2,
+    "tgt2MinRewardRisk": 3,
+    "closeOnly": true,
+    "fixedStop": true
+  },
+  "methodology": {
+    "targetBaseline": "existing stored TGT1 premium (card.tgt1), re-played with the same card expiry, fixed SL, and captured LTP close timeline",
+    "wallTarget": "selectWallTarget shared policy, p85 favorable-move cap; selected premium snapped to ₹0.05 before replay",
+    "noTrade": "No wall target is counted separately; projected no-trade applies the S2 fallback rule and counts only when the existing fallback TGT1 also fails min R:R.",
+    "netR": "target reward / (entry - unchanged SL); SL = -1R; a fully covered open trade is marked to its last captured close",
+    "holdWindow": "card.at through holdTill inclusive; an event resolves its outcome, otherwise every expected business session must have full-session capture",
+    "fullSessionDefinition": "first observed capture at or before 09:30 IST and last at or after 15:30 IST",
+    "archives": "gzip minutes streamed one snapshot at a time; only matching card-contract closes are retained",
+    "contractRows": "journal.mjs rowFor rule copied verbatim: matching series.next.e selects next.r, otherwise series.r",
+    "censored": "partial session or missing hold-window date never enters the headline; report separately as provisional/censored",
+    "reachPercentile": "interpolated percentile implied by existing entry-time moveStats reachRate for each candidate spot level"
+  },
+  "sessionCoverage": {
+    "2026-11-18": {
+      "source": "raw",
+      "snapshots": 378,
+      "firstMinute": 556,
+      "lastMinute": 940,
+      "fullSession": true
+    },
+    "2026-11-19": {
+      "source": "archive",
+      "snapshots": 254,
+      "firstMinute": 580,
+      "lastMinute": 940,
+      "fullSession": false
+    },
+    "2026-11-20": {
+      "source": "raw",
+      "snapshots": 136,
+      "firstMinute": 558,
+      "lastMinute": 712,
+      "fullSession": false
+    }
+  },
+  "bucketCounts": {
+    "early-momentum": 66,
+    "early-build-fast": 21,
+    "model >=65": 4,
+    "model <65": 0,
+    "unclassified": 1
+  },
+  "headline": {
+    "description": "Only cards from sessions whose captures span the full day, with paired resolved outcomes; censored multi-day windows and partial session files are excluded.",
+    "cards": [
+      {
+        "id": "MOTILALOFS|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "MOTILALOFS",
+        "contract": "1200PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-18",
+        "windowComplete": true,
+        "missingDates": [],
+        "observedSamples": 111,
+        "percentileTarget": 82.31,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.222687316868983,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.44,
+        "candidates": [
+          {
+            "level": 1200,
+            "oi": 177475,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 87.98068082355974,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "open",
+          "r": -0.05650899958141488,
+          "eventAt": null,
+          "preTargetDip": -4.75,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "NATIONALUM|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "NATIONALUM",
+        "contract": "305PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20"
+        ],
+        "observedSamples": 455,
+        "percentileTarget": 14.22,
+        "wallTarget": 14.4,
+        "percentileRewardRisk": 2.8172043010752708,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 300,
+          "oi": 530625,
+          "kind": "support"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.693,
+        "candidates": [
+          {
+            "level": 300,
+            "oi": 530625,
+            "kind": "support",
+            "premium": 14.4,
+            "rewardRisk": 2.995171624004784,
+            "reachPercentile": 54.511216752923055,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 2.8172043010752708,
+          "eventAt": 1795146576132,
+          "minutesToHit": 2609.2394833333333,
+          "preTargetDip": -0.5499999999999989,
+          "gap": 1.4799999999999986,
+          "complete": true
+        },
+        "wall": {
+          "status": "tgt1",
+          "r": 3.0107526881720448,
+          "eventAt": 1795146576132,
+          "minutesToHit": 2609.2394833333333,
+          "preTargetDip": -0.5499999999999989,
+          "gap": 1.299999999999999,
+          "complete": true
+        }
+      },
+      {
+        "id": "SAIL|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "SAIL",
+        "contract": "165PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20"
+        ],
+        "observedSamples": 444,
+        "percentileTarget": 9,
+        "wallTarget": 9.6,
+        "percentileRewardRisk": 2.7592592592592595,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 160,
+          "oi": 244400,
+          "kind": "support"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.663,
+        "candidates": [
+          {
+            "level": 160,
+            "oi": 244400,
+            "kind": "support",
+            "premium": 9.6,
+            "rewardRisk": 3.8279670508079584,
+            "reachPercentile": 62.94894888599132,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 2.7592592592592595,
+          "eventAt": 1795146816917,
+          "minutesToHit": 2592.22245,
+          "preTargetDip": -0.27999999999999936,
+          "gap": 0.9399999999999995,
+          "complete": true
+        },
+        "wall": {
+          "status": "tgt1",
+          "r": 3.87037037037037,
+          "eventAt": 1795146816917,
+          "minutesToHit": 2592.22245,
+          "preTargetDip": -0.27999999999999936,
+          "gap": 0.33999999999999986,
+          "complete": true
+        }
+      },
+      {
+        "id": "SBIN|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "SBIN",
+        "contract": "1140CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 0,
+        "holdTill": "2026-11-18",
+        "windowComplete": true,
+        "missingDates": [],
+        "observedSamples": 80,
+        "percentileTarget": 50.14,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.221840659340659,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 0.679,
+        "candidates": [
+          {
+            "level": 1150,
+            "oi": 1457250,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 95,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "open",
+          "r": 0.013736263736263441,
+          "eventAt": null,
+          "preTargetDip": -1.7000000000000028,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "JINDALSTEL|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "JINDALSTEL",
+        "contract": "1100PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-18",
+        "windowComplete": true,
+        "missingDates": [],
+        "observedSamples": 69,
+        "percentileTarget": 43.79,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.222659323367427,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 0.746,
+        "candidates": [
+          {
+            "level": 1100,
+            "oi": 58125,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 90.1715891928176,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "open",
+          "r": 0.12981904012588502,
+          "eventAt": null,
+          "preTargetDip": -0.6499999999999986,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "IREDA|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "IREDA",
+        "contract": "120CE",
+        "expiry": "2026-11-23",
+        "bucket": "model >=65",
+        "holdDays": 2,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20"
+        ],
+        "observedSamples": 358,
+        "percentileTarget": 4.6,
+        "wallTarget": 5.4,
+        "percentileRewardRisk": 2.218390804597701,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 125,
+          "oi": 3343975,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 5.64,
+        "candidates": [
+          {
+            "level": 125,
+            "oi": 3343975,
+            "kind": "resistance",
+            "premium": 5.4,
+            "rewardRisk": 3.1538076389277307,
+            "reachPercentile": 71.0082904349758,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 2.218390804597701,
+          "eventAt": 1795061656389,
+          "minutesToHit": 1140.9052,
+          "preTargetDip": -0.43999999999999995,
+          "gap": 2.0500000000000007,
+          "complete": true
+        },
+        "wall": {
+          "status": "tgt1",
+          "r": 3.1379310344827593,
+          "eventAt": 1795061656389,
+          "minutesToHit": 1140.9052,
+          "preTargetDip": -0.43999999999999995,
+          "gap": 1.25,
+          "complete": true
+        }
+      },
+      {
+        "id": "HDFCAMC|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "HDFCAMC",
+        "contract": "2600PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 0,
+        "holdTill": "2026-11-18",
+        "windowComplete": true,
+        "missingDates": [],
+        "observedSamples": 58,
+        "percentileTarget": 102.15,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2225969645868464,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 0.749,
+        "candidates": [
+          {
+            "level": 2600,
+            "oi": 45300,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 95,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "open",
+          "r": 0.07082630691399643,
+          "eventAt": null,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "IEX|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "IEX",
+        "contract": "117CE",
+        "expiry": "2026-11-23",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-18",
+        "windowComplete": true,
+        "missingDates": [],
+        "observedSamples": 58,
+        "percentileTarget": 2.22,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.5000000000000004,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 0.803,
+        "candidates": [
+          {
+            "level": 120,
+            "oi": 3136350,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 95,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1794994825008,
+          "minutesToHit": 27.04885,
+          "preTargetDip": -0.20999999999999996,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      }
+    ],
+    "pairedTrades": 3,
+    "noTrade": 5,
+    "noWallTarget": 5,
+    "missingWallData": 0,
+    "percentileHits": 3,
+    "wallHits": 3,
+    "percentileStops": 0,
+    "wallStops": 0,
+    "percentileHitRate": 1,
+    "wallHitRate": 1,
+    "percentileStopRate": 0,
+    "wallStopRate": 0,
+    "percentileNetR": 7.794854364932231,
+    "wallNetR": 10.019054093025174,
+    "netRDelta": 2.224199728092943,
+    "beatsGate": true,
+    "buckets": {
+      "early-momentum": {
+        "cards": 4,
+        "headlinePaired": 1,
+        "pairedTrades": 1,
+        "wallTargets": 1,
+        "noWallTarget": 3,
+        "noTrade": 3,
+        "missingWallData": 0,
+        "percentileHitRate": 1,
+        "wallHitRate": 1,
+        "percentileStopRate": 0,
+        "wallStopRate": 0,
+        "percentileNetR": 2.8172043010752708,
+        "wallNetR": 3.0107526881720448,
+        "netRDelta": 0.19354838709677402,
+        "beatsGate": true
+      },
+      "early-build-fast": {
+        "cards": 3,
+        "headlinePaired": 1,
+        "pairedTrades": 1,
+        "wallTargets": 1,
+        "noWallTarget": 2,
+        "noTrade": 2,
+        "missingWallData": 0,
+        "percentileHitRate": 1,
+        "wallHitRate": 1,
+        "percentileStopRate": 0,
+        "wallStopRate": 0,
+        "percentileNetR": 2.7592592592592595,
+        "wallNetR": 3.87037037037037,
+        "netRDelta": 1.1111111111111103,
+        "beatsGate": true
+      },
+      "model >=65": {
+        "cards": 1,
+        "headlinePaired": 1,
+        "pairedTrades": 1,
+        "wallTargets": 1,
+        "noWallTarget": 0,
+        "noTrade": 0,
+        "missingWallData": 0,
+        "percentileHitRate": 1,
+        "wallHitRate": 1,
+        "percentileStopRate": 0,
+        "wallStopRate": 0,
+        "percentileNetR": 2.218390804597701,
+        "wallNetR": 3.1379310344827593,
+        "netRDelta": 0.9195402298850581,
+        "beatsGate": true
+      },
+      "model <65": {
+        "cards": 0,
+        "headlinePaired": 0,
+        "pairedTrades": 0,
+        "wallTargets": 0,
+        "noWallTarget": 0,
+        "noTrade": 0,
+        "missingWallData": 0,
+        "percentileHitRate": null,
+        "wallHitRate": null,
+        "percentileStopRate": null,
+        "wallStopRate": null,
+        "percentileNetR": null,
+        "wallNetR": null,
+        "netRDelta": null,
+        "beatsGate": null
+      },
+      "unclassified": {
+        "cards": 0,
+        "headlinePaired": 0,
+        "pairedTrades": 0,
+        "wallTargets": 0,
+        "noWallTarget": 0,
+        "noTrade": 0,
+        "missingWallData": 0,
+        "percentileHitRate": null,
+        "wallHitRate": null,
+        "percentileStopRate": null,
+        "wallStopRate": null,
+        "percentileNetR": null,
+        "wallNetR": null,
+        "netRDelta": null,
+        "beatsGate": null
+      }
+    },
+    "byDate": {
+      "2026-11-18": {
+        "cards": 8,
+        "pairedTrades": 3,
+        "noTrade": 5,
+        "noWallTarget": 5,
+        "missingWallData": 0,
+        "percentileHits": 3,
+        "wallHits": 3,
+        "percentileStops": 0,
+        "wallStops": 0,
+        "percentileHitRate": 1,
+        "wallHitRate": 1,
+        "percentileStopRate": 0,
+        "wallStopRate": 0,
+        "percentileNetR": 7.794854364932231,
+        "wallNetR": 10.019054093025174,
+        "netRDelta": 2.224199728092943,
+        "beatsGate": true,
+        "buckets": {
+          "early-momentum": {
+            "cards": 4,
+            "headlinePaired": 1,
+            "pairedTrades": 1,
+            "wallTargets": 1,
+            "noWallTarget": 3,
+            "noTrade": 3,
+            "missingWallData": 0,
+            "percentileHitRate": 1,
+            "wallHitRate": 1,
+            "percentileStopRate": 0,
+            "wallStopRate": 0,
+            "percentileNetR": 2.8172043010752708,
+            "wallNetR": 3.0107526881720448,
+            "netRDelta": 0.19354838709677402,
+            "beatsGate": true
+          },
+          "early-build-fast": {
+            "cards": 3,
+            "headlinePaired": 1,
+            "pairedTrades": 1,
+            "wallTargets": 1,
+            "noWallTarget": 2,
+            "noTrade": 2,
+            "missingWallData": 0,
+            "percentileHitRate": 1,
+            "wallHitRate": 1,
+            "percentileStopRate": 0,
+            "wallStopRate": 0,
+            "percentileNetR": 2.7592592592592595,
+            "wallNetR": 3.87037037037037,
+            "netRDelta": 1.1111111111111103,
+            "beatsGate": true
+          },
+          "model >=65": {
+            "cards": 1,
+            "headlinePaired": 1,
+            "pairedTrades": 1,
+            "wallTargets": 1,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": 1,
+            "wallHitRate": 1,
+            "percentileStopRate": 0,
+            "wallStopRate": 0,
+            "percentileNetR": 2.218390804597701,
+            "wallNetR": 3.1379310344827593,
+            "netRDelta": 0.9195402298850581,
+            "beatsGate": true
+          },
+          "model <65": {
+            "cards": 0,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          },
+          "unclassified": {
+            "cards": 0,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          }
+        }
+      }
+    },
+    "beatsPercentileNetR": true,
+    "beatsGatePerBucket": {
+      "early-momentum": true,
+      "early-build-fast": true,
+      "model >=65": true,
+      "model <65": null,
+      "unclassified": null
+    },
+    "gateConclusion": "Measured net R and stop-rate gate shown per bucket; interpret alongside the small paired sample and censored-window counts."
+  },
+  "provisional": {
+    "description": "Cards on/after the partial-session end date (2026-11-20) and every censored hold window; these do not contribute to headline comparison.",
+    "cards": [
+      {
+        "id": "RVNL|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "RVNL",
+        "contract": "190PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20"
+        ],
+        "observedSamples": 416,
+        "percentileTarget": 12.1,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.124999999999995,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 5.032,
+        "candidates": [
+          {
+            "level": 180,
+            "oi": 506275,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 85.52678094891057,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795065609672,
+          "minutesToHit": 1249.7446166666666,
+          "preTargetDip": -0.4900000000000002,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "TITAN|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "TITAN",
+        "contract": "4700PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20"
+        ],
+        "observedSamples": 366,
+        "percentileTarget": 193.7,
+        "wallTarget": null,
+        "percentileRewardRisk": 5.664581704456603,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.778,
+        "candidates": [
+          {
+            "level": 4500,
+            "oi": 48650,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 94.32145620615704,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 5.664581704456603,
+          "eventAt": 1795146998452,
+          "minutesToHit": 2606.2242833333335,
+          "preTargetDip": 0,
+          "gap": 2.25,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "MOTHERSON|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "MOTHERSON",
+        "contract": "160PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20"
+        ],
+        "observedSamples": 379,
+        "percentileTarget": 10.06,
+        "wallTarget": null,
+        "percentileRewardRisk": 2,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.013,
+        "candidates": [
+          {
+            "level": 150,
+            "oi": 959400,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 87.59466064656993,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795061785603,
+          "minutesToHit": 1175.0338833333333,
+          "preTargetDip": -0.8900000000000006,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "VEDL|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "VEDL",
+        "contract": "245PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20"
+        ],
+        "observedSamples": 427,
+        "percentileTarget": 12.23,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.575342465753422,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.28,
+        "candidates": [
+          {
+            "level": 230,
+            "oi": 588800,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 95,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 4.575342465753422,
+          "eventAt": 1795146576132,
+          "minutesToHit": 2578.0865166666667,
+          "preTargetDip": 0,
+          "gap": 3.24,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "NAVINFLUOR|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "NAVINFLUOR",
+        "contract": "10000CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20"
+        ],
+        "observedSamples": 454,
+        "percentileTarget": 1010.34,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.6996649685621188,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "missing p85 favorable-move history"
+        },
+        "missingWallData": false,
+        "p85MovePct": null,
+        "candidates": [
+          {
+            "level": 10500,
+            "oi": 5025,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": null,
+            "rejected": "missing p85 favorable-move history"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795061408921,
+          "minutesToHit": 1147.7810666666667,
+          "preTargetDip": -41.75,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "TVSMOTOR|2026-11-18",
+        "date": "2026-11-18",
+        "symbol": "TVSMOTOR",
+        "contract": "4300PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20"
+        ],
+        "observedSamples": 201,
+        "percentileTarget": 152.6,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.236524537409493,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 3.316,
+        "candidates": [
+          {
+            "level": 4200,
+            "oi": 117425,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 87.99979197004367,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795061408921,
+          "minutesToHit": 1125.7818833333333,
+          "preTargetDip": -1.5499999999999972,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "PAYTM|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "PAYTM",
+        "contract": "1780PE",
+        "expiry": "2026-12-29",
+        "bucket": "model >=65",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 310,
+        "percentileTarget": 116.15,
+        "wallTarget": 127.9,
+        "percentileRewardRisk": 5.230496453900709,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 1700,
+          "oi": 375550,
+          "kind": "support"
+        },
+        "wallTgt2": null,
+        "ivSource": "stored card IV",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 5.16,
+        "candidates": [
+          {
+            "level": 1700,
+            "oi": 375550,
+            "kind": "support",
+            "premium": 127.9,
+            "rewardRisk": 7.311007611426149,
+            "reachPercentile": 76.00135317997284,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 5.230496453900709,
+          "eventAt": 1795066783282,
+          "minutesToHit": 89.57268333333333,
+          "preTargetDip": -5.550000000000011,
+          "gap": 12.25,
+          "complete": true
+        },
+        "wall": {
+          "status": "tgt1",
+          "r": 7.313829787234042,
+          "eventAt": 1795066783282,
+          "minutesToHit": 89.57268333333333,
+          "preTargetDip": -5.550000000000011,
+          "gap": 0.5,
+          "complete": true
+        }
+      },
+      {
+        "id": "UNITDSPR|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "UNITDSPR",
+        "contract": "1400PE",
+        "expiry": "2026-11-23",
+        "bucket": "model >=65",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 179,
+        "percentileTarget": 27.59,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2222222222222219,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "stored card IV",
+        "wallReject": {
+          "reason": "decay leaves no positive premium target"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.706,
+        "candidates": [
+          {
+            "level": 1400,
+            "oi": 259200,
+            "kind": "support",
+            "premium": 17.35,
+            "rewardRisk": null,
+            "reachPercentile": 21.35535307517048,
+            "rejected": "decay leaves no premium gain"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795064665815,
+          "minutesToHit": 54.28156666666667,
+          "preTargetDip": -7.5,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "ETERNAL|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "ETERNAL",
+        "contract": "360PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 229,
+        "percentileTarget": 17.55,
+        "wallTarget": 18.2,
+        "percentileRewardRisk": 4.345238095238097,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 350,
+          "oi": 761450,
+          "kind": "support"
+        },
+        "wallTgt2": null,
+        "ivSource": "stored card IV",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.598,
+        "candidates": [
+          {
+            "level": 350,
+            "oi": 761450,
+            "kind": "support",
+            "premium": 18.2,
+            "rewardRisk": 5.135354258220295,
+            "reachPercentile": 56.95859833228574,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795062443360,
+          "minutesToHit": 17.24065,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795062443360,
+          "minutesToHit": 17.24065,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "HCLTECH|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "HCLTECH",
+        "contract": "1320PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 107,
+        "percentileTarget": 66.65,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2222222222222223,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "stored card IV",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.633,
+        "candidates": [
+          {
+            "level": 1300,
+            "oi": 140000,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 86.63681853912549,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -5.700000000000003,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BANKBARODA|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BANKBARODA",
+        "contract": "280CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 271,
+        "percentileTarget": 15.53,
+        "wallTarget": 16.25,
+        "percentileRewardRisk": 4.790476190476187,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 290,
+          "oi": 2155725,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.603,
+        "candidates": [
+          {
+            "level": 290,
+            "oi": 2155725,
+            "kind": "resistance",
+            "premium": 16.25,
+            "rewardRisk": 5.4738277822084855,
+            "reachPercentile": 81.54302475458023,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.4299999999999997,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.4299999999999997,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BDL|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BDL",
+        "contract": "1040CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 382,
+        "percentileTarget": 67.45,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.265060240963858,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 5.87,
+        "candidates": [
+          {
+            "level": 1120,
+            "oi": 62050,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 89.18767394122841,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795063247953,
+          "minutesToHit": 24.3725,
+          "preTargetDip": -3.75,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BANKINDIA|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BANKINDIA",
+        "contract": "160CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 312,
+        "percentileTarget": 11.14,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.227272727272734,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.62,
+        "candidates": [
+          {
+            "level": 170,
+            "oi": 1029600,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 90.40465361444899,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795067218958,
+          "minutesToHit": 89.61231666666667,
+          "preTargetDip": -0.6499999999999995,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BEL|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BEL",
+        "contract": "400CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 381,
+        "percentileTarget": 19.1,
+        "wallTarget": 19.1,
+        "percentileRewardRisk": 3.112582781456955,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 410,
+          "oi": 1744200,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.858,
+        "candidates": [
+          {
+            "level": 410,
+            "oi": 1744200,
+            "kind": "resistance",
+            "premium": 19.1,
+            "rewardRisk": 3.1159515023817836,
+            "reachPercentile": 59.952149234427196,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -1.0999999999999996,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -1.0999999999999996,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BLUESTARCO|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BLUESTARCO",
+        "contract": "1700CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 216,
+        "percentileTarget": 117.8,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.222222222222222,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no bias-side wall or gamma level"
+        },
+        "missingWallData": true,
+        "p85MovePct": null,
+        "candidates": [],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -5.450000000000003,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "IOC|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "IOC",
+        "contract": "150CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 329,
+        "percentileTarget": 4.41,
+        "wallTarget": 5,
+        "percentileRewardRisk": 2.8809523809523783,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 150,
+          "oi": 2539875,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.599,
+        "candidates": [
+          {
+            "level": 150,
+            "oi": 2539875,
+            "kind": "resistance",
+            "premium": 5,
+            "rewardRisk": 4.278535538408878,
+            "reachPercentile": 74.53098956238597,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.20000000000000018,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.20000000000000018,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "MARUTI|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "MARUTI",
+        "contract": "13200CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 175,
+        "percentileTarget": 697.58,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2222496543551256,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.573,
+        "candidates": [
+          {
+            "level": 13200,
+            "oi": 22350,
+            "kind": "resistance",
+            "premium": 465.35,
+            "rewardRisk": 0.07544068950130439,
+            "reachPercentile": 24.982304201191518,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 1.2222496543551256,
+          "eventAt": 1795079890415,
+          "minutesToHit": 299.1168166666667,
+          "preTargetDip": -0.05000000000001137,
+          "gap": 1.9699999999999136,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "POLICYBZR|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "POLICYBZR",
+        "contract": "1000PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 145,
+        "percentileTarget": 96.1,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.222222222222222,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.843,
+        "candidates": [
+          {
+            "level": 1000,
+            "oi": 325150,
+            "kind": "support",
+            "premium": 63.7,
+            "rewardRisk": 0.061791289684886806,
+            "reachPercentile": 26.30936049461601,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -5.25,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "TECHM|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "TECHM",
+        "contract": "1720PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 308,
+        "percentileTarget": 68.53,
+        "wallTarget": 70.75,
+        "percentileRewardRisk": 3.2620967741935476,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 1680,
+          "oi": 72600,
+          "kind": "support"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.139,
+        "candidates": [
+          {
+            "level": 1680,
+            "oi": 72600,
+            "kind": "support",
+            "premium": 70.75,
+            "rewardRisk": 3.706396919884201,
+            "reachPercentile": 71.45754784629321,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795146657653,
+          "minutesToHit": 1410.9932166666667,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795146657653,
+          "minutesToHit": 1410.9932166666667,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "ADANIGREEN|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "ADANIGREEN",
+        "contract": "1400CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 376,
+        "percentileTarget": 99.91,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.673949579831942,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 5.177,
+        "candidates": [
+          {
+            "level": 1500,
+            "oi": 164400,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 85.03735113033967,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795071268596,
+          "minutesToHit": 152.96336666666667,
+          "preTargetDip": -4.6499999999999915,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "CUMMINSIND|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "CUMMINSIND",
+        "contract": "4150CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 111,
+        "percentileTarget": 217,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2222222222222223,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.259,
+        "candidates": [
+          {
+            "level": 4150,
+            "oi": 15100,
+            "kind": "resistance",
+            "premium": 177.1,
+            "rewardRisk": 0.5885887490769944,
+            "reachPercentile": 76.48593823762535,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -3,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "IRFC|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "IRFC",
+        "contract": "82CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 219,
+        "percentileTarget": 5.74,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2289156626506024,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.159,
+        "candidates": [
+          {
+            "level": 84,
+            "oi": 1101275,
+            "kind": "resistance",
+            "premium": 4.5,
+            "rewardRisk": 0.4905893895244974,
+            "reachPercentile": 77.42516737057626,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.010000000000000231,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "VBL|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "VBL",
+        "contract": "400PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 312,
+        "percentileTarget": 9.66,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.2248520710059165,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 3.958,
+        "candidates": [
+          {
+            "level": 400,
+            "oi": 267750,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 86.6989388334179,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795153234821,
+          "minutesToHit": 1518.1980666666666,
+          "preTargetDip": -1.6000000000000005,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "CANBK|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "CANBK",
+        "contract": "135CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 183,
+        "percentileTarget": 9.44,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2226277372262773,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.097,
+        "candidates": [
+          {
+            "level": 137,
+            "oi": 425250,
+            "kind": "resistance",
+            "premium": 6.9,
+            "rewardRisk": 0.3014707443674259,
+            "reachPercentile": 63.40291139037368,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.14999999999999947,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "HEROMOTOCO|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "HEROMOTOCO",
+        "contract": "5400CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 226,
+        "percentileTarget": 328.52,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2221639756762424,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.859,
+        "candidates": [
+          {
+            "level": 5500,
+            "oi": 50250,
+            "kind": "resistance",
+            "premium": 264.85,
+            "rewardRisk": 0.5547784680550136,
+            "reachPercentile": 82.1786087098492,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -12.75,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "TCS|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "TCS",
+        "contract": "2340PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 171,
+        "percentileTarget": 119.89,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2220626256822755,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.494,
+        "candidates": [
+          {
+            "level": 2300,
+            "oi": 166950,
+            "kind": "support",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 90.14711836998498,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -6.6499999999999915,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "PGEL|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "PGEL",
+        "contract": "600CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 230,
+        "percentileTarget": 25.6,
+        "wallTarget": 32.25,
+        "percentileRewardRisk": 3.5294117647058814,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 600,
+          "oi": 107350,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 7.214,
+        "candidates": [
+          {
+            "level": 600,
+            "oi": 107350,
+            "kind": "resistance",
+            "premium": 32.25,
+            "rewardRisk": 7.078514551189712,
+            "reachPercentile": 73.44281139949618,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795064325814,
+          "minutesToHit": 30.393016666666668,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795064325814,
+          "minutesToHit": 30.393016666666668,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "PIDILITIND|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "PIDILITIND",
+        "contract": "1600CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 100,
+        "percentileTarget": 72.62,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2224857685009487,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.496,
+        "candidates": [
+          {
+            "level": 1600,
+            "oi": 66000,
+            "kind": "resistance",
+            "premium": 55.5,
+            "rewardRisk": 0.4102083732409963,
+            "reachPercentile": 74.25400758533469,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -7.850000000000001,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "INDHOTEL|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "INDHOTEL",
+        "contract": "890CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 359,
+        "percentileTarget": 43.85,
+        "wallTarget": 44.8,
+        "percentileRewardRisk": 2.9191616766467066,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 910,
+          "oi": 52000,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.685,
+        "candidates": [
+          {
+            "level": 910,
+            "oi": 52000,
+            "kind": "resistance",
+            "premium": 44.8,
+            "rewardRisk": 3.196878711941843,
+            "reachPercentile": 63.24638119205462,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795071677779,
+          "minutesToHit": 151.91405,
+          "preTargetDip": -1.8999999999999986,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795071677779,
+          "minutesToHit": 151.91405,
+          "preTargetDip": -1.8999999999999986,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "CROMPTON|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "CROMPTON",
+        "contract": "215CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 329,
+        "percentileTarget": 13.54,
+        "wallTarget": 13.7,
+        "percentileRewardRisk": 2.534090909090905,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 220,
+          "oi": 432150,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.797,
+        "candidates": [
+          {
+            "level": 220,
+            "oi": 432150,
+            "kind": "resistance",
+            "premium": 13.7,
+            "rewardRisk": 2.7358719062828056,
+            "reachPercentile": 64.62528508712616,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795066657225,
+          "minutesToHit": 64.64833333333333,
+          "preTargetDip": -0.3100000000000005,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795066657225,
+          "minutesToHit": 64.64833333333333,
+          "preTargetDip": -0.3100000000000005,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "HINDZINC|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "HINDZINC",
+        "contract": "520PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 357,
+        "percentileTarget": 26.05,
+        "wallTarget": 27.75,
+        "percentileRewardRisk": 2.1010638297872357,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 500,
+          "oi": 1354850,
+          "kind": "support"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.318,
+        "candidates": [
+          {
+            "level": 500,
+            "oi": 1354850,
+            "kind": "support",
+            "premium": 27.75,
+            "rewardRisk": 2.5481016579408924,
+            "reachPercentile": 77.14867370207833,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -3.349999999999998,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -3.349999999999998,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "NYKAA|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "NYKAA",
+        "contract": "360CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 151,
+        "percentileTarget": 20.07,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2212692967409953,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.202,
+        "candidates": [
+          {
+            "level": 360,
+            "oi": 768750,
+            "kind": "resistance",
+            "premium": 14,
+            "rewardRisk": 0.18255174036091362,
+            "reachPercentile": 38.11501001910658,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.9499999999999993,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "ICICIPRULI|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "ICICIPRULI",
+        "contract": "450CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 104,
+        "percentileTarget": 31.7,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2228260869565217,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "missing p85 favorable-move history"
+        },
+        "missingWallData": false,
+        "p85MovePct": null,
+        "candidates": [
+          {
+            "level": 460,
+            "oi": 197950,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": null,
+            "rejected": "missing p85 favorable-move history"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "IDFCFIRSTB|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "IDFCFIRSTB",
+        "contract": "85CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 137,
+        "percentileTarget": 5.97,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2254335260115605,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.788,
+        "candidates": [
+          {
+            "level": 87,
+            "oi": 426650,
+            "kind": "resistance",
+            "premium": 4.6,
+            "rewardRisk": 0.4254357717834304,
+            "reachPercentile": 78.29581073401829,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.3500000000000001,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "M&M|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "M&M",
+        "contract": "3500CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 315,
+        "percentileTarget": 174.85,
+        "wallTarget": 186.55,
+        "percentileRewardRisk": 2.0303770949720668,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 3600,
+          "oi": 385200,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.95,
+        "candidates": [
+          {
+            "level": 3600,
+            "oi": 385200,
+            "kind": "resistance",
+            "premium": 186.55,
+            "rewardRisk": 2.4391701812143,
+            "reachPercentile": 80.12838349671132,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.7000000000000028,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.7000000000000028,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "HYUNDAI|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "HYUNDAI",
+        "contract": "2140CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 265,
+        "percentileTarget": 105.11,
+        "wallTarget": 120.2,
+        "percentileRewardRisk": 3.149817295980514,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 2220,
+          "oi": 10175,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.027,
+        "candidates": [
+          {
+            "level": 2220,
+            "oi": 10175,
+            "kind": "resistance",
+            "premium": 120.2,
+            "rewardRisk": 4.986823974493153,
+            "reachPercentile": 72.1282927782604,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 3.149817295980514,
+          "eventAt": 1795070300250,
+          "minutesToHit": 99.57393333333333,
+          "preTargetDip": 0,
+          "gap": 0.6899999999999977,
+          "complete": true
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "PNB|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "PNB",
+        "contract": "155CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 99,
+        "percentileTarget": 12.31,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2240896358543416,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.931,
+        "candidates": [
+          {
+            "level": 157,
+            "oi": 96000,
+            "kind": "resistance",
+            "premium": 8.45,
+            "rewardRisk": 0.14928117567245752,
+            "reachPercentile": 49.94861332880179,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.9200000000000008,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "HAVELLS|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "HAVELLS",
+        "contract": "1150CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 162,
+        "percentileTarget": 76.49,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2219720846465552,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.681,
+        "candidates": [
+          {
+            "level": 1190,
+            "oi": 4500,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 86.47203042893807,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "MUTHOOTFIN|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "MUTHOOTFIN",
+        "contract": "2600PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 294,
+        "percentileTarget": 138.66,
+        "wallTarget": 146.3,
+        "percentileRewardRisk": 2.0323422013562853,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 2500,
+          "oi": 125675,
+          "kind": "support"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.642,
+        "candidates": [
+          {
+            "level": 2500,
+            "oi": 125675,
+            "kind": "support",
+            "premium": 146.3,
+            "rewardRisk": 2.429774615890966,
+            "reachPercentile": 83.0217745725318,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 2.0323422013562853,
+          "eventAt": 1795146998452,
+          "minutesToHit": 1374.7789166666666,
+          "preTargetDip": -15.900000000000006,
+          "gap": 1.3400000000000034,
+          "complete": true
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -15.900000000000006,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "WIPRO|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "WIPRO",
+        "contract": "180PE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 135,
+        "percentileTarget": 8.17,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2236286919831227,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall target meets reward:risk 2"
+        },
+        "missingWallData": false,
+        "p85MovePct": 1.359,
+        "candidates": [
+          {
+            "level": 180,
+            "oi": 1371000,
+            "kind": "support",
+            "premium": 5.65,
+            "rewardRisk": 0.15084021812844298,
+            "reachPercentile": 45.81769026729332,
+            "rejected": "reward:risk below 2"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -1.6099999999999994,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "IREDA|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "IREDA",
+        "contract": "128CE",
+        "expiry": "2026-11-23",
+        "bucket": "model >=65",
+        "holdDays": 0,
+        "holdTill": "2026-11-19",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19"
+        ],
+        "observedSamples": 141,
+        "percentileTarget": 3.04,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2272727272727275,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.046,
+        "candidates": [
+          {
+            "level": 140,
+            "oi": 3796475,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 95,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 1.2272727272727275,
+          "eventAt": 1795073958606,
+          "minutesToHit": 153.72046666666665,
+          "preTargetDip": -0.19999999999999996,
+          "gap": 0.009999999999999787,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BAJAJ-AUTO|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BAJAJ-AUTO",
+        "contract": "10700CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 227,
+        "percentileTarget": 572.7,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.0836855452240077,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 3.361,
+        "candidates": [
+          {
+            "level": 11100,
+            "oi": 6825,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 85.55731712687722,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BHARATFORG|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BHARATFORG",
+        "contract": "1720CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 318,
+        "percentileTarget": 96.88,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.498442367601244,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.049,
+        "candidates": [
+          {
+            "level": 1800,
+            "oi": 213500,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 89.0831385563086,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795146998452,
+          "minutesToHit": 1357.36975,
+          "preTargetDip": -6,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BAJAJFINSV|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BAJAJFINSV",
+        "contract": "1880CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 316,
+        "percentileTarget": 96.31,
+        "wallTarget": null,
+        "percentileRewardRisk": 5.118075801749272,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 3.091,
+        "candidates": [
+          {
+            "level": 1960,
+            "oi": 460800,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 90.3947690264107,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -5.350000000000001,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "AMBER|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "AMBER",
+        "contract": "6800CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 295,
+        "percentileTarget": 394.04,
+        "wallTarget": 463.75,
+        "percentileRewardRisk": 3.901419558359619,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 7000,
+          "oi": 60800,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 5.968,
+        "candidates": [
+          {
+            "level": 7000,
+            "oi": 60800,
+            "kind": "resistance",
+            "premium": 463.75,
+            "rewardRisk": 6.650567673848923,
+            "reachPercentile": 74.45589134792687,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795149821633,
+          "minutesToHit": 1367.8117166666666,
+          "preTargetDip": -25.100000000000023,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795149821633,
+          "minutesToHit": 1367.8117166666666,
+          "preTargetDip": -25.100000000000023,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "GODREJCP|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "GODREJCP",
+        "contract": "900CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 252,
+        "percentileTarget": 64.99,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.0072840790842865,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 3.374,
+        "candidates": [
+          {
+            "level": 960,
+            "oi": 22500,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 88.92612898311185,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -3.3500000000000014,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "KEI|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "KEI",
+        "contract": "3900CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 288,
+        "percentileTarget": 186.34,
+        "wallTarget": null,
+        "percentileRewardRisk": 3.917944785276072,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.736,
+        "candidates": [
+          {
+            "level": 4100,
+            "oi": 10850,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 95,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795146657653,
+          "minutesToHit": 1302.5297666666668,
+          "preTargetDip": -10.200000000000003,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "RVNL|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "RVNL",
+        "contract": "190CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 214,
+        "percentileTarget": 14.53,
+        "wallTarget": 16,
+        "percentileRewardRisk": 4.097560975609754,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 200,
+          "oi": 2117500,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 6.211,
+        "candidates": [
+          {
+            "level": 200,
+            "oi": 2117500,
+            "kind": "resistance",
+            "premium": 16,
+            "rewardRisk": 5.899597151547059,
+            "reachPercentile": 73.71742707931016,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.35999999999999943,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.35999999999999943,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BRITANNIA|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BRITANNIA",
+        "contract": "4800CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 233,
+        "percentileTarget": 249.38,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.1025824964132,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.688,
+        "candidates": [
+          {
+            "level": 5000,
+            "oi": 74125,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 94.22750588721406,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -6.349999999999994,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "DIXON|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "DIXON",
+        "contract": "13000CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 261,
+        "percentileTarget": 772.61,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.673485600794443,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.941,
+        "candidates": [
+          {
+            "level": 14000,
+            "oi": 43850,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 93.07884411362222,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -14.299999999999955,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BHEL|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BHEL",
+        "contract": "430CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 261,
+        "percentileTarget": 25.94,
+        "wallTarget": 30.8,
+        "percentileRewardRisk": 4.421686746987952,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 450,
+          "oi": 1094625,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 5.16,
+        "candidates": [
+          {
+            "level": 450,
+            "oi": 1094625,
+            "kind": "resistance",
+            "premium": 30.8,
+            "rewardRisk": 7.344415237048019,
+            "reachPercentile": 80.59849452015919,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -1.5500000000000007,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -1.5500000000000007,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "EICHERMOT|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "EICHERMOT",
+        "contract": "8000CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 254,
+        "percentileTarget": 414.96,
+        "wallTarget": 419.45,
+        "percentileRewardRisk": 2.9217278337122417,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 8200,
+          "oi": 67900,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.232,
+        "candidates": [
+          {
+            "level": 8200,
+            "oi": 67900,
+            "kind": "resistance",
+            "premium": 419.45,
+            "rewardRisk": 3.0680203271657516,
+            "reachPercentile": 67.47302720459528,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -23.100000000000023,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -23.100000000000023,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "GRASIM|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "GRASIM",
+        "contract": "3160CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 212,
+        "percentileTarget": 113.3,
+        "wallTarget": 125.55,
+        "percentileRewardRisk": 3.014925373134329,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 3200,
+          "oi": 77750,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 2.856,
+        "candidates": [
+          {
+            "level": 3200,
+            "oi": 77750,
+            "kind": "resistance",
+            "premium": 125.55,
+            "rewardRisk": 4.235265009526497,
+            "reachPercentile": 81.28089443891585,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795073022308,
+          "minutesToHit": 33.47441666666667,
+          "preTargetDip": -3.700000000000003,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795073022308,
+          "minutesToHit": 33.47441666666667,
+          "preTargetDip": -3.700000000000003,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "HINDUNILVR|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "HINDUNILVR",
+        "contract": "2040CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 210,
+        "percentileTarget": 104.43,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.167035398230089,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.517,
+        "candidates": [
+          {
+            "level": 2120,
+            "oi": 90900,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 91.10033598045204,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -4.299999999999997,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "NESTLEIND|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "NESTLEIND",
+        "contract": "1350CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 230,
+        "percentileTarget": 37.57,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.221910112359551,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.596,
+        "candidates": [
+          {
+            "level": 1350,
+            "oi": 126000,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 93.76076714280788,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.8999999999999986,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "SUNPHARMA|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "SUNPHARMA",
+        "contract": "1900CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 219,
+        "percentileTarget": 76.76,
+        "wallTarget": 77.25,
+        "percentileRewardRisk": 3.309985096870347,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 1940,
+          "oi": 63000,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 2.72,
+        "candidates": [
+          {
+            "level": 1940,
+            "oi": 63000,
+            "kind": "resistance",
+            "premium": 77.25,
+            "rewardRisk": 3.379537198810928,
+            "reachPercentile": 73.59082382229701,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795149821633,
+          "minutesToHit": 1307.0150333333333,
+          "preTargetDip": -6.549999999999997,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795149821633,
+          "minutesToHit": 1307.0150333333333,
+          "preTargetDip": -6.549999999999997,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "SYRMA|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "SYRMA",
+        "contract": "1500CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 223,
+        "percentileTarget": 161.13,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.01759235988942,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "missing p85 favorable-move history"
+        },
+        "missingWallData": false,
+        "p85MovePct": null,
+        "candidates": [
+          {
+            "level": 1540,
+            "oi": 975,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": null,
+            "rejected": "missing p85 favorable-move history"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -12.149999999999991,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "MOTHERSON|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "MOTHERSON",
+        "contract": "162.5CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 228,
+        "percentileTarget": 9.88,
+        "wallTarget": 10.45,
+        "percentileRewardRisk": 2.666666666666672,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 167.5,
+          "oi": 688800,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.627,
+        "candidates": [
+          {
+            "level": 167.5,
+            "oi": 688800,
+            "kind": "resistance",
+            "premium": 10.45,
+            "rewardRisk": 3.5239179916827403,
+            "reachPercentile": 59.97601279681769,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.6199999999999992,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.6199999999999992,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "BANDHANBNK|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "BANDHANBNK",
+        "contract": "172.5CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 210,
+        "percentileTarget": 12.27,
+        "wallTarget": null,
+        "percentileRewardRisk": 3.9861111111111063,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.504,
+        "candidates": [
+          {
+            "level": 182.5,
+            "oi": 64800,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 90.63381370979985,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "HAL|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "HAL",
+        "contract": "4750CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 246,
+        "percentileTarget": 235.77,
+        "wallTarget": 239.85,
+        "percentileRewardRisk": 2.871910112359549,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 4850,
+          "oi": 53550,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.245,
+        "candidates": [
+          {
+            "level": 4850,
+            "oi": 53550,
+            "kind": "resistance",
+            "premium": 239.85,
+            "rewardRisk": 3.1025002036800275,
+            "reachPercentile": 59.953562855270384,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -11.150000000000006,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -11.150000000000006,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "CGPOWER|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "CGPOWER",
+        "contract": "800CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 215,
+        "percentileTarget": 55.59,
+        "wallTarget": 64.05,
+        "percentileRewardRisk": 4.148484848484854,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 840,
+          "oi": 623900,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.776,
+        "candidates": [
+          {
+            "level": 840,
+            "oi": 623900,
+            "kind": "resistance",
+            "premium": 64.05,
+            "rewardRisk": 6.708195732901389,
+            "reachPercentile": 82.73841260112212,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795146657653,
+          "minutesToHit": 1210.53065,
+          "preTargetDip": -0.10000000000000142,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795146657653,
+          "minutesToHit": 1210.53065,
+          "preTargetDip": -0.10000000000000142,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "NHPC|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "NHPC",
+        "contract": "78CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 192,
+        "percentileTarget": 2.93,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.478260869565219,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.363,
+        "candidates": [
+          {
+            "level": 80,
+            "oi": 3773850,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 90.02580022914299,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.020000000000000018,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "DMART|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "DMART",
+        "contract": "3500CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 189,
+        "percentileTarget": 167.04,
+        "wallTarget": 176.05,
+        "percentileRewardRisk": 3.1076573161485976,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 3600,
+          "oi": 47550,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 3.45,
+        "candidates": [
+          {
+            "level": 3600,
+            "oi": 47550,
+            "kind": "resistance",
+            "premium": 176.05,
+            "rewardRisk": 3.7900047764689804,
+            "reachPercentile": 71.4523736237921,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795080639275,
+          "minutesToHit": 36.1179,
+          "preTargetDip": -12.049999999999997,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795080639275,
+          "minutesToHit": 36.1179,
+          "preTargetDip": -12.049999999999997,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "PFC|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "PFC",
+        "contract": "330CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 181,
+        "percentileTarget": 17.3,
+        "wallTarget": 18.2,
+        "percentileRewardRisk": 2.968750000000002,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 340,
+          "oi": 3654300,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.276,
+        "candidates": [
+          {
+            "level": 340,
+            "oi": 3654300,
+            "kind": "resistance",
+            "premium": 18.2,
+            "rewardRisk": 3.686126775359379,
+            "reachPercentile": 62.219762441994256,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795146657653,
+          "minutesToHit": 1136.4242,
+          "preTargetDip": -1,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795146657653,
+          "minutesToHit": 1136.4242,
+          "preTargetDip": -1,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "PNBHOUSING|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "PNBHOUSING",
+        "contract": "1160CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 167,
+        "percentileTarget": 65.12,
+        "wallTarget": 72.15,
+        "percentileRewardRisk": 4.4259259259259265,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 1200,
+          "oi": 127400,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 5.29,
+        "candidates": [
+          {
+            "level": 1200,
+            "oi": 127400,
+            "kind": "resistance",
+            "premium": 72.15,
+            "rewardRisk": 6.0560264844560585,
+            "reachPercentile": 72.70051560713779,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 4.4259259259259265,
+          "eventAt": 1795155031777,
+          "minutesToHit": 1258.5419,
+          "preTargetDip": -4,
+          "gap": 0.8799999999999955,
+          "complete": true
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -4,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "POLYCAB|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "POLYCAB",
+        "contract": "7500CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 167,
+        "percentileTarget": 452.1,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.6083333333333343,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.016,
+        "candidates": [
+          {
+            "level": 8000,
+            "oi": 90750,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 95,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795146657653,
+          "minutesToHit": 1118.9731666666667,
+          "preTargetDip": -0.8999999999999773,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "SBIN|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "SBIN",
+        "contract": "1150CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 157,
+        "percentileTarget": 59.63,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.9959016393442606,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.937,
+        "candidates": [
+          {
+            "level": 1200,
+            "oi": 2535750,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 91.3305805877668,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -5.7500000000000036,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "SRF|2026-11-19",
+        "date": "2026-11-19",
+        "symbol": "SRF",
+        "contract": "2500CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-23",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-19",
+          "2026-11-20",
+          "2026-11-23"
+        ],
+        "observedSamples": 162,
+        "percentileTarget": 133.15,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.904551201011377,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 3.397,
+        "candidates": [
+          {
+            "level": 2600,
+            "oi": 40800,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 87.55672740621768,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": 0,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "LTM|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "LTM",
+        "contract": "4300CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 117,
+        "percentileTarget": 211.56,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.274377942165432,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 3.732,
+        "candidates": [
+          {
+            "level": 4500,
+            "oi": 60900,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 95,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795148026808,
+          "minutesToHit": 8.682733333333333,
+          "preTargetDip": -14,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "INDHOTEL|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "INDHOTEL",
+        "contract": "900CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 110,
+        "percentileTarget": 50.26,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.812865497076026,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 3.685,
+        "candidates": [
+          {
+            "level": 940,
+            "oi": 169000,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 86.94356245694873,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -2.599999999999998,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "PAYTM|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "PAYTM",
+        "contract": "1760CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 106,
+        "percentileTarget": 117.21,
+        "wallTarget": 118.2,
+        "percentileRewardRisk": 2.394101876675605,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 1800,
+          "oi": 1132450,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 6.513,
+        "candidates": [
+          {
+            "level": 1800,
+            "oi": 1132450,
+            "kind": "resistance",
+            "premium": 118.2,
+            "rewardRisk": 2.5291317062602903,
+            "reachPercentile": 42.289763390086186,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795149468386,
+          "minutesToHit": 22.022033333333333,
+          "preTargetDip": -3.3999999999999915,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795149468386,
+          "minutesToHit": 22.022033333333333,
+          "preTargetDip": -3.3999999999999915,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "APOLLOHOSP|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "APOLLOHOSP",
+        "contract": "9100CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 102,
+        "percentileTarget": 485.98,
+        "wallTarget": null,
+        "percentileRewardRisk": 2.0226463104325703,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 2.628,
+        "candidates": [
+          {
+            "level": 9400,
+            "oi": 44500,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 90.53308044912112,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -7,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "360ONE|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "360ONE",
+        "contract": "1200CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 99,
+        "percentileTarget": 80.99,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.616465863453817,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 5.152,
+        "candidates": [
+          {
+            "level": 1300,
+            "oi": 477000,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 90.84883486947986,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795155636424,
+          "minutesToHit": 113.4233,
+          "preTargetDip": -3.6000000000000014,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "AMBER|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "AMBER",
+        "contract": "6800CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 99,
+        "percentileTarget": 387.47,
+        "wallTarget": 417.85,
+        "percentileRewardRisk": 2.6751568844592137,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 7000,
+          "oi": 52700,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 5.968,
+        "candidates": [
+          {
+            "level": 7000,
+            "oi": 52700,
+            "kind": "resistance",
+            "premium": 417.85,
+            "rewardRisk": 3.7960370240274486,
+            "reachPercentile": 54.32689486483591,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795149359457,
+          "minutesToHit": 8.807183333333333,
+          "preTargetDip": -20,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795149359457,
+          "minutesToHit": 8.807183333333333,
+          "preTargetDip": -20,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "CAMS|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "CAMS",
+        "contract": "730CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 98,
+        "percentileTarget": 41.81,
+        "wallTarget": 43.25,
+        "percentileRewardRisk": 4.294545454545456,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 750,
+          "oi": 237600,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.862,
+        "candidates": [
+          {
+            "level": 750,
+            "oi": 237600,
+            "kind": "resistance",
+            "premium": 43.25,
+            "rewardRisk": 4.826948615350623,
+            "reachPercentile": 70.88305289327592,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -2.1000000000000014,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -2.1000000000000014,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "FORTIS|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "FORTIS",
+        "contract": "820CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 88,
+        "percentileTarget": 57.01,
+        "wallTarget": 58,
+        "percentileRewardRisk": 2.497326203208556,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 850,
+          "oi": 334025,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.397,
+        "candidates": [
+          {
+            "level": 850,
+            "oi": 334025,
+            "kind": "resistance",
+            "premium": 58,
+            "rewardRisk": 2.673394762679531,
+            "reachPercentile": 72.54317667149752,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -5.100000000000001,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -5.100000000000001,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "TATAELXSI|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "TATAELXSI",
+        "contract": "3800CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 79,
+        "percentileTarget": 248.97,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.172863666014347,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 3.642,
+        "candidates": [
+          {
+            "level": 4000,
+            "oi": 44250,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 92.32680059147889,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "tgt1",
+          "r": 4.172863666014347,
+          "eventAt": 1795152769301,
+          "minutesToHit": 38.337,
+          "preTargetDip": 0,
+          "gap": 0.6800000000000068,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "ATHERENERG|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "ATHERENERG",
+        "contract": "2000CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20"
+        ],
+        "observedSamples": 70,
+        "percentileTarget": 137.25,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2220828105395234,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "missing p85 favorable-move history"
+        },
+        "missingWallData": false,
+        "p85MovePct": null,
+        "candidates": [
+          {
+            "level": 2000,
+            "oi": 362250,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": null,
+            "rejected": "missing p85 favorable-move history"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -6.75,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "MAXHEALTH|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "MAXHEALTH",
+        "contract": "1080CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 70,
+        "percentileTarget": 57.35,
+        "wallTarget": 57.45,
+        "percentileRewardRisk": 2.698795180722893,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 1100,
+          "oi": 462525,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 4.626,
+        "candidates": [
+          {
+            "level": 1100,
+            "oi": 462525,
+            "kind": "resistance",
+            "premium": 57.45,
+            "rewardRisk": 2.718667954925829,
+            "reachPercentile": 54.36946002151928,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795152399646,
+          "minutesToHit": 19.060333333333332,
+          "preTargetDip": -1.9499999999999957,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795152399646,
+          "minutesToHit": 19.060333333333332,
+          "preTargetDip": -1.9499999999999957,
+          "gap": null,
+          "complete": true
+        }
+      },
+      {
+        "id": "NAUKRI|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "NAUKRI",
+        "contract": "1200CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 60,
+        "percentileTarget": 70.65,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.326086956521739,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.068,
+        "candidates": [
+          {
+            "level": 1300,
+            "oi": 141350,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 95,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795153133638,
+          "minutesToHit": 19.97385,
+          "preTargetDip": -3.75,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "PERSISTENT|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "PERSISTENT",
+        "contract": "6200CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-build-fast",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 60,
+        "percentileTarget": 376.4,
+        "wallTarget": null,
+        "percentileRewardRisk": 4.288381742738584,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 4.513,
+        "candidates": [
+          {
+            "level": 6500,
+            "oi": 46250,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 86.95149443398745,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -17.05000000000001,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "POLICYBZR|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "POLICYBZR",
+        "contract": "1040CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 51,
+        "percentileTarget": 88.5,
+        "wallTarget": null,
+        "percentileRewardRisk": 3.197916666666658,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "no wall within p85 favorable move"
+        },
+        "missingWallData": false,
+        "p85MovePct": 5.517,
+        "candidates": [
+          {
+            "level": 1100,
+            "oi": 711200,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": 88.75465298437749,
+            "rejected": "beyond p85 favorable move"
+          }
+        ],
+        "percentile": {
+          "status": "sl",
+          "r": -1,
+          "eventAt": 1795154551430,
+          "minutesToHit": 32.81915,
+          "preTargetDip": -3.8000000000000114,
+          "gap": null,
+          "complete": true
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "SAGILITY|2026-11-20",
+        "date": "2026-11-20",
+        "symbol": "SAGILITY",
+        "contract": "45CE",
+        "expiry": "2026-12-29",
+        "bucket": "early-momentum",
+        "holdDays": 0,
+        "holdTill": "2026-11-20",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20"
+        ],
+        "observedSamples": 51,
+        "percentileTarget": 4.1,
+        "wallTarget": null,
+        "percentileRewardRisk": 1.2457627118644066,
+        "wallFallbackPassesRR": false,
+        "projectedNoTrade": true,
+        "wallLevel": null,
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": {
+          "reason": "missing p85 favorable-move history"
+        },
+        "missingWallData": false,
+        "p85MovePct": null,
+        "candidates": [
+          {
+            "level": 50,
+            "oi": 3804000,
+            "kind": "resistance",
+            "premium": null,
+            "rewardRisk": null,
+            "reachPercentile": null,
+            "rejected": "missing p85 favorable-move history"
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -0.3500000000000001,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "unavailable",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": null,
+          "gap": null,
+          "complete": false
+        }
+      },
+      {
+        "id": "AMBER|2026-11-20:re1",
+        "date": "2026-11-20",
+        "symbol": "AMBER",
+        "contract": "6700CE",
+        "expiry": "2026-12-29",
+        "bucket": "unclassified",
+        "holdDays": 2,
+        "holdTill": "2026-11-24",
+        "windowComplete": false,
+        "missingDates": [
+          "2026-11-20",
+          "2026-11-23",
+          "2026-11-24"
+        ],
+        "observedSamples": 51,
+        "percentileTarget": 478.15,
+        "wallTarget": 514.9,
+        "percentileRewardRisk": 4.101063829787235,
+        "wallFallbackPassesRR": true,
+        "projectedNoTrade": false,
+        "wallLevel": {
+          "strike": 7000,
+          "oi": 55000,
+          "kind": "resistance"
+        },
+        "wallTgt2": null,
+        "ivSource": "gamma-inverted fallback",
+        "wallReject": null,
+        "missingWallData": false,
+        "p85MovePct": 5.968,
+        "candidates": [
+          {
+            "level": 7000,
+            "oi": 55000,
+            "kind": "resistance",
+            "premium": 514.9,
+            "rewardRisk": 5.40386772527851,
+            "reachPercentile": 66.20366224772314,
+            "rejected": null
+          }
+        ],
+        "percentile": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -12.5,
+          "gap": null,
+          "complete": false
+        },
+        "wall": {
+          "status": "censored",
+          "r": null,
+          "eventAt": null,
+          "preTargetDip": -12.5,
+          "gap": null,
+          "complete": false
+        }
+      }
+    ],
+    "pairedTrades": 15,
+    "noTrade": 21,
+    "noWallTarget": 53,
+    "missingWallData": 1,
+    "percentileHits": 1,
+    "wallHits": 1,
+    "percentileStops": 14,
+    "wallStops": 14,
+    "percentileHitRate": 0.06666666666666667,
+    "wallHitRate": 0.06666666666666667,
+    "percentileStopRate": 0.9333333333333333,
+    "wallStopRate": 0.9333333333333333,
+    "percentileNetR": -8.76950354609929,
+    "wallNetR": -6.686170212765958,
+    "netRDelta": 2.083333333333332,
+    "beatsGate": true,
+    "buckets": {
+      "early-momentum": {
+        "cards": 62,
+        "headlinePaired": 12,
+        "pairedTrades": 12,
+        "wallTargets": 25,
+        "noWallTarget": 37,
+        "noTrade": 13,
+        "missingWallData": 0,
+        "percentileHitRate": 0,
+        "wallHitRate": 0,
+        "percentileStopRate": 1,
+        "wallStopRate": 1,
+        "percentileNetR": -12,
+        "wallNetR": -12,
+        "netRDelta": 0,
+        "beatsGate": false
+      },
+      "early-build-fast": {
+        "cards": 18,
+        "headlinePaired": 2,
+        "pairedTrades": 2,
+        "wallTargets": 4,
+        "noWallTarget": 14,
+        "noTrade": 6,
+        "missingWallData": 1,
+        "percentileHitRate": 0,
+        "wallHitRate": 0,
+        "percentileStopRate": 1,
+        "wallStopRate": 1,
+        "percentileNetR": -2,
+        "wallNetR": -2,
+        "netRDelta": 0,
+        "beatsGate": false
+      },
+      "model >=65": {
+        "cards": 3,
+        "headlinePaired": 1,
+        "pairedTrades": 1,
+        "wallTargets": 1,
+        "noWallTarget": 2,
+        "noTrade": 2,
+        "missingWallData": 0,
+        "percentileHitRate": 1,
+        "wallHitRate": 1,
+        "percentileStopRate": 0,
+        "wallStopRate": 0,
+        "percentileNetR": 5.230496453900709,
+        "wallNetR": 7.313829787234042,
+        "netRDelta": 2.083333333333333,
+        "beatsGate": true
+      },
+      "model <65": {
+        "cards": 0,
+        "headlinePaired": 0,
+        "pairedTrades": 0,
+        "wallTargets": 0,
+        "noWallTarget": 0,
+        "noTrade": 0,
+        "missingWallData": 0,
+        "percentileHitRate": null,
+        "wallHitRate": null,
+        "percentileStopRate": null,
+        "wallStopRate": null,
+        "percentileNetR": null,
+        "wallNetR": null,
+        "netRDelta": null,
+        "beatsGate": null
+      },
+      "unclassified": {
+        "cards": 1,
+        "headlinePaired": 0,
+        "pairedTrades": 0,
+        "wallTargets": 1,
+        "noWallTarget": 0,
+        "noTrade": 0,
+        "missingWallData": 0,
+        "percentileHitRate": null,
+        "wallHitRate": null,
+        "percentileStopRate": null,
+        "wallStopRate": null,
+        "percentileNetR": null,
+        "wallNetR": null,
+        "netRDelta": null,
+        "beatsGate": null
+      }
+    },
+    "byDate": {
+      "2026-11-18": {
+        "cards": 6,
+        "pairedTrades": 0,
+        "noTrade": 1,
+        "noWallTarget": 6,
+        "missingWallData": 0,
+        "percentileHits": 0,
+        "wallHits": 0,
+        "percentileStops": 0,
+        "wallStops": 0,
+        "percentileHitRate": null,
+        "wallHitRate": null,
+        "percentileStopRate": null,
+        "wallStopRate": null,
+        "percentileNetR": null,
+        "wallNetR": null,
+        "netRDelta": null,
+        "beatsGate": null,
+        "buckets": {
+          "early-momentum": {
+            "cards": 4,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 4,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          },
+          "early-build-fast": {
+            "cards": 2,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 2,
+            "noTrade": 1,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          },
+          "model >=65": {
+            "cards": 0,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          },
+          "model <65": {
+            "cards": 0,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          },
+          "unclassified": {
+            "cards": 0,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          }
+        }
+      },
+      "2026-11-19": {
+        "cards": 62,
+        "pairedTrades": 12,
+        "noTrade": 18,
+        "noWallTarget": 37,
+        "missingWallData": 1,
+        "percentileHits": 1,
+        "wallHits": 1,
+        "percentileStops": 11,
+        "wallStops": 11,
+        "percentileHitRate": 0.08333333333333333,
+        "wallHitRate": 0.08333333333333333,
+        "percentileStopRate": 0.9166666666666666,
+        "wallStopRate": 0.9166666666666666,
+        "percentileNetR": -5.769503546099291,
+        "wallNetR": -3.6861702127659584,
+        "netRDelta": 2.083333333333333,
+        "beatsGate": true,
+        "buckets": {
+          "early-momentum": {
+            "cards": 50,
+            "headlinePaired": 10,
+            "pairedTrades": 10,
+            "wallTargets": 22,
+            "noWallTarget": 28,
+            "noTrade": 11,
+            "missingWallData": 0,
+            "percentileHitRate": 0,
+            "wallHitRate": 0,
+            "percentileStopRate": 1,
+            "wallStopRate": 1,
+            "percentileNetR": -10,
+            "wallNetR": -10,
+            "netRDelta": 0,
+            "beatsGate": false
+          },
+          "early-build-fast": {
+            "cards": 9,
+            "headlinePaired": 1,
+            "pairedTrades": 1,
+            "wallTargets": 2,
+            "noWallTarget": 7,
+            "noTrade": 5,
+            "missingWallData": 1,
+            "percentileHitRate": 0,
+            "wallHitRate": 0,
+            "percentileStopRate": 1,
+            "wallStopRate": 1,
+            "percentileNetR": -1,
+            "wallNetR": -1,
+            "netRDelta": 0,
+            "beatsGate": false
+          },
+          "model >=65": {
+            "cards": 3,
+            "headlinePaired": 1,
+            "pairedTrades": 1,
+            "wallTargets": 1,
+            "noWallTarget": 2,
+            "noTrade": 2,
+            "missingWallData": 0,
+            "percentileHitRate": 1,
+            "wallHitRate": 1,
+            "percentileStopRate": 0,
+            "wallStopRate": 0,
+            "percentileNetR": 5.230496453900709,
+            "wallNetR": 7.313829787234042,
+            "netRDelta": 2.083333333333333,
+            "beatsGate": true
+          },
+          "model <65": {
+            "cards": 0,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          },
+          "unclassified": {
+            "cards": 0,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          }
+        }
+      },
+      "2026-11-20": {
+        "cards": 16,
+        "pairedTrades": 3,
+        "noTrade": 2,
+        "noWallTarget": 10,
+        "missingWallData": 0,
+        "percentileHits": 0,
+        "wallHits": 0,
+        "percentileStops": 3,
+        "wallStops": 3,
+        "percentileHitRate": 0,
+        "wallHitRate": 0,
+        "percentileStopRate": 1,
+        "wallStopRate": 1,
+        "percentileNetR": -3,
+        "wallNetR": -3,
+        "netRDelta": 0,
+        "beatsGate": false,
+        "buckets": {
+          "early-momentum": {
+            "cards": 8,
+            "headlinePaired": 2,
+            "pairedTrades": 2,
+            "wallTargets": 3,
+            "noWallTarget": 5,
+            "noTrade": 2,
+            "missingWallData": 0,
+            "percentileHitRate": 0,
+            "wallHitRate": 0,
+            "percentileStopRate": 1,
+            "wallStopRate": 1,
+            "percentileNetR": -2,
+            "wallNetR": -2,
+            "netRDelta": 0,
+            "beatsGate": false
+          },
+          "early-build-fast": {
+            "cards": 7,
+            "headlinePaired": 1,
+            "pairedTrades": 1,
+            "wallTargets": 2,
+            "noWallTarget": 5,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": 0,
+            "wallHitRate": 0,
+            "percentileStopRate": 1,
+            "wallStopRate": 1,
+            "percentileNetR": -1,
+            "wallNetR": -1,
+            "netRDelta": 0,
+            "beatsGate": false
+          },
+          "model >=65": {
+            "cards": 0,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          },
+          "model <65": {
+            "cards": 0,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 0,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          },
+          "unclassified": {
+            "cards": 1,
+            "headlinePaired": 0,
+            "pairedTrades": 0,
+            "wallTargets": 1,
+            "noWallTarget": 0,
+            "noTrade": 0,
+            "missingWallData": 0,
+            "percentileHitRate": null,
+            "wallHitRate": null,
+            "percentileStopRate": null,
+            "wallStopRate": null,
+            "percentileNetR": null,
+            "wallNetR": null,
+            "netRDelta": null,
+            "beatsGate": null
+          }
+        }
+      }
+    }
+  }
+}
