@@ -120,6 +120,14 @@
 .obs-card--bull { border-left-color: var(--mf-up, #1d8a4b); }
 .obs-card--bear { border-left-color: var(--mf-down, #c23b3b); }
 
+/* Live/outcome zone tints: target reached = green (TGT2 darker), stop hit = red. */
+.obs-card--zone-tgt1 { background: rgba(29, 138, 75, 0.10); }
+.obs-card--zone-tgt2 { background: rgba(29, 138, 75, 0.24); }
+.obs-card--zone-sl { background: rgba(194, 59, 59, 0.12); }
+.observations__table tr.obs-row--zone-tgt1 { background: rgba(29, 138, 75, 0.10); }
+.observations__table tr.obs-row--zone-tgt2 { background: rgba(29, 138, 75, 0.24); }
+.observations__table tr.obs-row--zone-sl { background: rgba(194, 59, 59, 0.12); }
+
 .obs-card__head {
   display: flex;
   align-items: baseline;

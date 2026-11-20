@@ -120,6 +120,15 @@ function flowLabel(card: ObservationCard): string {
   return '—';
 }
 
+/** Live tint zone: the tick decides while the card is open, the recorded
+ *  outcome decides once the journal has resolved it. */
+function zoneFor(card: ObservationCard, opt: number | null | undefined): 'sl' | 'tgt1' | 'tgt2' | null {
+  if (opt != null) return opt <= card.sl ? 'sl' : opt >= card.tgt2 ? 'tgt2' : opt >= card.tgt1 ? 'tgt1' : null;
+  if (card.outcome?.status === 'sl') return 'sl';
+  if (card.outcome?.status === 'tgt1') return card.outcome?.followThrough?.touches?.tgt2 ? 'tgt2' : 'tgt1';
+  return null;
+}
+
 function outcomeLabel(card: ObservationCard): string {
   switch (card.outcome?.status) {
     case 'tgt1': return 'TGT1';
@@ -305,12 +314,13 @@ function Sparkline({ closes }: { closes: FuturesSeries[] | null }) {
   );
 }
 
-function CardLive({ card, spots, futuresTick, optionTick, closes }: {
+function CardLive({ card, spots, futuresTick, optionTick, closes, zone }: {
   card: ObservationCard;
   spots: SpotMap;
   futuresTick?: { ltp: number };
   optionTick?: { ltp: number };
   closes: FuturesSeries[] | null;
+  zone: 'sl' | 'tgt1' | 'tgt2' | null;
 }) {
   const liveSpot = spots.get(card.symbol);
   const spot = liveSpot ?? (card.spot != null ? { sp: card.spot, changePct: card.spotChangePct ?? null } : null);
@@ -324,11 +334,11 @@ function CardLive({ card, spots, futuresTick, optionTick, closes }: {
           ? <><span className={`obs-card__quote-ltp ${spot.changePct != null && spot.changePct >= 0 ? 'is-up' : 'is-down'}`}>{priceText(spot.sp)}</span><span className={`obs-card__quote-chg ${spot.changePct != null && spot.changePct >= 0 ? 'is-up' : 'is-down'}`}>{spot.changePct != null ? `${spot.changePct >= 0 ? '+' : ''}${spot.changePct.toFixed(2)}%` : '—'}</span></>
           : <span className="obs-card__quote-chg">spot warming up…</span>}
         {futuresTick && <span className="obs-card__quote-sub" title="live futures price (~3s ticks)">fut {priceText(futuresTick.ltp)}</span>}
-        <span className="obs-card__quote-sub" title="live option premium (~3s ticks) vs entry">
-          {card.side} {opt != null ? <b className={opt >= card.entry ? 'is-up' : 'is-down'}>₹{priceText(opt)}</b> : `~₹${priceText(card.entry)}`} · entry ₹{priceText(card.entry)}
-        </span>
-        {opt != null && opt <= card.sl && <span className="obs-card__quote-sub is-down" title="live premium is at or below the stop — level hit intraday (journal confirms at 15:40)">● SL zone (live)</span>}
-        {opt != null && opt >= card.tgt1 && <span className="obs-card__quote-sub is-up" title="live premium is at or above target 1 — level hit intraday (journal confirms at 15:40)">● TGT1 ✓ (live)</span>}
+        {zone === 'sl'
+          ? <span className="obs-card__quote-sub is-down" title="stop hit intraday — live premium tracking off">● SL hit — live price off</span>
+          : <span className="obs-card__quote-sub" title="live option premium (~3s ticks) vs entry">
+              {card.side} {opt != null ? <b className={opt >= card.entry ? 'is-up' : 'is-down'}>₹{priceText(opt)}</b> : `~₹${priceText(card.entry)}`} · entry ₹{priceText(card.entry)}
+            </span>}
       </div>
     </div>
   );
@@ -343,13 +353,14 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
   const up = card.bias === 'bullish';
   const closes = useFutures(card.symbol);
   const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
+  const zone = zoneFor(card, optionTicks[optionKey]?.ltp);
   const dte = daysToExpiry(card.date, card.expiry);
   const expiry = expiryLabel(card.date, card.expiry);
   const stamped = istDateTime(card.at);
   const dealerFlow = dealerFlowSentence(card.gamma);
   const theta = thetaWarning(dte);
   return (
-    <article className={`obs-card ${up ? 'obs-card--bull' : 'obs-card--bear'}`}>
+    <article className={`obs-card ${up ? 'obs-card--bull' : 'obs-card--bear'}${zone ? ` obs-card--zone-${zone}` : ''}`}>
       <header className="obs-card__head">
         <h3 className="obs-card__symbol">{card.symbol}</h3>
         <span className={`obs-card__contract ${up ? 'is-up' : 'is-down'}`}>{card.strike}{card.side}{expiry ? ` · ${expiry}` : ''}</span>
@@ -358,7 +369,7 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
           {stamped ? `${stamped.date} · ${stamped.time} IST · ${ageLabel(card.at, Date.now())}` : 'Timestamp unavailable'}
         </time>
       </header>
-      <CardLive card={card} spots={spots} futuresTick={futuresTicks[card.symbol]} optionTick={optionTicks[optionKey]} closes={closes} />
+      <CardLive card={card} spots={spots} futuresTick={futuresTicks[card.symbol]} optionTick={optionTicks[optionKey]} closes={closes} zone={zone} />
       <dl className="obs-card__levels">
         <div><dt>Entry</dt><dd>~{priceText(card.entry)}</dd></div>
         <div className="is-down"><dt>SL −45%</dt><dd>{priceText(card.sl)}</dd></div>
@@ -397,8 +408,9 @@ function ObservationTable({ cards, optionTicks }: {
           const dte = daysToExpiry(card.date, card.expiry);
           const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
           const liveOption = optionTicks[optionKey]?.ltp;
+          const zone = zoneFor(card, liveOption);
           return (
-            <tr key={card.id}>
+            <tr key={card.id} className={zone ? `obs-row--zone-${zone}` : undefined}>
               <td>{stamped ? `${stamped.date} ${stamped.time}` : '—'}</td>
               <td>{card.symbol}</td>
               <td>{card.strike}{card.side}</td>
