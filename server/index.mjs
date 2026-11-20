@@ -57,6 +57,7 @@ import { gapOpenDue, gapOpenMessage } from './gapOpen.mjs';
 import { weeklyReviewDue, weeklyReviewMessage } from './weeklyReview.mjs';
 import { capturePreviousOiBaseline, fillMissingPrevOi } from './oiBaseline.mjs';
 import { isFullOptionChainSnapshot, persistFullOptionChainSnapshots } from './optionChainSnapshots.mjs';
+import { createPcrHistory } from './pcrHistory.mjs';
 import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
@@ -100,6 +101,8 @@ const BOOTED_AT = Date.now();
 /** Expiries are read once a session: they change only when a contract lists or expires. */
 const ladderCache = { session: '', bySymbol: new Map() };
 const state = { ready: false, building: false, latestJson: null, latest: null, lastBuild: null, lastError: null };
+// Near-chain PCR deltas for momentum early-card filtering, isolated to each session.
+const pcrHistory = createPcrHistory(100);
 const alertState = new Map();
 const alertDigestState = createAlertDigestState();
 // ORB scanner (P1): one scan per day slot, cached for /api/orb between builds.
@@ -264,6 +267,7 @@ async function build() {
   const started = Date.now();
   const clock = now();
   const session = getLatestTradingSessionDate(new Date(clock));
+  pcrHistory.resetForSession(session);
   // Post-close fast path: the market is shut and nothing is moving — serve the
   // session's last built snapshot (the real closing state, written by every
   // successful build) instead of crawling 215 chains through the paced REST
@@ -345,6 +349,7 @@ async function build() {
     catch (error) { log(`previous OI baseline unavailable for ${session}: ${String(error?.message || error)}`); }
     const enriched = fillMissingPrevOi(rawFile, previousOi);
     if (enriched.filled) log(`OI baseline: restored ${enriched.filled} captured contract row(s) from the previous session`);
+    pcrHistory.record(enriched.market.series, at);
     // Only a reading taken in session is a minute the windows can measure from.
     const minutes = isMarketSessionTime(at)
       ? storeMinute(session, at, JSON.stringify(enriched.market))
@@ -447,6 +452,7 @@ async function build() {
             now: at,
             log,
             readFuturesSnapshot: (symbol, date) => readFutures(SCAN_DIR, date, symbol),
+            pcrShiftFor: (symbol, timestamp) => pcrHistory.shiftFor(symbol, timestamp),
             subscriberChatIds: activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)),
             getLive: card => {
               try {
