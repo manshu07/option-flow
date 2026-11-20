@@ -157,6 +157,11 @@ export function createDhanProvider(universe) {
    *  of spamming every retry — an expired token used to flood the log all night. */
   let authFailUntil = 0;
   let authWarned = false;
+  // 429 escalation guard: Dhan's "user being blocked" warning is real, so any
+  // 429 rests the WHOLE API (every path) with an exponential backoff instead
+  // of letting queued callers hammer through their own 3s retry.
+  let rest429Until = 0;
+  let rest429Streak = 0;
   /** The feed: one connection for underlyings + futures, the rest for option strikes. */
   const conns = [];
   let feedHealthyAt = 0, feedStartedAt = 0, feedWant = new Set(), rebalanceTimer = null, watchdogTimer = null;
@@ -207,6 +212,10 @@ export function createDhanProvider(universe) {
 
   async function post(path, payload, { retry = true, timeoutMs = 20_000 } = {}) {
     if (Date.now() < authFailUntil) throw new Error('Dhan credentials rejected earlier — cooling down before retrying.');
+    // A live 429 backoff rests every queued caller too, so the herd re-fires
+    // only after the API has had its break.
+    const cooling = rest429Until - Date.now();
+    if (cooling > 0) await sleep(cooling);
     await throttle();
     let res;
     try {
@@ -228,8 +237,18 @@ export function createDhanProvider(universe) {
       }
       throw new Error('Dhan rejected the credentials (HTTP 401). Generate a fresh access token on web.dhan.co → My Profile → DhanHQ Trading Access.');
     }
-    if (res.status === 429 && retry) { usage.rest429 += 1; await sleep(3000); return post(path, payload, { retry: false, timeoutMs }); }
+    if (res.status === 429) {
+      usage.rest429 += 1;
+      rest429Streak += 1;
+      const backoff = Math.min(30_000 * 2 ** (rest429Streak - 1), 300_000);
+      rest429Until = Date.now() + backoff;
+      console.warn(`dhan: 429 on ${path} — resting the whole API for ${Math.round(backoff / 1000)}s (streak ${rest429Streak})`);
+      if (!retry) throw new Error(`Dhan 429 ${path}: rate limited — API resting ${Math.round(backoff / 1000)}s`);
+      await sleep(backoff);
+      return post(path, payload, { retry: false, timeoutMs });
+    }
     if (!res.ok) throw new Error(`Dhan ${res.status} ${path}: ${(await res.text()).slice(0, 200)}`);
+    rest429Streak = 0;
     const body = await res.json();
     // Chart endpoints answer with the payload itself; the rest wrap it in { status, data }.
     if (!('status' in body)) return body;
