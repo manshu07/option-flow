@@ -327,6 +327,8 @@ function CardLive({ card, spots, futuresTick, optionTick, closes }: {
         <span className="obs-card__quote-sub" title="live option premium (~3s ticks) vs entry">
           {card.side} {opt != null ? <b className={opt >= card.entry ? 'is-up' : 'is-down'}>₹{priceText(opt)}</b> : `~₹${priceText(card.entry)}`} · entry ₹{priceText(card.entry)}
         </span>
+        {opt != null && opt <= card.sl && <span className="obs-card__quote-sub is-down" title="live premium is at or below the stop — level hit intraday (journal confirms at 15:40)">● SL zone (live)</span>}
+        {opt != null && opt >= card.tgt1 && <span className="obs-card__quote-sub is-up" title="live premium is at or above target 1 — level hit intraday (journal confirms at 15:40)">● TGT1 ✓ (live)</span>}
       </div>
     </div>
   );
@@ -464,11 +466,11 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
     () => [...new Set([...INDEX_SYMBOLS, ...(cards ?? []).map(card => card.symbol)])],
     [cards],
   );
-  // Only TODAY's cards get option-tick streams: a historical card has no
-  // "live price", and asking for the whole store would blow past the server's
-  // 16-contract stream cap and starve the live cards.
+  // Today's cards AND every still-open card get option-tick streams: an open
+  // card may be a live position, so its premium must keep ticking even days
+  // later. Closed cards skip the stream (their outcome is already final).
   const trackedOptions = useMemo(
-    () => (cards ?? []).filter(card => card.expiry && card.date === todayDate).map(card => `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`),
+    () => (cards ?? []).filter(card => card.expiry && (card.date === todayDate || card.outcome?.status === 'open' || card.outcome == null)).map(card => `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`),
     [cards, todayDate],
   );
   const { spots, futuresTicks, optionTicks, asOf, failed: spotFailed } = useMarketSnapshot(trackedSymbols, trackedOptions);

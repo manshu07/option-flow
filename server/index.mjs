@@ -1106,7 +1106,7 @@ async function handle(req, res) {
     // sockets already received) pushed every 3s. Query params name the extra
     // contracts to track: symbols=A,B and options=SYM|strike|SIDE|expiry,…
     const streamSymbols = (url.searchParams.get('symbols') ?? '').split(',').filter(part => REPLAY_SYMBOL.test(part)).slice(0, 12);
-    const streamOptions = (url.searchParams.get('options') ?? '').split(',').filter(Boolean).slice(0, 16).map(entry => {
+    const streamOptions = (url.searchParams.get('options') ?? '').split(',').filter(Boolean).slice(0, 64).map(entry => {
       const [symbol, strike, side, expiry] = entry.split('|');
       return { symbol, strike: Number(strike), side: side === 'PE' ? 'PE' : 'CE', expiry };
     }).filter(option => option.symbol && Number.isFinite(option.strike));
