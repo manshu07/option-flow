@@ -90,7 +90,7 @@ export function observationCaption(card) {
   const lines = [
     `🔍 <b>OBSERVATION</b> · ${symbol} ${strike}${side}${expiry ? ` · ${escapeHtml(expiry)}` : ''}${at ? ` · ${escapeHtml(at)}` : ''}`,
     '',
-    `Bias: <b>${escapeHtml(String(card?.bias ?? 'neutral').toLowerCase())}</b> · ${card?.early ? `EARLY (${escapeHtml(card.early)})` : `quality <b>${Number.isFinite(card?.quality) ? `${(card.quality * 100).toFixed(0)}%` : 'unavailable'}</b>`} · strike pick ${Number.isFinite(card?.strikePickProbability) ? `${(card.strikePickProbability * 100).toFixed(0)}%` : 'unavailable'}`,
+    `Bias: <b>${escapeHtml(String(card?.bias ?? 'neutral').toLowerCase())}</b> · ${card?.reEntry ? '<b>RE-ENTRY</b> · ' : ''}${card?.early ? `EARLY (${escapeHtml(card.early)})` : `quality <b>${Number.isFinite(card?.quality) ? `${(card.quality * 100).toFixed(0)}%` : 'unavailable'}</b>`} · strike pick ${Number.isFinite(card?.strikePickProbability) ? `${(card.strikePickProbability * 100).toFixed(0)}%` : 'unavailable'}`,
     '',
     '<b>Trade map</b> (premium)',
     `• Entry ~<b>${priceText(entry)}</b> · spot ${priceText(card?.spot)}${spotMove ? ` (${spotMove})` : ''}`,
@@ -177,6 +177,7 @@ export function observationSubscriberCaption(card) {
   const lines = [
     `📌 <b>${symbol} ${strike}${side}</b>${expiry ? ` · ${escapeHtml(expiry)}` : ''}`,
     `Entry ~${price(card?.entry)} · SL ${price(card?.sl)} · TGT1 ${price(card?.tgt1)} · TGT2 ${price(card?.tgt2)}`,
+    ...(card?.reEntry ? ['🔁 RE-ENTRY setup — stop hit earlier, trend back in favour'] : []),
   ];
   // Same required-level line as the owner's copy: plain prices, no greeks.
   if (card?.needs?.tgt1 && Number.isFinite(card.needs.tgt1.level)) {
@@ -208,7 +209,7 @@ export function renderObservationCardSvg(card) {
   const pin = dealerFlow && typeof card?.gamma?.pin === 'string' && card.gamma.pin ? ` · pin ${card.gamma.pin}` : '';
   const theta = thetaText(daysToExpiry(card?.date, card?.expiry));
   const quality = Number.isFinite(card?.quality) ? `${(card.quality * 100).toFixed(0)}%` : '—';
-  const qualityLabel = card?.early ? `Early ${escapeXml(card.early)}` : `Quality ${quality}`;
+  const qualityLabel = card?.reEntry ? 'Re-entry' : card?.early ? `Early ${escapeXml(card.early)}` : `Quality ${quality}`;
   const pickProbability = Number.isFinite(card?.strikePickProbability) ? `${(card.strikePickProbability * 100).toFixed(0)}%` : '—';
   const spot = priceText(card?.spot);
   const spotChange = signedPct(card?.spotChangePct);

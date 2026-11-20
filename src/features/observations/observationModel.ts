@@ -79,6 +79,8 @@ export interface ObservationCard {
   strikePickProbability: number;
   /** Set on code-computed early cards: build-fast (OI ≥5%) or momentum (OI flat/negative). */
   early?: 'build-fast' | 'momentum' | null;
+  /** Set on re-entry cards: one fresh card after an SL-hit contract recovers to cost. */
+  reEntry?: number;
   oiChangePct: number | null;
   gamma?: ObservationGamma | null;
   atr?: { value: number; barMinutes: number; state: 'compressed' | 'normal' | 'expanded' } | null;
@@ -186,10 +188,12 @@ export interface ObservationIdentity {
   symbol?: unknown;
   date?: unknown;
   at?: unknown;
+  reEntry?: number;
 }
 
 export function observationKey(card: ObservationIdentity): string | null {
-  if (typeof card.symbol === 'string' && typeof card.date === 'string') return `${card.symbol}|${card.date}`;
+  const suffix = card.reEntry ? `:re${card.reEntry}` : '';
+  if (typeof card.symbol === 'string' && typeof card.date === 'string') return `${card.symbol}|${card.date}${suffix}`;
   return typeof card.id === 'string' && card.id.length ? `id:${card.id}` : null;
 }
 

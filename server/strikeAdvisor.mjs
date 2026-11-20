@@ -44,6 +44,9 @@ const STOP_FRACTION = 0.45;   // stop at −45% of entry premium (user's −40�
 const TGT1_FRACTION = 0.55;   // first target +55%
 const TGT2_FRACTION = 0.9;    // second target +90%
 const MIN_ENTRY_PREMIUM = 0.5; // skip near-zero premiums — no lottery strikes
+/** Option premiums trade on a ₹0.05 tick — computed levels snap to the grid
+ *  so a card never quotes a price the tape cannot print (5.37 → 5.35). */
+const snapTick = value => Math.round(value * 20) / 20;
 // Liquidity gate (P0-S2): dust strikes are never candidates.
 const LIQUIDITY_MIN_OI = 10_000;
 const LIQUIDITY_MIN_VOLUME = 1_000;
@@ -199,9 +202,9 @@ function gammaCandidateData(series, candidates, bias, walls, now) {
 export function levelsFor(candidate, walls) {
   return {
     entry: round2(candidate.ltp),
-    sl: round2(candidate.ltp * (1 - STOP_FRACTION)),
-    tgt1: round2(candidate.ltp * (1 + TGT1_FRACTION)),
-    tgt2: round2(candidate.ltp * (1 + TGT2_FRACTION)),
+    sl: snapTick(candidate.ltp * (1 - STOP_FRACTION)),
+    tgt1: snapTick(candidate.ltp * (1 + TGT1_FRACTION)),
+    tgt2: snapTick(candidate.ltp * (1 + TGT2_FRACTION)),
     tsl: 'after TGT1, trail the stop to entry (cost)',
     support: walls.support ?? null,
     resistance: walls.resistance ?? null,
@@ -402,7 +405,8 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
 }
 
 export function observationKey(card) {
-  if (typeof card?.symbol === 'string' && typeof card?.date === 'string') return `${card.symbol}|${card.date}`;
+  const suffix = card?.reEntry ? `:re${card.reEntry}` : '';
+  if (typeof card?.symbol === 'string' && typeof card?.date === 'string') return `${card.symbol}|${card.date}${suffix}`;
   return typeof card?.id === 'string' && card.id.length ? `id:${card.id}` : null;
 }
 
@@ -444,6 +448,11 @@ function saveObservations(path, cards) {
 
 const notified = new Set(); // `symbol|sessionDate` — one Telegram note per card per day
 const upgradeNotified = new Set(); // `symbol|sessionDate` — one upgrade note per card per day
+// Intraday SL-hit marks for the re-entry trigger: a pass that sees a card's
+// live premium at/below its stop records it here; a later pass that sees the
+// contract recovered back to entry fires the RE-ENTRY card (owner rule).
+const slHitLive = new Set();
+let slHitSession = null;
 
 function futuresAtr(snapshot, symbol, sessionDate, now) {
   if (typeof symbol !== 'string' || typeof sessionDate !== 'string' || !snapshot || snapshot.symbol !== symbol || snapshot.session !== sessionDate || !Array.isArray(snapshot.months)) return null;
@@ -502,7 +511,17 @@ export function orbStrategy(snapshot, card, now) {
  * sits one such move away and targets 1.5× / 2.5× it. Falls back to the fixed
  * premium fractions (levelsBasis 'fixed') when either number is unavailable.
  */
-export function adaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now(), moveStats = null, levelGrid = null, policy = process.env.ADVISOR_LEVEL_POLICY || 'achievable' } = {}) {
+export function adaptiveLevels(card, opts = {}) {
+  const priced = computeAdaptiveLevels(card, opts);
+  return {
+    ...priced,
+    sl: Number.isFinite(priced.sl) ? snapTick(priced.sl) : priced.sl,
+    tgt1: Number.isFinite(priced.tgt1) ? snapTick(priced.tgt1) : priced.tgt1,
+    tgt2: Number.isFinite(priced.tgt2) ? snapTick(priced.tgt2) : priced.tgt2,
+  };
+}
+
+function computeAdaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now(), moveStats = null, levelGrid = null, policy = process.env.ADVISOR_LEVEL_POLICY || 'achievable' } = {}) {
   const atr = card?.atr?.value;
   const entry = card?.entry;
   // Only the premium is mandatory. History and the path backtest size levels
@@ -758,7 +777,60 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     } : null;
     const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...decisions.cards], { trendFor, log });
     if (early.length) log(`advisor early signals: ${early.map(card => `${card.symbol} ${card.strike}${card.side} (${card.early})`).join(', ')}`);
-    const cards = await enrichWithFuturesAtr([...decisions.cards, ...early], { readFuturesSnapshot, sessionDate, now, log });
+    // RE-ENTRY (owner rule): an SL-hit card whose contract recovers back to
+    // the original entry gets ONE fresh best-strike card tagged RE-ENTRY.
+    // Two hit paths — a journal-resolved SL (outcome sl) or an intraday hit
+    // tracked live across passes. Recovery = live premium back at/above entry.
+    if (slHitSession !== sessionDate) { slHitLive.clear(); slHitSession = sessionDate; }
+    const reentries = [];
+    const premiumOf = card => {
+      const series = (market.series ?? []).find(item => item?.s === card.symbol);
+      if (!series) return null;
+      const rows = typeof card.expiry === 'string' && series?.next?.e === card.expiry ? series.next.r : series?.r;
+      const row = (rows ?? []).find(r => Array.isArray(r) && r[0] === card.strike && r[1] === (card.side === 'CE' ? 0 : 1));
+      return Array.isArray(row) && Number.isFinite(row[2]) && row[2] > 0 ? row[2] : null;
+    };
+    for (const prev of existingForDedupe) {
+      if (prev.symbol == null || prev.date !== sessionDate || prev.reEntry) continue;
+      if (existingForDedupe.some(o => o.symbol === prev.symbol && o.date === prev.date && o.reEntry)) continue;
+      if (!Number.isFinite(prev.entry) || !Number.isFinite(prev.sl) || !Number.isFinite(prev.tgt1)) continue;
+      if (prev.expiry && prev.expiry < sessionDate) continue;
+      const premium = premiumOf(prev);
+      if (premium == null) continue;
+      const hit = prev.outcome?.status === 'sl' || slHitLive.has(`${prev.symbol}|${prev.date}`) || premium <= prev.sl;
+      if (premium <= prev.sl) slHitLive.add(`${prev.symbol}|${prev.date}`);
+      if (!hit || premium < prev.entry) continue;
+      const series = (market.series ?? []).find(item => item?.s === prev.symbol);
+      const chain = chooseChain(series, now);
+      if (!chain) continue;
+      const candidate = candidateStrikes(chain, prev.bias ?? 'bullish')[0];
+      if (!candidate || !(candidate.ltp > MIN_ENTRY_PREMIUM)) continue;
+      reentries.push({ prev, chain, candidate });
+      slHitLive.delete(`${prev.symbol}|${prev.date}`); // recovered — stop re-arming
+    }
+    const reCards = reentries.map(({ prev, chain, candidate }) => ({
+      id: `${prev.symbol}|${sessionDate}:re1`,
+      at: now,
+      date: sessionDate,
+      symbol: prev.symbol,
+      spot: Number.isFinite(chain.sp) ? chain.sp : null,
+      spotChangePct: null,
+      bias: prev.bias ?? 'bullish',
+      side: candidate.side === 0 ? 'CE' : 'PE',
+      strike: candidate.strike,
+      expiry: chain.e ?? prev.expiry ?? null,
+      ...levelsFor(candidate, chainWalls(chain)),
+      quality: null,
+      strikePickProbability: null,
+      oiChangePct: candidate.oiChangePct,
+      delta: candidate.delta ?? null,
+      iv: candidate.iv ?? null,
+      reEntry: 1,
+      atr: null,
+      disclaimer: DISCLAIMER,
+    }));
+    if (reCards.length) log(`advisor re-entry cards: ${reCards.map(card => `${card.symbol} ${card.strike}${card.side} (RE-ENTRY)`).join(', ')}`);
+    const cards = await enrichWithFuturesAtr([...decisions.cards, ...early, ...reCards], { readFuturesSnapshot, sessionDate, now, log });
     // A card whose measured premium expectancy is negative is not an
     // observation worth acting on — the owner's rule is that a card's target
     // should be achievable, not just possible.

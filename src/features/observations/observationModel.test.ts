@@ -15,6 +15,14 @@ describe('Observation identity', () => {
     expect(observationKey({ id: 'timestamp-id', symbol: 'NIFTY', date: '2026-11-16' })).toBe('NIFTY|2026-11-16');
   });
 
+  it('separates re-entry cards from the original by a :re suffix', () => {
+    expect(observationKey({ symbol: 'NIFTY', date: '2026-11-16', reEntry: 1 })).toBe('NIFTY|2026-11-16:re1');
+    expect(observationKey({ symbol: 'NIFTY', date: '2026-11-16', reEntry: 2 })).toBe('NIFTY|2026-11-16:re2');
+    const original = { id: 'a', symbol: 'NIFTY', date: '2026-11-16' };
+    const reentry = { id: 'b', symbol: 'NIFTY', date: '2026-11-16', reEntry: 1 };
+    expect(uniqueObservationCards([original, reentry])).toEqual([original, reentry]);
+  });
+
   it('keeps the first card for each symbol/date and allows a new session card', () => {
     const newest = { id: 'new', symbol: 'NIFTY', date: '2026-11-16', entry: 100 };
     const duplicate = { id: 'old', symbol: 'NIFTY', date: '2026-11-16', entry: 90 };

@@ -364,7 +364,7 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
       <header className="obs-card__head">
         <h3 className="obs-card__symbol">{card.symbol}</h3>
         <span className={`obs-card__contract ${up ? 'is-up' : 'is-down'}`}>{card.strike}{card.side}{expiry ? ` · ${expiry}` : ''}</span>
-        <span className={`obs-card__bias ${up ? 'is-up' : 'is-down'}`}>{up ? 'bullish' : 'bearish'} · {card.early ? `EARLY (${card.early})` : Number.isFinite(card.quality) ? `quality ${(card.quality * 100).toFixed(0)}%` : 'quality unavailable'}</span>
+        <span className={`obs-card__bias ${up ? 'is-up' : 'is-down'}`}>{card.reEntry ? 'RE-ENTRY · ' : ''}{up ? 'bullish' : 'bearish'} · {card.early ? `EARLY (${card.early})` : Number.isFinite(card.quality) ? `quality ${(card.quality * 100).toFixed(0)}%` : 'quality unavailable'}</span>
         <time className="obs-card__time" dateTime={Number.isFinite(card.at) ? new Date(card.at).toISOString() : undefined}>
           {stamped ? `${stamped.date} · ${stamped.time} IST · ${ageLabel(card.at, Date.now())}` : 'Timestamp unavailable'}
         </time>

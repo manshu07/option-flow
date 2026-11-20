@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { candidateStrikes, chainWalls, chooseChain, orbStrategy, earlyCards, adaptiveLevels, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { candidateStrikes, chainWalls, chooseChain, orbStrategy, earlyCards, adaptiveLevels, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, observationKey, runAdvisor } from './strikeAdvisor.mjs';
 import { observationCaption } from './observationCardSvg.mjs';
 import { gammaProfile } from '../src/features/market-flow/gammaModel';
 
@@ -19,6 +19,23 @@ function seriesFixture() {
   }
   return { s: 'MANAPPURAM', sp: 300.4, pc: 308, atm: 300, e: '2026-11-19', r: rows, date: '2026-11-16' };
 }
+
+describe('levels and keys', () => {
+  it('snaps computed levels to the ₹0.05 tape grid', () => {
+    const levels = levelsFor({ ltp: 9.47, delta: 0.4 }, { support: null, resistance: null });
+    expect(levels.entry).toBe(9.47);
+    expect(levels.sl).toBe(5.2);
+    expect(levels.tgt1).toBe(14.7);
+    expect(levels.tgt2).toBe(18);
+    // Already-grid values pass through untouched.
+    expect(levelsFor({ ltp: 5.35, delta: 0.3 }, { support: null, resistance: null }).sl).toBe(2.95);
+  });
+
+  it('observationKey separates re-entry cards from the original', () => {
+    expect(observationKey({ symbol: 'X', date: '2026-11-19' })).toBe('X|2026-11-19');
+    expect(observationKey({ symbol: 'X', date: '2026-11-19', reEntry: 1 })).toBe('X|2026-11-19:re1');
+  });
+});
 
 describe('candidateStrikes', () => {
   it('skips dust strikes and wide spreads, and derives ATR/delta levels', () => {
