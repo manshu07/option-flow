@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   filterObservationCards,
+  formatPcrContext,
   highestObservedTarget,
   normalizeFollowThrough,
   observationKey,
@@ -34,6 +35,15 @@ describe('Observation identity', () => {
 
   it('falls back to the persisted id when symbol/date are unavailable', () => {
     expect(uniqueObservationCards([{ id: 'legacy' }, { id: 'legacy' }, { id: 'other' }])).toEqual([{ id: 'legacy' }, { id: 'other' }]);
+  });
+});
+
+describe('shared PCR context label', () => {
+  it('formats finite ratios and shifts identically and degrades safely when either is missing', () => {
+    expect(formatPcrContext(0.874, -4.2)).toBe('PCR 0.87 (−4% 15m)');
+    expect(formatPcrContext(0.87, 3)).toBe('PCR 0.87 (+3% 15m)');
+    expect(formatPcrContext(null, null)).toBe('PCR — (— 15m)');
+    expect(formatPcrContext(Number.NaN, Infinity)).toBe('PCR — (— 15m)');
   });
 });
 

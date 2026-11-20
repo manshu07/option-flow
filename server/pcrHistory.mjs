@@ -1,7 +1,7 @@
 const WINDOW_MS = 15 * 60_000;
 const DEFAULT_LIMIT = 100;
 
-function pcrForSeries(series) {
+export function pcrForNearSeries(series) {
   let putOi = 0;
   let callOi = 0;
   for (const row of Array.isArray(series?.r) ? series.r : []) {
@@ -30,7 +30,7 @@ export function createPcrHistory(limit = DEFAULT_LIMIT) {
     if (!Number.isFinite(at)) return;
     for (const series of Array.isArray(seriesList) ? seriesList : []) {
       if (typeof series?.s !== 'string' || !series.s) continue;
-      const pcr = pcrForSeries(series);
+      const pcr = pcrForNearSeries(series);
       if (pcr == null) continue;
       const points = bySymbol.get(series.s) ?? [];
       const existing = points.findIndex(point => point.t === at);

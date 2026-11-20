@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { createPcrHistory } from './pcrHistory.mjs';
+import { createPcrHistory, pcrForNearSeries } from './pcrHistory.mjs';
 
 const series = (symbol: string, rows: unknown[][]) => ({ s: symbol, r: rows });
 
 describe('session PCR history', () => {
+  it('uses near rows rather than next-expiry rows for the card PCR context', () => {
+    const near = series('NIFTY', [[25_000, 0, 1, 1, 200, null], [25_000, 1, 1, 1, 100, null]]) as { s: string; r: unknown[][]; next?: unknown };
+    near.next = { e: '2026-12-31', r: [[25_000, 0, 1, 1, 1, null], [25_000, 1, 1, 1, 9, null]] };
+    expect(pcrForNearSeries(near)).toBe(0.5);
+  });
+
   it('calculates put/call OI from near rows and skips zero, negative, invalid, and unknown-side OI', () => {
     const history = createPcrHistory();
     history.resetForSession('2026-11-20');

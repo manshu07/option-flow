@@ -8,6 +8,7 @@ import { useRemembered, useRememberedChoice } from '@/lib/remembered';
 import { clockOf } from '../market-flow/marketFlowModel';
 import {
   filterObservationCards,
+  formatPcrContext,
   highestObservedTarget,
   normalizeFollowThrough,
   paginateObservationCards,
@@ -376,6 +377,7 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
         <div className="is-up"><dt>TGT1 +55%</dt><dd>{priceText(card.tgt1)}</dd></div>
         <div className="is-up"><dt>TGT2 +90%</dt><dd>{priceText(card.tgt2)}</dd></div>
       </dl>
+      <p className="obs-card__pcr">{formatPcrContext(card.pcrAtEntry, card.pcrShift)}</p>
       <p className="obs-card__walls">
         {card.support && <span>support {card.support.strike} PE ({(card.support.oi / 1_000_000).toFixed(1)}M{card.support.changePct != null ? ` ${card.support.changePct >= 0 ? '+' : ''}${card.support.changePct.toFixed(2)}%` : ''})</span>}
         {card.resistance && <span>resistance {card.resistance.strike} CE ({(card.resistance.oi / 1_000_000).toFixed(1)}M{card.resistance.changePct != null ? ` ${card.resistance.changePct >= 0 ? '+' : ''}${card.resistance.changePct.toFixed(2)}%` : ''})</span>}

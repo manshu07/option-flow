@@ -23,6 +23,8 @@ const card = {
   quality: 0.8,
   strikePickProbability: 0.7,
   oiChangePct: 5,
+  pcrAtEntry: 0.874,
+  pcrShift: -4.2,
   gamma: {
     gexAtStrike: 1_250_000,
     distanceToFlip: 0.44,
@@ -96,6 +98,7 @@ describe('ObservationsPage cards and table', () => {
     expect(screen.getByText('551.81')).toBeInTheDocument();
     expect(screen.getByText('1555.11')).toBeInTheDocument();
     expect(screen.getByText('1906.27')).toBeInTheDocument();
+    expect(screen.getByText('PCR 0.87 (−4% 15m)')).toBeInTheDocument();
     expect(screen.queryByText('~999.00')).not.toBeInTheDocument();
     expect(screen.getByText(/3\.14%/)).toBeInTheDocument();
     expect(screen.getByText(/-1\.23%/)).toBeInTheDocument();

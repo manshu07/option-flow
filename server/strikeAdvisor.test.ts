@@ -601,6 +601,39 @@ describe('runAdvisor gates', () => {
     }
   });
 
+  it('persists the near-chain PCR and shift identically on advisor cards and subscriber copies', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-pcr-context-'));
+    const obsPath = join(dir, 'observations.json');
+    const near = { ...seriesFixture(), s: 'PCRCARD' };
+    const next = { e: '2026-12-31', r: [[300, 0, 10, 9, 10_000_000, 9_000_000, 50_000], [300, 1, 10, 9, 1_000_000, 900_000, 50_000]] };
+    const marketSeries = { ...near, next };
+    const ask = async () => ({ quality_PCRCARD: { noul: 0.9 }, strike_PCRCARD: { choice: 'c1', probabilities: { c1: 0.9 } } });
+    const sent: unknown[] = [];
+    const subscribers: string[] = [];
+    const pcrShiftFor = vi.fn(() => -4.2);
+    try {
+      await runAdvisor({ date: '2026-11-16', series: [marketSeries] }, {
+        obsPath,
+        watches: [{ symbol: 'PCRCARD', bias: 'bullish' }],
+        now: NOW,
+        ask,
+        pcrShiftFor,
+        send: async card => { sent.push(card); return { sent: true }; },
+        subscriberChatIds: [123],
+        sendSubscriber: async text => { subscribers.push(text); return { sent: true }; },
+      });
+      const stored = loadObservations(obsPath)[0];
+      expect(stored.pcrAtEntry).toBeCloseTo(7_400_000 / 8_200_000, 6);
+      expect(stored.pcrShift).toBe(-4.2);
+      expect(sent[0]).toMatchObject({ pcrAtEntry: stored.pcrAtEntry, pcrShift: stored.pcrShift });
+      expect(subscribers[0]).toContain('PCR 0.90 (−4% 15m)');
+      expect(pcrShiftFor).toHaveBeenCalledWith('PCRCARD', NOW);
+      expect(stored.pcrAtEntry).not.toBeCloseTo(0.1, 1); // next-expiry PCR is deliberately ignored.
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('samples cached live readings immediately before sending without persisting them', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'obs-live-'));
     const obsPath = join(dir, 'observations.json');

@@ -1,3 +1,5 @@
+import { formatPcrContext } from '../src/features/observations/observationModel.ts';
+
 const escapeXml = value => String(value ?? '—').replace(/[&<>"']/g, character => ({
   '&': '&amp;',
   '<': '&lt;',
@@ -101,6 +103,7 @@ export function observationCaption(card) {
     '',
     '<b>Chain walls</b>',
     `• Support ${escapeHtml(support)} · Resistance ${escapeHtml(resistance)}`,
+    formatPcrContext(card?.pcrAtEntry, card?.pcrShift),
   ];
 
   // The stock price each premium level needs, decay included — the owner's
@@ -178,6 +181,7 @@ export function observationSubscriberCaption(card) {
     `📌 <b>${symbol} ${strike}${side}</b>${expiry ? ` · ${escapeHtml(expiry)}` : ''}`,
     `Entry ~${price(card?.entry)} · SL ${price(card?.sl)} · TGT1 ${price(card?.tgt1)} · TGT2 ${price(card?.tgt2)}`,
     ...(card?.reEntry ? ['🔁 RE-ENTRY setup — stop hit earlier, trend back in favour'] : []),
+    formatPcrContext(card?.pcrAtEntry, card?.pcrShift),
   ];
   // Same required-level line as the owner's copy: plain prices, no greeks.
   if (card?.needs?.tgt1 && Number.isFinite(card.needs.tgt1.level)) {
@@ -223,7 +227,9 @@ export function renderObservationCardSvg(card) {
   const disclaimer = escapeXml(card?.disclaimer ?? 'Educational observation; not trade advice.');
   const range = atrText(card?.atr);
   const strategy = typeof card?.strategy?.label === 'string' && card.strategy.label ? card.strategy.label : null;
-  const shift = (range ? 23 : 0) + (strategy ? 23 : 0);
+  const pcr = formatPcrContext(card?.pcrAtEntry, card?.pcrShift);
+  const pcrOffset = (range ? 23 : 0) + (strategy ? 23 : 0);
+  const shift = pcrOffset + 23;
   const height = 520 + shift;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="760" height="${height}" viewBox="0 0 760 ${height}" role="img" aria-label="Observation ${label}">
@@ -243,6 +249,7 @@ export function renderObservationCardSvg(card) {
 <text x="700" y="181" fill="${accent}" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="750">${spotChange}</text>
 ${range ? `<text x="68" y="219" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="11">${escapeXml(range)}</text>` : ''}
 ${strategy ? `<text x="68" y="${219 + (range ? 23 : 0)}" fill="${card.strategy.qualifies ? '#16834a' : '#737887'}" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="${card.strategy.qualifies ? '700' : '500'}">${escapeXml(strategy)}</text>` : ''}
+<text x="68" y="${219 + pcrOffset}" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="11">${escapeXml(pcr)}</text>
 <text x="68" y="${226 + shift}" fill="#737887" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="1">PREMIUM PLAN</text>
 <g font-family="Inter,Arial,sans-serif">
   <rect x="68" y="${238 + shift}" width="148" height="74" rx="10" fill="#f6f7f9" stroke="#e3e5e9"/>

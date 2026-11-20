@@ -12,6 +12,7 @@ import { greeks, optionIv, premiumAtLevel, spotForPremium, levelFor, yearsToExpi
 import { loadMoveStats, moveFor, reachRate } from './moveStats.mjs';
 import { loadLevelGrid, cellFor, pickPairForStrike } from './levelPolicy.mjs';
 import { liveRegime, REGIME_LOOKBACK } from './moveRegime.mjs';
+import { pcrForNearSeries } from './pcrHistory.mjs';
 import { scoreStrikes } from './strikeChoice.mjs';
 
 const MOVE_STATS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data', 'move-stats');
@@ -323,6 +324,17 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
   const configuredPcrGate = Number(process.env.MOMENTUM_PCR_GATE_PCT ?? 3);
   const pcrGateMin = Number.isFinite(configuredPcrGate) && configuredPcrGate > 0 ? configuredPcrGate : 3;
   const rangeGateEnabled = process.env.ADVISOR_RANGE_GATE !== '0';
+  const pcrShifts = new Map();
+  const pcrShiftAtEntry = symbol => {
+    if (pcrShifts.has(symbol)) return pcrShifts.get(symbol);
+    let shift = null;
+    try {
+      const value = pcrShiftFor?.(symbol, now);
+      if (Number.isFinite(value)) shift = value;
+    } catch { /* missing history is displayed as unavailable */ }
+    pcrShifts.set(symbol, shift);
+    return shift;
+  };
   // Opening chop: the first minutes after 09:15 produced the 09:40-10:34 SL
   // cluster — momentum waits MOMENTUM_SKIP_OPEN_MIN minutes (default 15).
   const skipOpenMin = Number(process.env.MOMENTUM_SKIP_OPEN_MIN) || 15;
@@ -354,8 +366,7 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
       }
     }
     if (momentum && typeof pcrShiftFor === 'function') {
-      let pcrDelta = null;
-      try { pcrDelta = pcrShiftFor(mover.symbol, now); } catch { /* missing history passes */ }
+      const pcrDelta = pcrShiftAtEntry(mover.symbol);
       const against = Number.isFinite(pcrDelta) && (bias === 'bullish' ? pcrDelta >= pcrGateMin : pcrDelta <= -pcrGateMin);
       if (against) {
         const value = `${pcrDelta >= 0 ? '+' : ''}${pcrDelta.toFixed(1)}%`;
@@ -402,6 +413,8 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
       symbol: mover.symbol,
       spot: Number.isFinite(chain.sp) ? chain.sp : mover.spot ?? null,
       spotChangePct: Number.isFinite(mover.changePct) ? round2(mover.changePct) : null,
+      pcrAtEntry: pcrForNearSeries(series),
+      pcrShift: pcrShiftAtEntry(mover.symbol),
       bias,
       side: candidate.side === 0 ? 'CE' : 'PE',
       strike: candidate.strike,
@@ -776,6 +789,23 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     for (const p of prepared) Object.assign(questions, advisorQuestions(p.symbol, p.bias, p.candidates));
     const answers = await ask(state, questions);
     const decisions = advisorDecisions(prepared, answers);
+    const shiftCache = new Map();
+    const pcrShiftAtCard = symbol => {
+      if (shiftCache.has(symbol)) return shiftCache.get(symbol);
+      let shift = null;
+      try {
+        const value = pcrShiftFor?.(symbol, now);
+        if (Number.isFinite(value)) shift = value;
+      } catch { /* unavailable PCR history remains null on the card */ }
+      shiftCache.set(symbol, shift);
+      return shift;
+    };
+    const withPcrContext = card => ({
+      ...card,
+      pcrAtEntry: pcrForNearSeries(seriesFor(card.symbol)),
+      pcrShift: pcrShiftAtCard(card.symbol),
+    });
+    const modelCards = decisions.cards.map(withPcrContext);
     // Code-computed early grabs ride alongside the model's cards. They reuse
     // the same session PCR history, futures slope and live regime as pricing.
     const existingForDedupe = loadObservations(obsPath);
@@ -810,7 +840,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       // market build's spot, without changing historical regime semantics.
       return liveRegime(moveStats?.recentCloses, livePrice);
     };
-    const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...decisions.cards], {
+    const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...modelCards], {
       trendFor,
       pcrShiftFor,
       regimeFor,
@@ -863,6 +893,8 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       quality: null,
       strikePickProbability: null,
       oiChangePct: candidate.oiChangePct,
+      pcrAtEntry: pcrForNearSeries(series),
+      pcrShift: pcrShiftAtCard(prev.symbol),
       delta: candidate.delta ?? null,
       iv: candidate.iv ?? null,
       reEntry: 1,
@@ -870,7 +902,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       disclaimer: DISCLAIMER,
     }));
     if (reCards.length) log(`advisor re-entry cards: ${reCards.map(card => `${card.symbol} ${card.strike}${card.side} (RE-ENTRY)`).join(', ')}`);
-    const cards = await enrichWithFuturesAtr([...decisions.cards, ...early, ...reCards], { readFuturesSnapshot, sessionDate, now, log });
+    const cards = await enrichWithFuturesAtr([...modelCards, ...early, ...reCards], { readFuturesSnapshot, sessionDate, now, log });
     // A card whose measured premium expectancy is negative is not an
     // observation worth acting on — the owner's rule is that a card's target
     // should be achievable, not just possible.

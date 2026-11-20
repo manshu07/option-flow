@@ -22,6 +22,8 @@ const card = {
   quality: 0.82,
   strikePickProbability: 0.74,
   oiChangePct: 4.2,
+  pcrAtEntry: 0.874,
+  pcrShift: -4.2,
   disclaimer: 'Educational observation; not trade advice.',
 };
 
@@ -39,6 +41,7 @@ describe('Observation card SVG', () => {
     expect(svg).toContain('1906.27');
     expect(svg).toContain('+0.58%');
     expect(svg).toContain('not trade advice');
+    expect(svg).toContain('PCR 0.87 (−4% 15m)');
     expect(svg).not.toContain('1003.2999877929688');
   });
 
@@ -54,6 +57,7 @@ describe('Observation card SVG', () => {
     expect(caption).toContain('Bias: <b>bullish</b> · quality <b>82%</b> · strike pick 74%');
     expect(caption).toContain('• Entry ~<b>1003.30</b> · spot 25291.15 (+0.6%)');
     expect(caption).toContain('• Support 25100 PE · Resistance 25200 CE');
+    expect(caption).toContain('PCR 0.87 (−4% 15m)');
     expect(caption).toContain('captured-data observation · not advice · final call yours');
     expect(caption).not.toContain('<b>Live</b>');
     expect(caption).not.toContain('ago');
@@ -133,8 +137,9 @@ describe('observationSubscriberCaption', () => {
   });
 
   it('keeps the frozen subscriber output exact and independent of ATR', () => {
-    const expected = '📌 <b>NIFTY 25150CE</b> · 19-Nov (3 DTE)\nEntry ~₹1003.30 · SL ₹551.81 · TGT1 ₹1555.11 · TGT2 ₹1906.27\n⏳ 3 DTE — theta eats the premium daily; if TGT1 is not hit by 14:30, exit.\n🎓 captured-data observation · not investment advice · /stop to opt out';
+    const expected = '📌 <b>NIFTY 25150CE</b> · 19-Nov (3 DTE)\nEntry ~₹1003.30 · SL ₹551.81 · TGT1 ₹1555.11 · TGT2 ₹1906.27\nPCR 0.87 (−4% 15m)\n⏳ 3 DTE — theta eats the premium daily; if TGT1 is not hit by 14:30, exit.\n🎓 captured-data observation · not investment advice · /stop to opt out';
     expect(observationSubscriberCaption(card)).toBe(expected);
     expect(observationSubscriberCaption({ ...card, atr: { value: 0, barMinutes: 15, state: 'compressed' } })).toBe(expected);
+    expect(observationSubscriberCaption({ ...card, pcrAtEntry: null, pcrShift: null })).toContain('PCR — (— 15m)');
   });
 });

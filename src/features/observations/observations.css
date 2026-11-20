@@ -154,6 +154,7 @@
 .obs-card__levels dd { margin: 2px 0 0; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .obs-card__levels .is-up dd { color: var(--mf-up, #1d8a4b); }
 .obs-card__levels .is-down dd { color: var(--mf-down, #c23b3b); }
+.obs-card__pcr { margin: -4px 0 0; color: var(--mf-dim, #6b6b74); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 .obs-card__walls {
   margin: 0;

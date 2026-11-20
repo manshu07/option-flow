@@ -77,6 +77,10 @@ export interface ObservationCard {
   resistance: { strike: number; oi: number; changePct: number | null } | null;
   quality: number;
   strikePickProbability: number;
+  /** Put/call OI ratio on the near chain when the card was built. */
+  pcrAtEntry?: number | null;
+  /** Near-chain PCR change over the preceding 15 minutes, in percent. */
+  pcrShift?: number | null;
   /** Set on code-computed early cards: build-fast (OI ≥5%) or momentum (OI flat/negative). */
   early?: 'build-fast' | 'momentum' | null;
   /** Set on re-entry cards: one fresh card after an SL-hit contract recovers to cost. */
@@ -90,6 +94,15 @@ export interface ObservationCard {
 
 function finite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+/** One canonical PCR label shared by the app card and Telegram/SVG copies. */
+export function formatPcrContext(pcrAtEntry: unknown, pcrShift: unknown): string {
+  const pcr = finite(pcrAtEntry) && pcrAtEntry >= 0 ? pcrAtEntry.toFixed(2) : '—';
+  const shift = finite(pcrShift)
+    ? `${pcrShift < 0 ? '−' : pcrShift > 0 ? '+' : ''}${Math.round(Math.abs(pcrShift))}% 15m`
+    : '— 15m';
+  return `PCR ${pcr} (${shift})`;
 }
 
 function timestamp(value: unknown): value is number {
