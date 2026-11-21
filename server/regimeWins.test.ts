@@ -22,6 +22,7 @@ describe('regime win cross-tab builder', () => {
       id: `${bucketIndex}-${regimeIndex}`,
       symbol: `SYM${bucketIndex}${regimeIndex}`,
       date: `2026-11-${String(18 + regimeIndex).padStart(2, '0')}`,
+      side: regimeIndex % 2 === 0 ? 'CE' : 'PE',
       regime,
       ...bucket,
       outcome: outcomes[(bucketIndex * regimes.length + regimeIndex) % outcomes.length],
@@ -48,11 +49,14 @@ describe('regime win cross-tab builder', () => {
     expect(report.rows).toHaveLength(100);
     expect(report.rows.reduce((sum, row) => sum + row.cards, 0)).toBe(cards.length);
     expect(report.bucketRegime).toHaveLength(20);
+    expect(report.regimeDirection).toHaveLength(12);
     expect(report.bucketRegime.reduce((sum, row) => sum + row.resolved, 0)).toBe(16);
     expect(report.bucketRegime.reduce((sum, row) => sum + row.open, 0)).toBe(4);
     expect(report.bucketRegime.reduce((sum, row) => sum + row.tgt1, 0)).toBe(4);
     expect(report.bucketRegime.reduce((sum, row) => sum + row.sl, 0)).toBe(4);
     expect(report.bucketRegime.reduce((sum, row) => sum + (row.netR ?? 0), 0)).toBe(3);
+    expect(report.regimeDirection.reduce((sum, row) => sum + row.cards, 0)).toBe(cards.length);
+    expect(report.regimeDirection.find(row => row.regime === 'range' && row.direction === 'CE')).toMatchObject({ cards: 5, resolved: 4, tgt1: 1, sl: 1 });
     expect(report.bucketRegime.find(row => row.bucket === 'early-momentum' && row.regime === 'up')).toMatchObject({ cards: 1, resolved: 1, tgt1: 1, winRate: 1, netR: 2 });
     expect(report.bucketRegime.find(row => row.bucket === 'model <65' && row.regime === 'unknown')).toMatchObject({ cards: 1, open: 0, resolved: 1, tgt1: 1, netR: 2 });
     expect(report.bucketRegime.find(row => row.bucket === 'early-momentum' && row.regime === 'unknown')).toMatchObject({ cards: 1, open: 1, resolved: 0, netR: null });

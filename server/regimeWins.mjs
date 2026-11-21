@@ -1,6 +1,7 @@
 const BUCKETS = ['early-momentum', 'early-build-fast', 'model >=65', 'model <65', 're-entry'];
 const REGIMES = ['up', 'down', 'range', 'unknown'];
 const OUTCOMES = ['tgt1', 'sl', 'ambiguous', 'open', 'other'];
+const DIRECTIONS = ['CE', 'PE', 'unknown'];
 const RESOLVED = new Set(['tgt1', 'sl', 'ambiguous', 'other']);
 
 export function signalBucket(card) {
@@ -17,6 +18,10 @@ export function regimeBucket(card) {
 export function outcomeBucket(card) {
   if (!card?.outcome || card.outcome.status === 'open') return 'open';
   return OUTCOMES.includes(card.outcome.status) ? card.outcome.status : 'other';
+}
+
+export function directionBucket(card) {
+  return card?.side === 'CE' || card?.side === 'PE' ? card.side : 'unknown';
 }
 
 function summarize(cards) {
@@ -61,6 +66,13 @@ export function buildRegimeWinsReport(cards) {
       bucketRegime.push({ bucket, regime, ...summarize(group) });
     }
   }
+  const regimeDirection = [];
+  for (const regime of REGIMES) {
+    for (const direction of DIRECTIONS) {
+      const group = source.filter(card => regimeBucket(card) === regime && directionBucket(card) === direction);
+      regimeDirection.push({ regime, direction, ...summarize(group) });
+    }
+  }
   const dates = source.map(card => card?.date).filter(date => typeof date === 'string').sort();
   return {
     schemaVersion: 1,
@@ -69,6 +81,7 @@ export function buildRegimeWinsReport(cards) {
     bucketCounts: Object.fromEntries(BUCKETS.map(bucket => [bucket, source.filter(card => signalBucket(card) === bucket).length])),
     rows,
     bucketRegime,
+    regimeDirection,
   };
 }
 
@@ -80,5 +93,12 @@ export function printRegimeWinsReport(report, write = console.log) {
     const winRate = row.winRate == null ? '—' : `${(row.winRate * 100).toFixed(1)}%`;
     const netR = row.netR == null ? '—' : row.netR.toFixed(2);
     write(`${row.bucket.padEnd(20)} ${row.regime.padEnd(8)} ${row.outcome.padEnd(10)} ${String(row.cards).padStart(5)} ${String(row.resolved).padStart(8)} ${winRate.padStart(6)} ${String(row.tgt1).padStart(6)} ${String(row.sl).padStart(4)} ${String(row.open).padStart(6)} ${netR.padStart(8)}`);
+  }
+  write('\nregime × direction  cards resolved win%   TGT1   SL   open     netR');
+  for (const row of report.regimeDirection) {
+    if (!row.cards) continue;
+    const winRate = row.winRate == null ? '—' : `${(row.winRate * 100).toFixed(1)}%`;
+    const netR = row.netR == null ? '—' : row.netR.toFixed(2);
+    write(`${row.regime.padEnd(19)} ${row.direction.padEnd(9)} ${String(row.cards).padStart(5)} ${String(row.resolved).padStart(8)} ${winRate.padStart(6)} ${String(row.tgt1).padStart(6)} ${String(row.sl).padStart(4)} ${String(row.open).padStart(6)} ${netR.padStart(8)}`);
   }
 }
