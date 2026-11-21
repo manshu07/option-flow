@@ -51,6 +51,7 @@ import { hoursLeft, tokenReminder } from './tokenWatch.mjs';
 import { historyRefreshDue, runHistoryRefresh, istParts } from './historyRefresh.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
+import { sectorMapFromUnderlyings } from './orbModel.mjs';
 import { liveErrorMessage, liveSnapshotMessage, obsSnapshotMessage, oiSnapshotMessage } from './liveCommand.mjs';
 import { formatJournalMessage } from './journalCommand.mjs';
 import { gapOpenDue, gapOpenMessage } from './gapOpen.mjs';
@@ -111,7 +112,7 @@ const orbState = { session: null, sent: new Set(), last: null };
 const tokenWatch = { sentFor: null };
 // Daily futures-history refresh (bhavcopy → capture fold → stats), after 19:30 IST.
 const historyState = { lastRun: null, running: false };
-const ORB_SECTORS = new Map(universe.filter(u => typeof u?.sector === 'string').map(u => [u.symbol, u.sector]));
+const ORB_SECTORS = sectorMapFromUnderlyings(universe);
 const journalMinuteIndexes = new Map();
 let previousOiSessionDate = null;
 let previousOiBaseline = new Map();
@@ -453,6 +454,7 @@ async function build() {
             log,
             readFuturesSnapshot: (symbol, date) => readFutures(SCAN_DIR, date, symbol),
             pcrShiftFor: (symbol, timestamp) => pcrHistory.shiftFor(symbol, timestamp),
+            sectorFor: symbol => ORB_SECTORS.get(symbol) ?? null,
             subscriberChatIds: activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)),
             getLive: card => {
               try {

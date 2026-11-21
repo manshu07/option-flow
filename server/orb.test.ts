@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { istMinuteOfDay, orbSlotDue, loadSectorMap, leadingSectors, orbScan, ORB_SLOTS } from './orb.mjs';
+import { sectorMapFromUnderlyings } from './orbModel.mjs';
 
 const SESSION = '2026-11-16';
 const OPEN = Date.parse(`${SESSION}T09:15:00+05:30`);
@@ -29,6 +30,16 @@ describe('sector wiring', () => {
     expect(map.get('ITC')).toBe('fmcg-consumer');
     expect(map.has('X')).toBe(false);
     expect(loadSectorMap('/fake', () => 'not json').size).toBe(0);
+  });
+
+  it('builds the canonical ORB/advisor sector map from the catalog rows', () => {
+    const map = sectorMapFromUnderlyings([
+      { symbol: 'ITC', sector: 'fmcg-consumer' },
+      { symbol: 'X', sector: '' },
+      { symbol: 'missing-sector' },
+      null,
+    ]);
+    expect([...map]).toEqual([['ITC', 'fmcg-consumer']]);
   });
 
   it('derives leading sectors from the day\'s strongest movers', () => {

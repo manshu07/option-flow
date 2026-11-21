@@ -317,9 +317,10 @@ function acceptCheck(card, minExpectancy) {
  * applies to both momentum and build-fast cards. All filters run before a card
  * takes one of the two per-pass slots.
  */
-export function earlyCards(market, date, now, existing = [], { max = 2, minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0), priceCard, trendFor, pcrShiftFor = null, regimeFor = null, log = () => {} } = {}) {
+export function earlyCards(market, date, now, existing = [], { max = 2, minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0), priceCard, trendFor, pcrShiftFor = null, regimeFor = null, sectorFor = null, sectorBudget = null, sectorCardCap = sectorCardCapFromEnv(), log = () => {} } = {}) {
   if (!market || typeof date !== 'string') return [];
   const price = priceCard ?? (card => adaptiveLevels(card, { now, moveStats: loadMoveStats(MOVE_STATS_DIR, card.symbol), levelGrid: loadLevelGrid(LEVEL_GRID_DIR, card.symbol) }));
+  const budget = sectorBudget ?? createSectorCardBudget(existing, date, sectorFor, sectorCardCap);
   const trendGateMin = Number(process.env.MOMENTUM_TREND_GATE_PCT) || 0.1;
   const configuredPcrGate = Number(process.env.MOMENTUM_PCR_GATE_PCT ?? 3);
   const pcrGateMin = Number.isFinite(configuredPcrGate) && configuredPcrGate > 0 ? configuredPcrGate : 3;
@@ -432,6 +433,11 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
     // Gate before counting the slot: a no-edge / negative-expectancy candidate
     // is dropped here and the next mover gets its chance (MOTILALOFS starvation).
     if (!acceptCheck(price(card), minExpectancy).ok) continue;
+    const sector = budget.add(card);
+    if (!sector.ok) {
+      log(`advisor skipped ${mover.symbol}: sector cluster full: ${sector.sector}`);
+      continue;
+    }
     seen.add(key);
     out.push(card);
   }
@@ -442,6 +448,66 @@ export function observationKey(card) {
   const suffix = card?.reEntry ? `:re${card.reEntry}` : '';
   if (typeof card?.symbol === 'string' && typeof card?.date === 'string') return `${card.symbol}|${card.date}${suffix}`;
   return typeof card?.id === 'string' && card.id.length ? `id:${card.id}` : null;
+}
+
+function sectorCardCapFromEnv() {
+  const configured = process.env.SECTOR_CARD_CAP;
+  if (configured == null || configured.trim() === '') return 2;
+  const value = Number(configured);
+  return Number.isSafeInteger(value) && value >= 0 ? value : 2;
+}
+
+function openForSession(card, date) {
+  return card?.date === date && (!card.outcome || card.outcome.status === 'open');
+}
+
+/** Shared mutable count for the currently accepted session batch. */
+export function createSectorCardBudget(existing, date, sectorFor, limit = sectorCardCapFromEnv()) {
+  const counts = new Map();
+  const keys = new Set();
+  const added = new Map();
+  const cap = Number.isSafeInteger(limit) && limit >= 0 ? limit : 2;
+  const sectorOf = card => {
+    try {
+      const sector = sectorFor?.(card?.symbol);
+      return typeof sector === 'string' && sector ? sector : null;
+    } catch { return null; }
+  };
+  for (const card of Array.isArray(existing) ? existing : []) {
+    if (!openForSession(card, date)) continue;
+    const sector = sectorOf(card);
+    if (!sector) continue;
+    const key = observationKey(card);
+    if (key && keys.has(key)) continue;
+    if (key) keys.add(key);
+    counts.set(sector, (counts.get(sector) ?? 0) + 1);
+  }
+  return {
+    add(card) {
+      const sector = sectorOf(card);
+      if (!sector) return { ok: true, sector: null };
+      const key = observationKey(card);
+      if (key && keys.has(key)) return { ok: true, sector, alreadyCounted: true };
+      if ((counts.get(sector) ?? 0) >= cap) return { ok: false, sector };
+      counts.set(sector, (counts.get(sector) ?? 0) + 1);
+      const token = key ?? card;
+      if (key) keys.add(key);
+      added.set(token, sector);
+      return { ok: true, sector, added: true };
+    },
+    release(card) {
+      const key = observationKey(card);
+      const token = key ?? card;
+      const sector = added.get(token);
+      if (!sector) return;
+      added.delete(token);
+      if (key) keys.delete(key);
+      const count = counts.get(sector) ?? 0;
+      if (count <= 1) counts.delete(sector);
+      else counts.set(sector, count - 1);
+    },
+    count(sector) { return counts.get(sector) ?? 0; },
+  };
 }
 
 export function dedupeObservations(cards) {
@@ -739,7 +805,7 @@ async function enrichWithFuturesAtr(cards, { readFuturesSnapshot, sessionDate, n
  * One advisor pass over the triage's watch list. Never throws; every failure
  * is logged and the observations file keeps its previous content.
  */
-export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null, readFuturesSnapshot = () => null, pcrShiftFor = null, subscriberChatIds = [], sendSubscriber = (text, chatId) => sendTelegram(text, { chatId, parseMode: 'HTML', retry: true }), sendUpgrade = text => sendTelegram(text, { parseMode: 'HTML', retry: true }) } = {}) {
+export async function runAdvisor(market, { obsPath, watches, now = Date.now(), log = () => {}, ask = askTypeSafe, configured = typesafeConfigured, send = sendTelegramObservationCard, getLive = () => null, readFuturesSnapshot = () => null, pcrShiftFor = null, sectorFor = null, subscriberChatIds = [], sendSubscriber = (text, chatId) => sendTelegram(text, { chatId, parseMode: 'HTML', retry: true }), sendUpgrade = text => sendTelegram(text, { parseMode: 'HTML', retry: true }) } = {}) {
   const sessionDate = typeof market?.date === 'string' ? market.date : null;
   if (!configured()) return { skipped: 'not configured' };
   if (!inFireWindow(now)) return { skipped: 'outside fire window' };
@@ -809,6 +875,10 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     // Code-computed early grabs ride alongside the model's cards. They reuse
     // the same session PCR history, futures slope and live regime as pricing.
     const existingForDedupe = loadObservations(obsPath);
+    const sectorCardCap = sectorCardCapFromEnv();
+    const sectorBudget = createSectorCardBudget(existingForDedupe, sessionDate, sectorFor, sectorCardCap);
+    const minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0);
+    const skipped = [];
     const trendFor = readFuturesSnapshot ? (symbol, at) => {
       try {
         const snap = readFuturesSnapshot(symbol, sessionDate);
@@ -840,10 +910,33 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       // market build's spot, without changing historical regime semantics.
       return liveRegime(moveStats?.recentCloses, livePrice);
     };
+    // Model candidates are already built; validate them before they occupy a
+    // sector slot or influence the cap available to code-computed early cards.
+    const pricedModelCards = await enrichWithFuturesAtr(modelCards, { readFuturesSnapshot, sessionDate, now, log });
+    const acceptedModelCards = [];
+    for (const card of pricedModelCards) {
+      const check = acceptCheck(card, minExpectancy);
+      if (!check.ok) {
+        skipped.push({ symbol: card.symbol, reason: check.reason });
+        continue;
+      }
+      const sector = sectorBudget.add(card);
+      if (!sector.ok) {
+        skipped.push({ symbol: card.symbol, reason: `sector cluster full: ${sector.sector}` });
+        continue;
+      }
+      acceptedModelCards.push(card);
+    }
+    // Keep every model proposal in the dedupe input, including proposals
+    // rejected by the new sector cap, so a gate can never create an early card
+    // for the same symbol/session that the existing model path already saw.
     const early = earlyCards(market, sessionDate, now, [...existingForDedupe, ...modelCards], {
       trendFor,
       pcrShiftFor,
       regimeFor,
+      sectorFor,
+      sectorBudget,
+      sectorCardCap,
       log,
     });
     if (early.length) log(`advisor early signals: ${early.map(card => `${card.symbol} ${card.strike}${card.side} (${card.early})`).join(', ')}`);
@@ -893,7 +986,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       quality: null,
       strikePickProbability: null,
       oiChangePct: candidate.oiChangePct,
-      pcrAtEntry: pcrForNearSeries(series),
+      pcrAtEntry: pcrForNearSeries(seriesFor(prev.symbol)),
       pcrShift: pcrShiftAtCard(prev.symbol),
       delta: candidate.delta ?? null,
       iv: candidate.iv ?? null,
@@ -902,23 +995,23 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       disclaimer: DISCLAIMER,
     }));
     if (reCards.length) log(`advisor re-entry cards: ${reCards.map(card => `${card.symbol} ${card.strike}${card.side} (RE-ENTRY)`).join(', ')}`);
-    const cards = await enrichWithFuturesAtr([...modelCards, ...early, ...reCards], { readFuturesSnapshot, sessionDate, now, log });
-    // A card whose measured premium expectancy is negative is not an
-    // observation worth acting on — the owner's rule is that a card's target
-    // should be achievable, not just possible.
-    const minExpectancy = Number(process.env.ADVISOR_MIN_EXPECTANCY ?? 0);
-    const skipped = [];
+    const cardsToFinish = await enrichWithFuturesAtr([...early, ...reCards], { readFuturesSnapshot, sessionDate, now, log });
     const kept = [];
-    for (const card of cards) {
+    for (const card of cardsToFinish) {
       const check = acceptCheck(card, minExpectancy);
       if (!check.ok) {
+        sectorBudget.release(card);
         skipped.push({ symbol: card.symbol, reason: check.reason });
+        continue;
+      }
+      const sector = sectorBudget.add(card);
+      if (!sector.ok) {
+        skipped.push({ symbol: card.symbol, reason: `sector cluster full: ${sector.sector}` });
         continue;
       }
       kept.push(card);
     }
-    cards.length = 0;
-    cards.push(...kept);
+    const cards = [...acceptedModelCards, ...kept];
     const { skipped: modelSkipped } = decisions;
     skipped.push(...modelSkipped);
     if (cards.length) {

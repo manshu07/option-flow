@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { candidateStrikes, chainWalls, chooseChain, orbStrategy, earlyCards, adaptiveLevels, levelsFor, advisorQuestions, advisorDecisions, dedupeObservations, loadObservations, observationKey, runAdvisor } from './strikeAdvisor.mjs';
+import { candidateStrikes, chainWalls, chooseChain, orbStrategy, earlyCards, adaptiveLevels, levelsFor, advisorQuestions, advisorDecisions, createSectorCardBudget, dedupeObservations, loadObservations, observationKey, runAdvisor } from './strikeAdvisor.mjs';
 import { observationCaption } from './observationCardSvg.mjs';
 import { gammaProfile } from '../src/features/market-flow/gammaModel';
 
@@ -199,6 +199,48 @@ describe('candidateStrikes', () => {
     // One slot: the old cap handed it to BAD (then skipped) and starved GOOD.
     const cards = earlyCards(market, '2026-11-16', NOW, [], { max: 1, priceCard });
     expect(cards.map(card => card.symbol)).toEqual(['GOOD']);
+  });
+
+  it('counts only same-session open sector cards, enforces the limit, and exempts unknown/different sectors', () => {
+    vi.stubEnv('SECTOR_CARD_CAP', '2');
+    const sectorFor = (symbol: string) => symbol.startsWith('TECH') ? 'technology' : symbol === 'OTHER' ? 'energy' : null;
+    const date = '2026-11-16';
+    const budget = createSectorCardBudget([
+      { symbol: 'TECH_SEED', date },
+      { symbol: 'TECH_CLOSED', date, outcome: { status: 'sl' } },
+      { symbol: 'TECH_OLD', date: '2026-11-13' },
+    ], date, sectorFor);
+    expect(budget.count('technology')).toBe(1);
+    expect(budget.add({ symbol: 'TECH_SEED', date })).toMatchObject({ ok: true, alreadyCounted: true });
+    expect(budget.add({ symbol: 'TECH_NEXT', date })).toMatchObject({ ok: true, sector: 'technology', added: true });
+    expect(budget.count('technology')).toBe(2);
+    expect(budget.add({ symbol: 'TECH_FULL', date })).toMatchObject({ ok: false, sector: 'technology' });
+    expect(budget.add({ symbol: 'OTHER', date })).toMatchObject({ ok: true, sector: 'energy' });
+    expect(budget.add({ symbol: 'UNKNOWN', date })).toMatchObject({ ok: true, sector: null });
+
+    vi.stubEnv('SECTOR_CARD_CAP', '3');
+    const overridden = createSectorCardBudget([{ symbol: 'TECH_SEED', date }], date, sectorFor);
+    expect(overridden.add({ symbol: 'TECH_NEXT_1', date }).ok).toBe(true);
+    expect(overridden.add({ symbol: 'TECH_NEXT_2', date }).ok).toBe(true);
+    expect(overridden.count('technology')).toBe(3);
+    expect(overridden.add({ symbol: 'TECH_NEXT_3', date })).toMatchObject({ ok: false, sector: 'technology' });
+  });
+
+  it('sector-gates early cards before they consume early slots', () => {
+    vi.stubEnv('SECTOR_CARD_CAP', '2');
+    const rows = (strike: number) => [[strike, 0, 6, 5, 100_000, 100_000, 10_000], [strike, 1, 6, 5, 100_000, 100_000, 10_000]];
+    const mk = (symbol: string) => ({ s: symbol, sp: 104, pc: 100, atm: 104, e: '2026-11-19', r: [...rows(104), ...rows(105)] });
+    const market = { date: '2026-11-16', series: [mk('TECH_A'), mk('TECH_B'), mk('OTHER')] };
+    const existing = [{ symbol: 'TECH_SEED', date: '2026-11-16' }];
+    const logs: string[] = [];
+    const cards = earlyCards(market, '2026-11-16', NOW, existing, {
+      max: 4,
+      sectorFor: symbol => symbol.startsWith('TECH') ? 'technology' : symbol === 'OTHER' ? 'energy' : null,
+      priceCard: () => ({ levelsBasis: 'backtest+decay', backtest: { expectancyPremium: 1, samples: 10 } }),
+      log: message => logs.push(message),
+    });
+    expect(cards.map(card => card.symbol).sort()).toEqual(['OTHER', 'TECH_A']);
+    expect(logs).toContain('advisor skipped TECH_B: sector cluster full: technology');
   });
 
   it('drops momentum cards that run against the live futures trend', () => {
@@ -629,6 +671,65 @@ describe('runAdvisor gates', () => {
       expect(subscribers[0]).toContain('PCR 0.90 (−4% 15m)');
       expect(pcrShiftFor).toHaveBeenCalledWith('PCRCARD', NOW);
       expect(stored.pcrAtEntry).not.toBeCloseTo(0.1, 1); // next-expiry PCR is deliberately ignored.
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds near-chain PCR context to re-entry cards as well', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-reentry-pcr-'));
+    const obsPath = join(dir, 'observations.json');
+    const prev = {
+      id: 'RETEST|2026-11-16', symbol: 'RETEST', date: '2026-11-16', at: NOW - 60_000,
+      expiry: '2026-11-19', strike: 300, side: 'CE', bias: 'bullish', entry: 4, sl: 2, tgt1: 6.2, tgt2: 7.6,
+      outcome: { status: 'sl', r: -1 },
+    };
+    writeFileSync(obsPath, JSON.stringify({ cards: [prev] }));
+    const marketSeries = { ...seriesFixture(), s: 'RETEST', pc: 300.4 };
+    const sent: Array<Record<string, unknown>> = [];
+    try {
+      await runAdvisor({ date: '2026-11-16', series: [marketSeries] }, {
+        obsPath,
+        watches: [{ symbol: 'RETEST', bias: 'bullish' }],
+        now: NOW,
+        ask: async () => ({ quality_RETEST: { noul: 0.4 }, strike_RETEST: { choice: 'c1', probabilities: { c1: 0.9 } } }),
+        pcrShiftFor: () => -4.2,
+        send: async card => { sent.push(card); return { sent: true }; },
+      });
+      const stored = loadObservations(obsPath).find(card => card.reEntry === 1);
+      expect(stored).toMatchObject({ pcrAtEntry: 7_400_000 / 8_200_000, pcrShift: -4.2 });
+      expect(sent.find(card => card.reEntry === 1)).toMatchObject({ pcrAtEntry: stored?.pcrAtEntry, pcrShift: stored?.pcrShift });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('applies the sector cap in the advisor accept loop and counts only kept current-batch cards', async () => {
+    vi.stubEnv('SECTOR_CARD_CAP', '2');
+    const dir = mkdtempSync(join(tmpdir(), 'obs-sector-accept-'));
+    const obsPath = join(dir, 'observations.json');
+    writeFileSync(obsPath, JSON.stringify({ cards: [{ id: 'TECH_SEED|2026-11-16', symbol: 'TECH_SEED', date: '2026-11-16' }] }));
+    const symbols = ['MODEL_A', 'MODEL_B', 'OTHER'];
+    const series = symbols.map(symbol => ({ ...seriesFixture(), s: symbol }));
+    const watches = symbols.map(symbol => ({ symbol, bias: 'bullish' }));
+    const ask = async () => Object.fromEntries(symbols.flatMap(symbol => [
+      [`quality_${symbol}`, { noul: 0.9 }],
+      [`strike_${symbol}`, { choice: 'c1', probabilities: { c1: 0.9 } }],
+    ]));
+    const logs: string[] = [];
+    try {
+      const result = await runAdvisor({ date: '2026-11-16', series }, {
+        obsPath,
+        watches,
+        now: NOW,
+        ask,
+        sectorFor: symbol => symbol === 'OTHER' ? 'energy' : 'technology',
+        send: async () => ({ sent: true }),
+        log: message => logs.push(message),
+      });
+      expect(result.written).toBe(2);
+      expect(loadObservations(obsPath).map(card => card.symbol).sort()).toEqual(['MODEL_A', 'OTHER', 'TECH_SEED']);
+      expect(logs).toContain('advisor skipped MODEL_B: sector cluster full: technology');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

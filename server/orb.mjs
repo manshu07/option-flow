@@ -4,7 +4,7 @@
  * machine itself lives in orbModel.mjs.
  */
 import { readFileSync } from 'node:fs';
-import { orbRow, orbMessage, chainSideOi } from './orbModel.mjs';
+import { orbRow, orbMessage, chainSideOi, sectorMapFromUnderlyings } from './orbModel.mjs';
 
 /** The day's two ORB pushes, in IST minutes since midnight. */
 export const ORB_SLOTS = [
@@ -39,9 +39,7 @@ export function loadSectorMap(path, readFile = readFileSync) {
   try {
     const parsed = JSON.parse(readFile(path, 'utf8'));
     const list = Array.isArray(parsed?.underlyings) ? parsed.underlyings : [];
-    const map = new Map();
-    for (const item of list) if (typeof item?.symbol === 'string' && typeof item?.sector === 'string') map.set(item.symbol, item.sector);
-    return map;
+    return sectorMapFromUnderlyings(list);
   } catch { return new Map(); }
 }
 

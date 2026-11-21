@@ -21,6 +21,17 @@ const SOFT_OI_BEFORE = 9 * 60 + 30; // 09:30 IST — the gate is soft before thi
 
 export const ORB_STATES = ['building', 'armed', 'broken-out', 'extended-wait', 'entered-zone', 'done'];
 
+/** Canonical symbol-to-sector projection shared by the ORB scanner and advisor. */
+export function sectorMapFromUnderlyings(underlyings) {
+  const sectors = new Map();
+  for (const item of Array.isArray(underlyings) ? underlyings : []) {
+    if (typeof item?.symbol === 'string' && item.symbol && typeof item.sector === 'string' && item.sector) {
+      sectors.set(item.symbol, item.sector);
+    }
+  }
+  return sectors;
+}
+
 export function sessionOpenAt(session) {
   const at = Date.parse(`${session}T09:15:00+05:30`);
   return Number.isFinite(at) ? at : null;
