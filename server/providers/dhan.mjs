@@ -182,10 +182,40 @@ export function replayTickJournalText(text, session, contractIdFor, futTicks, jo
     const merged = mergeDhanFuturesCandle(candles.get(row.at), incoming);
     candles.set(row.at, merged);
     futTicks.set(id, candles);
-    journaled.set(`${id}|${row.at}`, tickSignature(merged));
+    journaled.set(`${session}:${id}:${row.at}`, tickSignature(merged));
     restored++;
   }
   return { restored, invalid };
+}
+
+export function collectTickJournalBatch(contracts, futTicks, session, journaled = new Map()) {
+  const records = [];
+  const signatures = [];
+  for (const { id, symbol, expiry } of Array.isArray(contracts) ? contracts : []) {
+    const candles = futTicks.get(id);
+    if (!candles) continue;
+    for (const candle of candles.values()) {
+      if (ymdIst(candle.at) !== session || !Number.isFinite(candle.close) || candle.close <= 0
+        || !Number.isFinite(candle.oi) || candle.oi < 0) continue;
+      const record = {
+        at: candle.at,
+        sym: symbol,
+        expiry,
+        o: Number.isFinite(candle.open) ? candle.open : candle.close,
+        h: Number.isFinite(candle.high) ? candle.high : candle.close,
+        l: Number.isFinite(candle.low) ? candle.low : candle.close,
+        c: candle.close,
+        oi: candle.oi,
+        v: Number.isFinite(candle.volume) && candle.volume >= 0 ? candle.volume : 0,
+      };
+      const key = `${session}:${id}:${record.at}`;
+      const signature = tickSignature({ open: record.o, high: record.h, low: record.l, close: record.c, oi: record.oi, volume: record.v });
+      if (journaled.get(key) === signature) continue;
+      records.push(record);
+      signatures.push([key, signature]);
+    }
+  }
+  return { records, signatures };
 }
 
 /** A serialized crawl queue, active only for the first ten minutes of an in-session boot. */
@@ -288,35 +318,11 @@ export function createDhanProvider(universe) {
   }
 
   function flushFuturesTickJournal(session = ymdIst(Date.now())) {
-    const records = [];
-    const signatures = [];
-    for (const held of map.values()) {
-      for (const contract of held.fut.filter(future => future.expiry >= session).slice(0, FUTURES_MONTHS)) {
-        const key = `${session}:${contract.id}`;
-        const last = futTicks.get(contract.id);
-        if (!last) continue;
-        for (const candle of candlesFromFeed(contract.id)) {
-          if (ymdIst(candle.at) !== session || !(Number.isFinite(candle.close) && candle.close > 0)
-            || !(Number.isFinite(candle.oi) && candle.oi >= 0)) continue;
-          const record = {
-            at: candle.at,
-            sym: held.symbol,
-            expiry: contract.expiry,
-            o: Number.isFinite(candle.open) ? candle.open : candle.close,
-            h: Number.isFinite(candle.high) ? candle.high : candle.close,
-            l: Number.isFinite(candle.low) ? candle.low : candle.close,
-            c: candle.close,
-            oi: candle.oi,
-            v: Number.isFinite(candle.volume) && candle.volume >= 0 ? candle.volume : 0,
-          };
-          const journalKey = `${key}:${record.at}`;
-          const signature = tickSignature({ open: record.o, high: record.h, low: record.l, close: record.c, oi: record.oi, volume: record.v });
-          if (journaledTicks.get(journalKey) === signature) continue;
-          records.push(record);
-          signatures.push([journalKey, signature]);
-        }
-      }
-    }
+    const contracts = [...map.values()].flatMap(held => held.fut
+      .filter(future => future.expiry >= session)
+      .slice(0, FUTURES_MONTHS)
+      .map(future => ({ id: future.id, symbol: held.symbol, expiry: future.expiry })));
+    const { records, signatures } = collectTickJournalBatch(contracts, futTicks, session, journaledTicks);
     if (!records.length) return 0;
     try {
       const written = appendTickJournalBatch(tickJournalPath(session), records);
@@ -1350,6 +1356,7 @@ export function createDhanProvider(universe) {
         }
       }
       // Restore the local journal before ensureQuotes or any futures REST seed.
+      startTickJournal(session);
 
       // Seed spot for the strike windows with the single whole-universe quote request.
       await ensureQuotes();

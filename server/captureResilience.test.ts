@@ -1,13 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  appendTickJournalBatch,
+  collectTickJournalBatch,
   mergeDhanFuturesCandle,
   parseTodayIntraday,
+  replayTickJournalText,
   shouldBackfillToday,
   shouldRunTodayBackfill,
 } from './providers/dhan.mjs';
 
 const SESSION = '2026-11-20';
 const minute = (hour: number, min: number) => Date.parse(`${SESSION}T${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}:00+05:30`);
+const dirs: string[] = [];
+function tempDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'of-capture-resilience-'));
+  dirs.push(dir);
+  return dir;
+}
+
+afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe('capture resilience helpers', () => {
   it('field-merges REST and feed candles without losing extrema; feed close/OI win', () => {
@@ -47,6 +61,40 @@ describe('capture resilience helpers', () => {
       { at: minute(9, 15), open: 100, high: 102, low: 99, close: 101, oi: 10, volume: 1 },
       { at: minute(9, 16), open: 101, high: 103, low: 100, close: 102, oi: 11, volume: 2 },
     ]);
+  });
+
+  it('replays expiry-qualified tick journal rows once and appends one changed batch', () => {
+    const futTicks = new Map();
+    const journaled = new Map();
+    const at = minute(9, 15);
+    const rows = [
+      { at, sym: 'NIFTY', expiry: '2026-11-26', o: 100, h: 105, l: 99, c: 103, oi: 10, v: 1 },
+      { at, sym: 'NIFTY', expiry: '2026-12-31', o: 200, h: 205, l: 199, c: 203, oi: 20, v: 2 },
+      { at, sym: 'NIFTY', expiry: '2026-11-26', o: 101, h: 108, l: 98, c: 104, oi: 12, v: 3 },
+    ];
+    const replayed = replayTickJournalText(rows.map(row => JSON.stringify(row)).join('\n'), SESSION,
+      (_symbol, expiry) => expiry === '2026-11-26' ? 'near-id' : expiry === '2026-12-31' ? 'next-id' : null,
+      futTicks, journaled);
+    const contracts = [
+      { id: 'near-id', symbol: 'NIFTY', expiry: '2026-11-26' },
+      { id: 'next-id', symbol: 'NIFTY', expiry: '2026-12-31' },
+    ];
+
+    expect(replayed).toEqual({ restored: 3, invalid: 0 });
+    expect(futTicks.get('near-id').get(at)).toMatchObject({ high: 108, low: 98, close: 104, oi: 12 });
+    expect(futTicks.get('next-id').get(at)).toMatchObject({ high: 205, low: 199, close: 203, oi: 20 });
+    expect(collectTickJournalBatch(contracts, futTicks, SESSION, journaled).records).toEqual([]);
+
+    futTicks.get('near-id').set(at, mergeDhanFuturesCandle(futTicks.get('near-id').get(at), {
+      at, open: 101, high: 110, low: 97, close: 106, oi: 13, volume: 4,
+    }));
+    const changed = collectTickJournalBatch(contracts, futTicks, SESSION, journaled);
+    expect(changed.records).toHaveLength(1);
+    expect(changed.records[0]).toMatchObject({ sym: 'NIFTY', expiry: '2026-11-26', at, h: 110, l: 97, c: 106, oi: 13 });
+    const append = vi.fn();
+    expect(appendTickJournalBatch(path.join(tempDir(), SESSION, 'futures-ticks.ndjson'), changed.records, append)).toBe(1);
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(append.mock.calls[0][1]).trim())).toMatchObject({ sym: 'NIFTY', expiry: '2026-11-26', at });
   });
 
 });
