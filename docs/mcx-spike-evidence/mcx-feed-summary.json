@@ -1,0 +1,97 @@
+{
+  "startedAt": "2026-11-23T19:21:11.738Z",
+  "dateIST": "2026-11-24",
+  "durationRequestedSeconds": 600,
+  "exchangeSegment": "MCX_COMM",
+  "subscriptionRequestCode": 21,
+  "instruments": [
+    {
+      "symbol": "GOLD",
+      "securityId": "495213",
+      "expiry": "2026-12-04 23:30:00"
+    },
+    {
+      "symbol": "SILVER",
+      "securityId": "495214",
+      "expiry": "2026-12-04 23:30:00"
+    },
+    {
+      "symbol": "NATURALGAS",
+      "securityId": "574319",
+      "expiry": "2026-11-24 23:30:00"
+    },
+    {
+      "symbol": "GOLDM",
+      "securityId": "575011",
+      "expiry": "2026-12-04 23:30:00"
+    },
+    {
+      "symbol": "SILVERM",
+      "securityId": "483080",
+      "expiry": "2026-11-30 23:30:00"
+    },
+    {
+      "symbol": "NATURALGASM",
+      "securityId": "574320",
+      "expiry": "2026-11-24 23:30:00"
+    }
+  ],
+  "status": "skipped-outside-session",
+  "reason": "local time is outside the weekday MCX commodity session; system time 2026-11-23T19:21:11.737Z (2026-11-24 00:51 IST), assumed hours 09:00-23:55 IST",
+  "symbols": [
+    {
+      "symbol": "GOLD",
+      "securityId": "495213",
+      "tickCount": 0,
+      "oiFieldPresent": null,
+      "oiSample": null,
+      "ltpUpdates": 0,
+      "ltpUpdatesPerSecond": null
+    },
+    {
+      "symbol": "SILVER",
+      "securityId": "495214",
+      "tickCount": 0,
+      "oiFieldPresent": null,
+      "oiSample": null,
+      "ltpUpdates": 0,
+      "ltpUpdatesPerSecond": null
+    },
+    {
+      "symbol": "NATURALGAS",
+      "securityId": "574319",
+      "tickCount": 0,
+      "oiFieldPresent": null,
+      "oiSample": null,
+      "ltpUpdates": 0,
+      "ltpUpdatesPerSecond": null
+    },
+    {
+      "symbol": "GOLDM",
+      "securityId": "575011",
+      "tickCount": 0,
+      "oiFieldPresent": null,
+      "oiSample": null,
+      "ltpUpdates": 0,
+      "ltpUpdatesPerSecond": null
+    },
+    {
+      "symbol": "SILVERM",
+      "securityId": "483080",
+      "tickCount": 0,
+      "oiFieldPresent": null,
+      "oiSample": null,
+      "ltpUpdates": 0,
+      "ltpUpdatesPerSecond": null
+    },
+    {
+      "symbol": "NATURALGASM",
+      "securityId": "574320",
+      "tickCount": 0,
+      "oiFieldPresent": null,
+      "oiSample": null,
+      "ltpUpdates": 0,
+      "ltpUpdatesPerSecond": null
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "checkedAt": "2026-11-23T19:21:11.738Z",
+  "localTimeIST": "2026-11-24 00:51:11",
+  "attempts": [
+    {
+      "source": "MCX official website",
+      "url": "https://www.mcxindia.com",
+      "method": "curl -sS -I --max-time 10",
+      "result": "blocked",
+      "error": "Could not resolve host: www.mcxindia.com"
+    },
+    {
+      "source": "Dhan intraday REST",
+      "url": "https://api.dhan.co/v2/charts/intraday",
+      "method": "POST",
+      "result": "blocked",
+      "errorCode": "ENOTFOUND",
+      "errorHost": "api.dhan.co",
+      "details": "See mcx-rest-intraday.json; request contained no saved credentials."
+    },
+    {
+      "source": "Web fetch/search transport",
+      "url": "https://www.mcxindia.com",
+      "result": "blocked",
+      "error": "Sandbox denied outbound network access"
+    }
+  ],
+  "secretsPersisted": false
+}

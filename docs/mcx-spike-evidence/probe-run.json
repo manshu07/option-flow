@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-11-23T19:21:11.738Z",
+  "localDateTimeIST": "2026-11-24, 12:51:11 a.m.",
+  "credentialsPresent": {
+    "accessToken": true,
+    "clientId": true
+  },
+  "contractsFound": [
+    "GOLD",
+    "SILVER",
+    "NATURALGAS",
+    "GOLDM",
+    "SILVERM",
+    "NATURALGASM"
+  ],
+  "missingContracts": [],
+  "restStatus": "blocked",
+  "feedStatus": "skipped-outside-session",
+  "codeChanges": 0,
+  "serviceRestarted": false
+}

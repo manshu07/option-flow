@@ -1,0 +1,12 @@
+{
+  "products": "GOLD, SILVER, NATURALGAS, GOLDM, SILVERM, NATURALGASM (non-agricultural MCX commodities)",
+  "hoursIST": {
+    "open": "09:00",
+    "summerClose": "23:30",
+    "winterClose": "23:55"
+  },
+  "seasonBasis": "Commonly published MCX schedule follows US daylight-saving season; India itself has no DST.",
+  "verification": "Provisional only. The current official MCX circular/page could not be fetched because outbound DNS was unavailable.",
+  "probeClockIST": "2026-11-24 00:51",
+  "probeSessionOpen": false
+}

@@ -1,0 +1,427 @@
+{
+  "source": "cached Dhan scrip master",
+  "sourcePath": "data/.dhan-master.csv",
+  "fetchUrl": "https://images.dhan.co/api-data/api-scrip-master.csv",
+  "asOfDateIST": "2026-11-24",
+  "generatedAt": "2026-11-23T19:21:11.479Z",
+  "cacheModifiedAt": "2026-11-23T18:40:18.143Z",
+  "cacheBytes": 30011884,
+  "cacheSha256": "df09ea6cdb213d3743fcbbf85686f8746e46524550ec2ef22f66d52a583e5b11",
+  "csvHeader": [
+    "SEM_EXM_EXCH_ID",
+    "SEM_SEGMENT",
+    "SEM_SMST_SECURITY_ID",
+    "SEM_INSTRUMENT_NAME",
+    "SEM_EXPIRY_CODE",
+    "SEM_TRADING_SYMBOL",
+    "SEM_LOT_UNITS",
+    "SEM_CUSTOM_SYMBOL",
+    "SEM_EXPIRY_DATE",
+    "SEM_STRIKE_PRICE",
+    "SEM_OPTION_TYPE",
+    "SEM_TICK_SIZE",
+    "SEM_EXPIRY_FLAG",
+    "SEM_EXCH_INSTRUMENT_TYPE",
+    "SEM_SERIES",
+    "SM_SYMBOL_NAME"
+  ],
+  "contracts": [
+    {
+      "root": "GOLD",
+      "masterSymbol": "GOLD",
+      "masterMatch": "SEM_SYMBOL_NAME exact match",
+      "exchange": "MCX",
+      "segment": "M",
+      "instrument": "FUTCOM",
+      "futuresAvailableFromAsOfDate": 6,
+      "nearFuture": {
+        "securityId": "495213",
+        "expiry": "2026-12-04 23:30:00",
+        "tradingSymbol": "GOLD-04Dec2026-FUT",
+        "lotSize": 1,
+        "tickSize": 100
+      },
+      "optionsExist": true,
+      "optionInstrument": "OPTFUT",
+      "optionRowsFromAsOfDate": 4320,
+      "optionExpiries": 11,
+      "uniqueStrikeExpiryPairs": 2160,
+      "optionsByExpiry": [
+        {
+          "expiry": "2026-11-27",
+          "rows": 440,
+          "strikes": 220,
+          "calls": 220,
+          "puts": 220
+        },
+        {
+          "expiry": "2026-12-31",
+          "rows": 448,
+          "strikes": 224,
+          "calls": 224,
+          "puts": 224
+        },
+        {
+          "expiry": "2027-01-29",
+          "rows": 448,
+          "strikes": 224,
+          "calls": 224,
+          "puts": 224
+        },
+        {
+          "expiry": "2027-02-26",
+          "rows": 430,
+          "strikes": 215,
+          "calls": 215,
+          "puts": 215
+        },
+        {
+          "expiry": "2027-03-29",
+          "rows": 430,
+          "strikes": 215,
+          "calls": 215,
+          "puts": 215
+        },
+        {
+          "expiry": "2027-04-30",
+          "rows": 376,
+          "strikes": 188,
+          "calls": 188,
+          "puts": 188
+        },
+        {
+          "expiry": "2027-05-28",
+          "rows": 376,
+          "strikes": 188,
+          "calls": 188,
+          "puts": 188
+        },
+        {
+          "expiry": "2027-06-30",
+          "rows": 378,
+          "strikes": 189,
+          "calls": 189,
+          "puts": 189
+        },
+        {
+          "expiry": "2027-07-29",
+          "rows": 378,
+          "strikes": 189,
+          "calls": 189,
+          "puts": 189
+        },
+        {
+          "expiry": "2027-08-31",
+          "rows": 308,
+          "strikes": 154,
+          "calls": 154,
+          "puts": 154
+        },
+        {
+          "expiry": "2027-09-28",
+          "rows": 308,
+          "strikes": 154,
+          "calls": 154,
+          "puts": 154
+        }
+      ]
+    },
+    {
+      "root": "SILVER",
+      "masterSymbol": "SILVER",
+      "masterMatch": "SEM_SYMBOL_NAME exact match",
+      "exchange": "MCX",
+      "segment": "M",
+      "instrument": "FUTCOM",
+      "futuresAvailableFromAsOfDate": 5,
+      "nearFuture": {
+        "securityId": "495214",
+        "expiry": "2026-12-04 23:30:00",
+        "tradingSymbol": "SILVER-04Dec2026-FUT",
+        "lotSize": 1,
+        "tickSize": 100
+      },
+      "optionsExist": true,
+      "optionInstrument": "OPTFUT",
+      "optionRowsFromAsOfDate": 4504,
+      "optionExpiries": 10,
+      "uniqueStrikeExpiryPairs": 2252,
+      "optionsByExpiry": [
+        {
+          "expiry": "2026-11-27",
+          "rows": 496,
+          "strikes": 248,
+          "calls": 248,
+          "puts": 248
+        },
+        {
+          "expiry": "2026-12-28",
+          "rows": 516,
+          "strikes": 258,
+          "calls": 258,
+          "puts": 258
+        },
+        {
+          "expiry": "2027-01-25",
+          "rows": 516,
+          "strikes": 258,
+          "calls": 258,
+          "puts": 258
+        },
+        {
+          "expiry": "2027-02-26",
+          "rows": 516,
+          "strikes": 258,
+          "calls": 258,
+          "puts": 258
+        },
+        {
+          "expiry": "2027-03-25",
+          "rows": 492,
+          "strikes": 246,
+          "calls": 246,
+          "puts": 246
+        },
+        {
+          "expiry": "2027-04-28",
+          "rows": 492,
+          "strikes": 246,
+          "calls": 246,
+          "puts": 246
+        },
+        {
+          "expiry": "2027-05-26",
+          "rows": 376,
+          "strikes": 188,
+          "calls": 188,
+          "puts": 188
+        },
+        {
+          "expiry": "2027-06-28",
+          "rows": 376,
+          "strikes": 188,
+          "calls": 188,
+          "puts": 188
+        },
+        {
+          "expiry": "2027-07-27",
+          "rows": 362,
+          "strikes": 181,
+          "calls": 181,
+          "puts": 181
+        },
+        {
+          "expiry": "2027-08-27",
+          "rows": 362,
+          "strikes": 181,
+          "calls": 181,
+          "puts": 181
+        }
+      ]
+    },
+    {
+      "root": "NATURALGAS",
+      "masterSymbol": "NATURALGAS",
+      "masterMatch": "SEM_SYMBOL_NAME exact match",
+      "exchange": "MCX",
+      "segment": "M",
+      "instrument": "FUTCOM",
+      "futuresAvailableFromAsOfDate": 6,
+      "nearFuture": {
+        "securityId": "574319",
+        "expiry": "2026-11-24 23:30:00",
+        "tradingSymbol": "NATURALGAS-24Nov2026-FUT",
+        "lotSize": 1,
+        "tickSize": 10
+      },
+      "optionsExist": true,
+      "optionInstrument": "OPTFUT",
+      "optionRowsFromAsOfDate": 362,
+      "optionExpiries": 2,
+      "uniqueStrikeExpiryPairs": 181,
+      "optionsByExpiry": [
+        {
+          "expiry": "2026-12-23",
+          "rows": 190,
+          "strikes": 95,
+          "calls": 95,
+          "puts": 95
+        },
+        {
+          "expiry": "2027-01-21",
+          "rows": 172,
+          "strikes": 86,
+          "calls": 86,
+          "puts": 86
+        }
+      ]
+    },
+    {
+      "root": "GOLDM",
+      "masterSymbol": "GOLDM",
+      "masterMatch": "SEM_SYMBOL_NAME exact match",
+      "exchange": "MCX",
+      "segment": "M",
+      "instrument": "FUTCOM",
+      "futuresAvailableFromAsOfDate": 6,
+      "nearFuture": {
+        "securityId": "575011",
+        "expiry": "2026-12-04 23:30:00",
+        "tradingSymbol": "GOLDM-04Dec2026-FUT",
+        "lotSize": 1,
+        "tickSize": 100
+      },
+      "optionsExist": true,
+      "optionInstrument": "OPTFUT",
+      "optionRowsFromAsOfDate": 950,
+      "optionExpiries": 3,
+      "uniqueStrikeExpiryPairs": 475,
+      "optionsByExpiry": [
+        {
+          "expiry": "2026-11-27",
+          "rows": 338,
+          "strikes": 169,
+          "calls": 169,
+          "puts": 169
+        },
+        {
+          "expiry": "2026-12-29",
+          "rows": 320,
+          "strikes": 160,
+          "calls": 160,
+          "puts": 160
+        },
+        {
+          "expiry": "2027-01-29",
+          "rows": 292,
+          "strikes": 146,
+          "calls": 146,
+          "puts": 146
+        }
+      ]
+    },
+    {
+      "root": "SILVERM",
+      "masterSymbol": "SILVERM",
+      "masterMatch": "SEM_SYMBOL_NAME exact match",
+      "exchange": "MCX",
+      "segment": "M",
+      "instrument": "FUTCOM",
+      "futuresAvailableFromAsOfDate": 6,
+      "nearFuture": {
+        "securityId": "483080",
+        "expiry": "2026-11-30 23:30:00",
+        "tradingSymbol": "SILVERM-30Nov2026-FUT",
+        "lotSize": 1,
+        "tickSize": 100
+      },
+      "optionsExist": true,
+      "optionInstrument": "OPTFUT",
+      "optionRowsFromAsOfDate": 3964,
+      "optionExpiries": 9,
+      "uniqueStrikeExpiryPairs": 1982,
+      "optionsByExpiry": [
+        {
+          "expiry": "2026-12-28",
+          "rows": 512,
+          "strikes": 256,
+          "calls": 256,
+          "puts": 256
+        },
+        {
+          "expiry": "2027-01-25",
+          "rows": 512,
+          "strikes": 256,
+          "calls": 256,
+          "puts": 256
+        },
+        {
+          "expiry": "2027-02-19",
+          "rows": 512,
+          "strikes": 256,
+          "calls": 256,
+          "puts": 256
+        },
+        {
+          "expiry": "2027-03-25",
+          "rows": 472,
+          "strikes": 236,
+          "calls": 236,
+          "puts": 236
+        },
+        {
+          "expiry": "2027-04-23",
+          "rows": 472,
+          "strikes": 236,
+          "calls": 236,
+          "puts": 236
+        },
+        {
+          "expiry": "2027-05-26",
+          "rows": 384,
+          "strikes": 192,
+          "calls": 192,
+          "puts": 192
+        },
+        {
+          "expiry": "2027-06-23",
+          "rows": 384,
+          "strikes": 192,
+          "calls": 192,
+          "puts": 192
+        },
+        {
+          "expiry": "2027-07-27",
+          "rows": 358,
+          "strikes": 179,
+          "calls": 179,
+          "puts": 179
+        },
+        {
+          "expiry": "2027-08-24",
+          "rows": 358,
+          "strikes": 179,
+          "calls": 179,
+          "puts": 179
+        }
+      ]
+    },
+    {
+      "root": "NATURALGASM",
+      "masterSymbol": "NATGASMINI",
+      "masterMatch": "SEM_SYMBOL_NAME=NATGASMINI; SEM_CUSTOM_SYMBOL begins \"NATURALGASM \"",
+      "exchange": "MCX",
+      "segment": "M",
+      "instrument": "FUTCOM",
+      "futuresAvailableFromAsOfDate": 6,
+      "nearFuture": {
+        "securityId": "574320",
+        "expiry": "2026-11-24 23:30:00",
+        "tradingSymbol": "NATGASMINI-24Nov2026-FUT",
+        "lotSize": 1,
+        "tickSize": 10
+      },
+      "optionsExist": true,
+      "optionInstrument": "OPTFUT",
+      "optionRowsFromAsOfDate": 362,
+      "optionExpiries": 2,
+      "uniqueStrikeExpiryPairs": 181,
+      "optionsByExpiry": [
+        {
+          "expiry": "2026-12-23",
+          "rows": 190,
+          "strikes": 95,
+          "calls": 95,
+          "puts": 95
+        },
+        {
+          "expiry": "2027-01-21",
+          "rows": 172,
+          "strikes": 86,
+          "calls": 86,
+          "puts": 86
+        }
+      ]
+    }
+  ]
+}

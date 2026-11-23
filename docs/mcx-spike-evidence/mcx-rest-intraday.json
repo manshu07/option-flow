@@ -1,0 +1,18 @@
+{
+  "endpoint": "https://api.dhan.co/v2/charts/intraday",
+  "requestedAt": "2026-11-23T19:21:11.615Z",
+  "request": {
+    "securityId": "574319",
+    "exchangeSegment": "MCX_COMM",
+    "instrument": "FUTCOM",
+    "interval": 1,
+    "oi": true,
+    "fromDate": "2026-11-24",
+    "toDate": "2026-11-24"
+  },
+  "attempted": true,
+  "status": "blocked",
+  "reason": "fetch failed",
+  "networkErrorCode": "ENOTFOUND",
+  "networkErrorHost": "api.dhan.co"
+}
