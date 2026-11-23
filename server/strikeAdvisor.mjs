@@ -645,9 +645,9 @@ export function adaptiveLevels(card, opts = {}) {
   if (degenerate) {
     return {
       ...card,
-      sl: round2(entry * 0.30),
-      tgt1: round2(entry * 0.60),
-      tgt2: round2(entry * 1.20),
+      sl: round2(entry * 0.70),
+      tgt1: round2(entry * 1.60),
+      tgt2: round2(entry * 2.20),
       levelsBasis: 'fixed-sane',
     };
   }
