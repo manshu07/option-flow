@@ -195,6 +195,31 @@ function computeOrb(at, file) {
   return scan;
 }
 
+// Daily history refresh chain (bhavcopy -> capture -> futures stats -> today-backfill).
+// Shared so BOTH the live build loop and the post-close fast path can run it — the fast
+// path returns before the in-build block, which is why tonight's backfill never fired.
+function startHistoryRefreshChain(at) {
+  if (historyState.running || !historyRefreshDue(at, historyState.lastRun)) return false;
+  historyState.running = true;
+  historyState.lastRun = istParts(at).date;
+  log('history refresh starting (bhavcopy -> capture -> futures stats -> today-backfill)');
+  void runHistoryRefresh({
+    root: ROOT,
+    at,
+    log,
+    run: (script, args) => new Promise(resolve => {
+      const child = spawn(process.execPath, ['--max-old-space-size=6144', path.join(ROOT, script), ...args], { cwd: ROOT, stdio: 'ignore' });
+      child.on('exit', code => resolve(code ?? -1));
+      child.on('error', () => resolve(-1));
+    }),
+    todayBackfill: () => historyRefreshTodayBackfill(at),
+  })
+    .then(result => log(`history refresh done: ${result.results.map(item => `${item.step}=${item.code ?? 'error'}`).join(' ')}`))
+    .catch(error => log('history refresh failed:', String(error?.message || error)))
+    .finally(() => { historyState.running = false; });
+  return true;
+}
+
 async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
   let sent = false;
   const ownerOptions = parseMode ? { parseMode } : undefined;
@@ -324,6 +349,9 @@ async function build() {
         send: process.env.TELEGRAM_BOT_TOKEN ? sendOwnerAndSubscribers : undefined,
       }).catch(error => log('journal failed:', String(error?.message || error)));
       state.building = false;
+      // The post-close fast path returns before the in-build history-refresh block,
+      // so the chain is triggered here too — this is what runs tonight-backfill.
+      startHistoryRefreshChain(clock);
       return;
     }
   }
@@ -456,25 +484,7 @@ async function build() {
     // Daily history refresh: the bhavcopy publishes in the evening, so this
     // fires once after 19:30 IST and never blocks a build — each step is its
     // own child process with its own heap.
-    if (!historyState.running && historyRefreshDue(at, historyState.lastRun)) {
-      historyState.running = true;
-      historyState.lastRun = istParts(at).date;
-      log('history refresh starting (bhavcopy → capture → futures stats)');
-      void runHistoryRefresh({
-        root: ROOT,
-        at,
-        log,
-        run: (script, args) => new Promise(resolve => {
-          const child = spawn(process.execPath, ['--max-old-space-size=6144', path.join(ROOT, script), ...args], { cwd: ROOT, stdio: 'ignore' });
-          child.on('exit', code => resolve(code ?? -1));
-          child.on('error', () => resolve(-1));
-        }),
-        todayBackfill: () => historyRefreshTodayBackfill(at),
-      })
-        .then(result => log(`history refresh done: ${result.results.map(item => `${item.step}=${item.code ?? 'error'}`).join(' ')}`))
-        .catch(error => log('history refresh failed:', String(error?.message || error)))
-        .finally(() => { historyState.running = false; });
-    }
+    startHistoryRefreshChain(at);
     // Throttled to TYPESAFE_TRIAGE_MIN (default 10); never blocks or fails the build.
     runTriage(file, { autoPath: path.join(DATA_DIR, 'alerts.auto.json'), now: at, log })
       .then(result => {
