@@ -76,7 +76,8 @@ const rngAt = (i, w) => { let mx = -1e9, mn = 1e9; for (let j = Math.max(0, i - 
 const prLow = (i, w) => { let mn = 1e9; for (let j = Math.max(0, i - w + 1); j <= i; j++) mn = Math.min(mn, bars[j].l); return mn; };
 const volAvg = i => { let s = 0; for (let j = Math.max(0, i - 19); j <= i; j++) s += bars[j].v; return s / Math.min(i + 1, 20); };
 
-const MAX_PHASE = 40, CONF_WIN = 15, MIN_PHASE = 3;
+const MAX_PHASE = Number(process.env.H6RS_PHASE_MAX) || 40, CONF_WIN = 15, MIN_PHASE = 3;
+const MIN_VOL = Number(process.env.H6RS_MIN_VOL) || 0;
 const seqs = [];
 let st = 0, stStart = 0, moon = null, crown = null, m1 = null;
 for (let i = 15; i < n - 2; i++) {
@@ -147,14 +148,17 @@ for (let i = 15; i < n - 2; i++) {
 }
 
 const pct = (a, p) => { const s = a.filter(x => x != null).sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : NaN; };
-console.log(`\n=== H6RS ${symbol} ${TF}: ${n} bars · RSI(14) · frozen v1 rules ===`);
-console.log(`entries detected: ${seqs.length}`);
+const stats = list => list.length ? { n: list.length, fwd5: pct(list.map(s => s.fwd5), .5), fwd10: pct(list.map(s => s.fwd10), .5), fwd20: pct(list.map(s => s.fwd20), .5), mfeMed: pct(list.map(s => s.mfe), .5), mfeWorst: pct(list.map(s => s.mfe), 0), maeWorst: pct(list.map(s => s.mae), 0), hl: list.filter(s => s.hlFormed).length } : null;
+console.log(`\n=== H6RS ${symbol} ${TF}: ${n} bars · RSI(14) · frozen v1 rules${MIN_VOL ? ` · vol gate ≥${MIN_VOL}x` : ''} ===`);
+console.log(`entries detected: ${seqs.length}${MIN_VOL ? ` · after vol gate: ${seqs.filter(s => +s.volState >= MIN_VOL).length}` : ''}`);
 if (seqs.length) {
   for (const s of seqs.slice(-20)) console.log(`  ${s.entryDate}${s.entryTime ? ' ' + s.entryTime : ''} entry=${s.entry.toFixed(1)} · fwd5 ${s.fwd5?.toFixed(2)}% fwd10 ${s.fwd10?.toFixed(2)}% fwd20 ${s.fwd20?.toFixed(2)}% · MFE30 ${s.mfe.toFixed(2)}% MAE30 ${s.mae.toFixed(2)}% · HL ${s.hlFormed ? 'yes' : 'no'} · vol ${s.volState}x · len ${s.lengthBars}b`);
   for (const k of ['fwd5', 'fwd10', 'fwd20', 'fwd30']) console.log(`  ${k}: median ${pct(seqs.map(s => s[k]), .5).toFixed(2)}% · p25 ${pct(seqs.map(s => s[k]), .25).toFixed(2)}% · min ${pct(seqs.map(s => s[k]), 0).toFixed(2)}%`);
   console.log(`  MFE30: median ${pct(seqs.map(s => s.mfe), .5).toFixed(2)}% · p25 ${pct(seqs.map(s => s.mfe), .25).toFixed(2)}% · worst ${pct(seqs.map(s => s.mfe), 0).toFixed(2)}%`);
   console.log(`  MAE30: median ${pct(seqs.map(s => s.mae), .5).toFixed(2)}% · worst ${pct(seqs.map(s => s.mae), 0).toFixed(2)}%`);
   console.log(`  HL formed within 5 bars: ${seqs.filter(s => s.hlFormed).length}/${seqs.length} · vol>1x at entry: ${seqs.filter(s => +s.volState > 1).length}/${seqs.length}`);
+  const gated = stats(seqs.filter(s => +s.volState >= 1.2));
+  if (gated) console.log(`  [vol≥1.2x subset] n=${gated.n} · fwd5 ${gated.fwd5.toFixed(2)}% fwd10 ${gated.fwd10.toFixed(2)}% fwd20 ${gated.fwd20.toFixed(2)}% · MFE med ${gated.mfeMed.toFixed(2)}% worst ${gated.mfeWorst.toFixed(2)}% · MAE worst ${gated.maeWorst.toFixed(2)}% · HL ${gated.hl}/${gated.n}`);
 }
 writeFileSync(path.resolve(HERE, '..', 'server', 'data', `h6rs-${symbol}-${TF}.json`), JSON.stringify({ symbol, tf: TF, rules: 'frozen-v1: RSI14 40/55, pivots, comp 0.6xMoon', entries: seqs }, null, 1));
 console.log(`\nreport → server/data/h6rs-${symbol}-${TF}.json`);
