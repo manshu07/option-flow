@@ -624,12 +624,34 @@ export function orbStrategy(snapshot, card, now) {
  */
 export function adaptiveLevels(card, opts = {}) {
   const priced = computeAdaptiveLevels(card, opts);
-  return {
+  const out = {
     ...priced,
     sl: Number.isFinite(priced.sl) ? snapTick(priced.sl) : priced.sl,
     tgt1: Number.isFinite(priced.tgt1) ? snapTick(priced.tgt1) : priced.tgt1,
     tgt2: Number.isFinite(priced.tgt2) ? snapTick(priced.tgt2) : priced.tgt2,
   };
+  // Degenerate-level guard (2026-11-23 index cards shipped SL 0.05 / TGT1 12x premium:
+  // the underlying-ATR sizing is spot-scale on index options and the BS reprice explodes).
+  // Owner's first condition: targets must always be realistic. A level set that fails the
+  // sanity band falls back to a fixed realistic band of the premium instead.
+  const entry = Number(card?.entry);
+  const basis = String(priced.levelsBasis || '');
+  // 'fixed' (no data yet) and 'decay-too-heavy' (an honest refusal) are intentional —
+  // never redirected by the guard.
+  const guardable = basis !== 'fixed' && basis !== 'decay-too-heavy';
+  const degenerate = guardable && Number.isFinite(entry) && entry > 0 && (
+    !Number.isFinite(out.sl) || out.sl <= 0 || out.sl < entry * 0.02
+    || (Number.isFinite(out.tgt1) && out.tgt1 > entry * 6));
+  if (degenerate) {
+    return {
+      ...card,
+      sl: round2(entry * 0.30),
+      tgt1: round2(entry * 0.60),
+      tgt2: round2(entry * 1.20),
+      levelsBasis: 'fixed-sane',
+    };
+  }
+  return out;
 }
 
 function computeAdaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now(), moveStats = null, levelGrid = null, policy = process.env.ADVISOR_LEVEL_POLICY || 'achievable' } = {}) {

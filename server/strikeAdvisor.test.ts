@@ -66,9 +66,12 @@ describe('candidateStrikes', () => {
       expiry: '2026-11-23', atr: { value: 2.4, barMinutes: 15, state: 'normal' },
     };
     const priced = adaptiveLevels(card, { holdDays: 2, now: Date.parse('2026-11-18T15:30:00+05:30') });
-    expect(priced.levelsBasis).toBe('ATR+decay');
-    expect(priced.holdDays).toBe(2);
-    expect(priced.thetaDay).toBeLessThan(0);
+    // 2026-11-23: this cheap-premium fixture's raw ATR+decay output was degenerate
+    // (sl 0.05 / tgt1 25.32 = 10x entry — the exact pathology that shipped on the
+    // index cards). The degenerate-level guard now redirects it to the realistic band.
+    expect(priced.levelsBasis).toBe('fixed-sane');
+    expect(priced.sl).toBeGreaterThan(0);
+    expect(priced.tgt1).toBeLessThan(priced.entry * 3);
     expect(priced.tgt1).toBeGreaterThan(priced.entry);
     expect(priced.sl).toBeLessThan(priced.entry);
     // A CE target needs the stock ABOVE spot, the stop BELOW it.
