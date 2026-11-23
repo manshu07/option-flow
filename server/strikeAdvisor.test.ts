@@ -704,6 +704,47 @@ describe('runAdvisor gates', () => {
     }
   });
 
+  it('sets pcrAtEntry and pcrShift on fresh and re-entry cards in one advisor run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-pcr-both-'));
+    const obsPath = join(dir, 'observations.json');
+    const reEntrySeed = {
+      id: 'PCR_RE|2026-11-16', symbol: 'PCR_RE', date: '2026-11-16', at: NOW - 60_000,
+      expiry: '2026-11-19', strike: 300, side: 'CE', bias: 'bullish', entry: 4, sl: 2, tgt1: 6.2, tgt2: 7.6,
+      tsl: 'after TGT1, trail to entry', support: null, resistance: null, quality: 0.8, strikePickProbability: 0.9,
+      oiChangePct: 1, outcome: { status: 'sl', r: -1 }, disclaimer: 'test',
+    };
+    writeFileSync(obsPath, JSON.stringify({ cards: [reEntrySeed] }));
+    const freshSeries = { ...seriesFixture(), s: 'PCR_FRESH' };
+    const reEntrySeries = { ...seriesFixture(), s: 'PCR_RE', pc: 300.4 };
+    const symbols = ['PCR_FRESH', 'PCR_RE'];
+    const sent: Array<Record<string, unknown>> = [];
+    const shifts: Record<string, number> = { PCR_FRESH: -4.2, PCR_RE: 5.6 };
+    try {
+      await runAdvisor({ date: '2026-11-16', series: [freshSeries, reEntrySeries] }, {
+        obsPath,
+        watches: symbols.map(symbol => ({ symbol, bias: 'bullish' })),
+        now: NOW,
+        ask: async () => ({
+          quality_PCR_FRESH: { noul: 0.9 },
+          strike_PCR_FRESH: { choice: 'c1', probabilities: { c1: 0.9 } },
+          quality_PCR_RE: { noul: 0.4 },
+          strike_PCR_RE: { choice: 'c1', probabilities: { c1: 0.9 } },
+        }),
+        pcrShiftFor: symbol => shifts[symbol] ?? null,
+        send: async card => { sent.push(card); return { sent: true }; },
+      });
+      const stored = loadObservations(obsPath);
+      const fresh = stored.find(card => card.symbol === 'PCR_FRESH');
+      const reEntry = stored.find(card => card.symbol === 'PCR_RE' && card.reEntry === 1);
+      expect(fresh).toMatchObject({ pcrAtEntry: 7_400_000 / 8_200_000, pcrShift: -4.2 });
+      expect(reEntry).toMatchObject({ pcrAtEntry: 7_400_000 / 8_200_000, pcrShift: 5.6 });
+      expect(sent.find(card => card.symbol === 'PCR_FRESH')).toMatchObject({ pcrAtEntry: fresh?.pcrAtEntry, pcrShift: -4.2 });
+      expect(sent.find(card => card.symbol === 'PCR_RE' && card.reEntry === 1)).toMatchObject({ pcrAtEntry: reEntry?.pcrAtEntry, pcrShift: 5.6 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('applies the sector cap in the advisor accept loop and counts only kept current-batch cards', async () => {
     vi.stubEnv('SECTOR_CARD_CAP', '2');
     const dir = mkdtempSync(join(tmpdir(), 'obs-sector-accept-'));
