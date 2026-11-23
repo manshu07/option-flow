@@ -7,7 +7,27 @@ vi.mock('node:http', () => ({
   default: { createServer: () => ({ listen: vi.fn() }) },
 }));
 
-const { loadFuturesWithArchiveLock, storedSessionSnapshot, healthPayload, strikeFlowFromFiles, truncateStrikeFlow } = await import('./index.mjs');
+const { archiveRequestWithLiveGuard, loadFuturesWithArchiveLock, storedSessionSnapshot, healthPayload, strikeFlowFromFiles, truncateStrikeFlow } = await import('./index.mjs');
+
+describe('live-session archive guard', () => {
+  it('rejects the current live session before invoking archive payload construction', async () => {
+    const buildPayload = vi.fn(async () => ({ status: 202, body: { archived: true } }));
+    const at = Date.parse('2026-11-23T13:39:00+05:30');
+    const result = await archiveRequestWithLiveGuard('POST', '/api/archive/2026-11-23', {}, at, vi.fn(), buildPayload);
+    expect(result).toEqual({ status: 409, body: { error: 'session-live', retryAfter: '16:10 IST' } });
+    expect(buildPayload).not.toHaveBeenCalled();
+  });
+
+  it('passes past dates through to the existing archive request behavior', async () => {
+    const buildPayload = vi.fn(async () => ({ status: 202, body: { archived: '2026-11-20' } }));
+    const result = await archiveRequestWithLiveGuard(
+      'POST', '/api/archive/2026-11-20', { archive: true },
+      Date.parse('2026-11-23T13:39:00+05:30'), 'archive-log', buildPayload,
+    );
+    expect(result).toEqual({ status: 202, body: { archived: '2026-11-20' } });
+    expect(buildPayload).toHaveBeenCalledExactlyOnceWith('POST', '/api/archive/2026-11-20', { archive: true }, 'archive-log');
+  });
+});
 
 describe('sealed archive futures persistence', () => {
   it('returns a live provider result without waiting for archive completion or writing raw input', async () => {

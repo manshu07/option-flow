@@ -1081,6 +1081,33 @@ function sendArchiveReadError(res, error) {
   return send(res, status, { error: error?.message || 'Stored archive is unavailable.', code });
 }
 
+function liveArchiveRejection(date, at) {
+  if (!Number.isFinite(at) || !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    || date !== getLatestTradingSessionDate(new Date(at)) || !isTradingDay(at)) return null;
+  const { open, close } = marketSessionBounds(at);
+  const graceEnd = close + 30 * 60_000;
+  if (at < open || at >= graceEnd || (!isMarketSessionTime(at) && at < close)) return null;
+  const retryAt = new Date(graceEnd + 330 * 60_000);
+  return {
+    status: 409,
+    body: {
+      error: 'session-live',
+      retryAfter: `${String(retryAt.getUTCHours()).padStart(2, '0')}:${String(retryAt.getUTCMinutes()).padStart(2, '0')} IST`,
+    },
+  };
+}
+
+export async function archiveRequestWithLiveGuard(method, requestUrl, archiveService, at, logger, request = archiveRequestAsync) {
+  if (method === 'POST') {
+    const date = String(requestUrl).match(/^\/api\/archive\/(\d{4}-\d{2}-\d{2})(?:\?|$)/)?.[1];
+    if (date) {
+      const rejection = liveArchiveRejection(date, at);
+      if (rejection) return rejection;
+    }
+  }
+  return request(method, requestUrl, archiveService, logger);
+}
+
 function serveFile(res, file, cache = 'no-cache') {
   res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': cache });
   const stream = fs.createReadStream(file);
@@ -1189,7 +1216,7 @@ async function handle(req, res) {
 
   if (captureAction && p === '/api/capture/now') return send(res, captureAction.status, captureAction.body);
 
-  const archiveAction = await archiveRequestAsync(req.method, req.url ?? '', archive, (...args) => log(...args));
+  const archiveAction = await archiveRequestWithLiveGuard(req.method, req.url ?? '', archive, now(), (...args) => log(...args));
   if (archiveAction) return send(res, archiveAction.status, archiveAction.body, 'application/json', archiveAction.headers || {});
 
   if (p === '/api/replay/days') {
