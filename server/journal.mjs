@@ -1,6 +1,20 @@
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { isTradingDay, marketCloseMinuteFor, marketParts } from '../src/lib/marketSession.ts';
+
+const require = createRequire(import.meta.url);
+const journalRustDisabled = process.env.FAST_ANYTHING_DISABLE === '1';
+let rustTrackCardFollowThrough = null;
+let rustLoadError = null;
+if (!journalRustDisabled) {
+  try {
+    ({ trackCardFollowThrough: rustTrackCardFollowThrough } = require('../.fast/lib/fa_server_journal_trackcardfollowthrough.node'));
+  } catch (error) { rustLoadError = error; }
+}
+export const journalRustEnabled = !journalRustDisabled && Boolean(rustTrackCardFollowThrough);
+const serializedJsonCache = new WeakMap();
+let rustFallbackLogged = false;
 
 const FIRST_MINUTE = 9 * 60 + 15;
 const MINUTE_MS = 60_000;
@@ -175,7 +189,7 @@ export function resolveSwingDay(card, minutes, date) {
 }
 
 /** Evidence through close, separate from the journal's first-exit result/R. */
-export function trackCardFollowThrough(card, minutes, { source = 'raw', futuresCandles = [] } = {}) {
+export function trackCardFollowThroughJs(card, minutes, { source = 'raw', futuresCandles = [] } = {}) {
   if (!validCard(card) || !(card.sl > 0 && card.sl < card.entry && card.tgt1 > card.entry && card.tgt2 >= card.tgt1)) return null;
   const closeAt = sessionCloseAt(card.date);
   const openAt = Date.parse(`${card.date}T09:15:00+05:30`);
@@ -279,6 +293,38 @@ export function trackCardFollowThrough(card, minutes, { source = 'raw', futuresC
     sequence,
     futures,
   };
+}
+
+function stringifyOnce(value) {
+  const cached = serializedJsonCache.get(value);
+  if (cached !== undefined) return cached;
+  const serialized = JSON.stringify(value);
+  serializedJsonCache.set(value, serialized);
+  return serialized;
+}
+
+function logRustFallback(error) {
+  if (rustFallbackLogged) return;
+  console.warn(`journal Rust wrapper fallback: ${error?.message || error || 'native addon unavailable'}`);
+  rustFallbackLogged = true;
+}
+
+export function trackCardFollowThrough(card, minutes, options = {}) {
+  if (journalRustDisabled || !Array.isArray(minutes) || minutes.length === 0) {
+    return trackCardFollowThroughJs(card, minutes, options);
+  }
+  if (!rustTrackCardFollowThrough) {
+    logRustFallback(rustLoadError);
+    return trackCardFollowThroughJs(card, minutes, options);
+  }
+  try {
+    const minutesJson = stringifyOnce(minutes);
+    const futuresJson = Array.isArray(options.futuresCandles) ? stringifyOnce(options.futuresCandles) : null;
+    return rustTrackCardFollowThrough(card, minutesJson, options.source ?? 'raw', futuresJson);
+  } catch (error) {
+    logRustFallback(error);
+    return trackCardFollowThroughJs(card, minutes, options);
+  }
 }
 
 function journalCardKey(card) {

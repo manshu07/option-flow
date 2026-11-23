@@ -2,7 +2,7 @@
 //! Verified by scripts/journalPortVerify.mjs replaying every stored card against the archive.
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 const MINUTE_MS: i64 = 60_000;
 const IST_OFFSET_MS: i64 = 330 * 60_000;
@@ -51,17 +51,22 @@ fn session_close_at(date: &str) -> Option<i64> {
 }
 fn js_finite(v: &Value) -> bool { v.as_f64().map(|f| f.is_finite()).unwrap_or(false) }
 fn is_safe_integer(v: &Value) -> bool {
-  v.as_i64().map(|i| i.abs() <= 9_007_199_254_740_991).unwrap_or(false) && v.is_number() && v.as_f64().map(|f| f.fract() == 0.0 && f.is_finite()).unwrap_or(false)
+  v.as_i64().map(|i| (-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&i)).unwrap_or(false)
+    && v.is_number() && v.as_f64().map(|f| f.fract() == 0.0 && f.is_finite()).unwrap_or(false)
 }
 fn round2(v: f64) -> f64 { (v * 100.0).round() / 100.0 }
 
 #[napi(js_name = "trackCardFollowThrough", catch_unwind)]
-pub fn track_card_follow_through(card: Value, minutes_json: String, source: Option<String>, futures_candles: Option<Value>) -> Result<Value> {
+pub fn track_card_follow_through(card: Value, minutes_json: String, source: Option<String>, futures_candles_json: Option<String>) -> Result<Value> {
   // Minutes arrive as one JSON string: a single napi boundary value, parsed here.
   let minutes: Value = serde_json::from_str(&minutes_json).map_err(|e| napi::Error::from_reason(format!("minutes parse: {e}")))?;
+  let futures_candles = futures_candles_json.as_deref().and_then(|json| serde_json::from_str::<Value>(json).ok());
   // validCard
   let ok_shape = card.is_object()
-    && card.get("date").and_then(|v| v.as_str()).map(|s| s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-').unwrap_or(false)
+    && card.get("date").and_then(|v| v.as_str()).map(|s| {
+      let bytes = s.as_bytes();
+      bytes.len() == 10 && bytes.iter().enumerate().all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() })
+    }).unwrap_or(false)
     && card.get("symbol").map(|v| v.is_string()).unwrap_or(false)
     && js_finite(card.get("at").unwrap_or(&Value::Null))
     && js_finite(card.get("strike").unwrap_or(&Value::Null))
@@ -194,7 +199,7 @@ pub fn track_card_follow_through(card: Value, minutes_json: String, source: Opti
 
   let sample_count = observed.len();
   let missing = ((expected_minutes as i64) - sample_count as i64).max(0);
-  let first_full_minute = ((card_at as i64).div_euclid(MINUTE_MS) + 1) * MINUTE_MS;
+  let first_full_minute = (card_at / MINUTE_MS as f64).ceil() as i64 * MINUTE_MS;
   let mut f_high = f64::NEG_INFINITY; let mut f_low = f64::INFINITY;
   let mut f_from = i64::MAX; let mut f_to = i64::MIN; let mut f_n = 0i64;
   if let Some(arr) = futures_candles.as_ref().and_then(|v| v.as_array()) {
