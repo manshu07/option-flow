@@ -36,8 +36,10 @@ const card = {
   disclaimer: 'Educational observation — not trade advice.',
 };
 
-type TestCard = Omit<typeof card, 'gamma'> & {
+type TestCard = Omit<typeof card, 'gamma' | 'pcrAtEntry' | 'pcrShift'> & {
   gamma?: { gexAtStrike: number | null; distanceToFlip: number | null; regime: 'gamma-long' | 'gamma-short' | null; flipLevel: number | null; pin: string | null; notes: string[] } | null;
+  pcrAtEntry?: number | null;
+  pcrShift?: number | null;
   outcome?: { status?: 'tgt1' | 'sl' | 'open' | 'ambiguous'; followThrough?: ObservationFollowThrough | null };
 };
 let responseCards: TestCard[];
@@ -68,6 +70,7 @@ class MockEventSource {
 const jsonResponse = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as Response;
 
 beforeEach(() => {
+  localStorage.clear();
   vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-17T04:15:00Z'));
   responseCards = [card, { ...card, id: 'duplicate-id', entry: 999 }];
   vi.stubGlobal('EventSource', MockEventSource);
@@ -282,12 +285,13 @@ describe('ObservationsPage cards and table', () => {
     const table = await screen.findByRole('table');
     expect(screen.getByText('1–10 of 21')).toBeInTheDocument();
     expect(within(table).getAllByRole('columnheader').map(header => header.textContent)).toEqual([
-      'Time', 'Symbol', 'Contract', 'Expiry', 'DTE', 'Bias', 'Quality', 'Entry', 'SL', 'TGT1', 'TGT2', 'Live opt', 'Flow', 'Status',
+      'Time', 'Symbol', 'Contract', 'Expiry', 'DTE', 'Bias', 'Quality', 'PCR', 'Entry', 'SL', 'TGT1', 'TGT2', 'Live opt', 'Flow', 'Status',
     ]);
     expect(within(table).getAllByRole('row')).toHaveLength(11);
     expect(within(table).getByText('16-Nov 10:05')).toBeInTheDocument();
     expect(within(table).getAllByText('Trend')).toHaveLength(10);
     expect(within(table).getAllByText('TGT1').length).toBeGreaterThan(1);
+    expect(within(table).getAllByText('0.9 (−4%)')).toHaveLength(10);
     expect(localStorage.getItem('observations-view:v1')).toBe('"table"');
 
     fireEvent.click(screen.getByRole('button', { name: 'Next ›' }));
@@ -299,6 +303,34 @@ describe('ObservationsPage cards and table', () => {
     unmount();
     render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
     expect(await screen.findByRole('table')).toBeInTheDocument();
+  });
+
+  it('filters observations by entry PCR and shows the PCR value/shift in the table', async () => {
+    responseCards = [
+      { ...card, id: 'pcr-low', symbol: 'PCRLOW', pcrAtEntry: 0.87, pcrShift: -4 },
+      { ...card, id: 'pcr-high', symbol: 'PCRHIGH', pcrAtEntry: 1.12, pcrShift: 6 },
+      { ...card, id: 'pcr-missing', symbol: 'PCRMISSING', pcrAtEntry: null, pcrShift: null },
+    ];
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    expect(await screen.findByText('1–3 of 3')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'PCR < 1' }));
+    expect(await screen.findByText('1–1 of 1')).toBeInTheDocument();
+    expect(screen.getByRole('article')).toHaveTextContent('PCRLOW');
+    expect(localStorage.getItem('observations.pcr:v1')).toBe('"lt1"');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'PCR ≥ 1' }));
+    expect(await screen.findByText('1–1 of 1')).toBeInTheDocument();
+    expect(screen.getByRole('article')).toHaveTextContent('PCRHIGH');
+
+    fireEvent.click(screen.getAllByRole('radio', { name: 'All' }).at(-1)!);
+    expect(await screen.findByText('1–3 of 3')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'Table' }));
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('0.9 (−4%)')).toBeInTheDocument();
+    expect(within(table).getByText('1.1 (+6%)')).toBeInTheDocument();
+    expect(within(table).getAllByRole('row')[3].querySelectorAll('td')[7]).toHaveTextContent('—');
   });
 
   it('exposes the same verification in the existing Status table cell', async () => {

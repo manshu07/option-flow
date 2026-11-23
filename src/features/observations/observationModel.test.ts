@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   filterObservationCards,
   formatPcrContext,
+  formatPcrTable,
   highestObservedTarget,
   normalizeFollowThrough,
   observationKey,
@@ -45,6 +46,9 @@ describe('shared PCR context label', () => {
     expect(formatPcrContext(0.87, -4.2, { includeWindow: false })).toBe('PCR 0.87 (−4%)');
     expect(formatPcrContext(null, null)).toBe('PCR — (— 15m)');
     expect(formatPcrContext(Number.NaN, Infinity)).toBe('PCR — (— 15m)');
+    expect(formatPcrTable(0.874, -4.2)).toBe('0.9 (−4%)');
+    expect(formatPcrTable(0.87, null)).toBe('0.9 (—)');
+    expect(formatPcrTable(null, -4)).toBe('—');
   });
 });
 
@@ -138,9 +142,9 @@ describe('Post-call follow-through evidence', () => {
 });
 
 describe('filterObservationCards', () => {
-  const early = { id: 'e', symbol: 'E', date: '2026-11-19', at: 3, early: 'momentum' as const, quality: null as unknown as number };
-  const jevLow = { id: 'j1', symbol: 'J1', date: '2026-11-19', at: 2, early: null, quality: 0.7 };
-  const jevHigh = { id: 'j2', symbol: 'J2', date: '2026-11-19', at: 1, early: null, quality: 0.86 };
+  const early = { id: 'e', symbol: 'E', date: '2026-11-19', at: 3, early: 'momentum' as const, quality: null as unknown as number, pcrAtEntry: 0.87 };
+  const jevLow = { id: 'j1', symbol: 'J1', date: '2026-11-19', at: 2, early: null, quality: 0.7, pcrAtEntry: 1.12 };
+  const jevHigh = { id: 'j2', symbol: 'J2', date: '2026-11-19', at: 1, early: null, quality: 0.86, pcrAtEntry: null };
   const cards = [early, jevLow, jevHigh];
 
   it('splits early code signals from Jev model cards', () => {
@@ -153,6 +157,13 @@ describe('filterObservationCards', () => {
     expect(filterObservationCards(cards, { confidence: '65' }).map((c: { id: string }) => c.id)).toEqual(['j1', 'j2']);
     expect(filterObservationCards(cards, { confidence: '80' }).map((c: { id: string }) => c.id)).toEqual(['j2']);
     expect(filterObservationCards(cards, { signal: 'early', confidence: '80' })).toHaveLength(0);
+  });
+
+  it('filters by entry PCR, excludes unknown PCR from numeric bands, and composes with other filters', () => {
+    expect(filterObservationCards(cards, { pcr: 'lt1' }).map(card => card.id)).toEqual(['e']);
+    expect(filterObservationCards(cards, { pcr: 'gte1' }).map(card => card.id)).toEqual(['j1']);
+    expect(filterObservationCards(cards, { pcr: 'gte1', signal: 'jev', confidence: '65' }).map(card => card.id)).toEqual(['j1']);
+    expect(filterObservationCards(cards, { pcr: 'all' })).toHaveLength(3);
   });
 
   it('searches symbol, contract and expiry case-insensitively', () => {

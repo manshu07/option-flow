@@ -105,6 +105,15 @@ export function formatPcrContext(pcrAtEntry: unknown, pcrShift: unknown, { inclu
   return `PCR ${pcr} (${shift})`;
 }
 
+/** Compact precision for the observations table; cards without PCR stay unavailable. */
+export function formatPcrTable(pcrAtEntry: unknown, pcrShift: unknown): string {
+  if (!finite(pcrAtEntry) || pcrAtEntry < 0) return '—';
+  const shift = finite(pcrShift)
+    ? `${pcrShift < 0 ? '−' : pcrShift > 0 ? '+' : ''}${Math.round(Math.abs(pcrShift))}%`
+    : '—';
+  return `${pcrAtEntry.toFixed(1)} (${shift})`;
+}
+
 function timestamp(value: unknown): value is number {
   return finite(value) && Math.abs(value) <= 8_640_000_000_000_000;
 }
@@ -243,18 +252,19 @@ export interface ObservationPage<T> {
 /** Slice an already ordered card list, clamping the requested page to its bounds. */
 export type ObservationSignal = 'all' | 'early' | 'jev';
 export type ObservationConfidence = 'all' | '65' | '80';
+export type ObservationPcrFilter = 'all' | 'lt1' | 'gte1';
 
 /**
- * Signal, confidence and free-text filters.
+ * Signal, confidence, PCR and free-text filters.
  *
  * `early` cards are code-computed and carry no model confidence, so a
  * confidence floor excludes them rather than pretending they scored 0%.
  * `query` matches symbol, contract (e.g. 128CE) and expiry, case-insensitive;
  * every whitespace-separated token must match.
  */
-export function filterObservationCards<T extends ObservationIdentity & { early?: 'build-fast' | 'momentum' | null; quality?: number | null; strike?: number | null; side?: string | null; expiry?: string | null }>(
+export function filterObservationCards<T extends ObservationIdentity & { early?: 'build-fast' | 'momentum' | null; quality?: number | null; pcrAtEntry?: number | null; strike?: number | null; side?: string | null; expiry?: string | null }>(
   cards: readonly T[],
-  { signal = 'all', confidence = 'all', query = '' }: { signal?: ObservationSignal; confidence?: ObservationConfidence; query?: string } = {},
+  { signal = 'all', confidence = 'all', pcr = 'all', query = '' }: { signal?: ObservationSignal; confidence?: ObservationConfidence; pcr?: ObservationPcrFilter; query?: string } = {},
 ): T[] {
   const floor = confidence === 'all' ? null : Number(confidence) / 100;
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -262,6 +272,8 @@ export function filterObservationCards<T extends ObservationIdentity & { early?:
     const isEarly = Boolean(card.early);
     if (signal === 'early' && !isEarly) return false;
     if (signal === 'jev' && isEarly) return false;
+    if (pcr === 'lt1' && !(finite(card.pcrAtEntry) && card.pcrAtEntry < 1)) return false;
+    if (pcr === 'gte1' && !(finite(card.pcrAtEntry) && card.pcrAtEntry >= 1)) return false;
     if (floor != null) {
       const quality = Number(card.quality);
       if (!Number.isFinite(quality) || quality < floor) return false;

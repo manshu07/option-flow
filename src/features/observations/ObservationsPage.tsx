@@ -9,6 +9,7 @@ import { clockOf } from '../market-flow/marketFlowModel';
 import {
   filterObservationCards,
   formatPcrContext,
+  formatPcrTable,
   highestObservedTarget,
   normalizeFollowThrough,
   paginateObservationCards,
@@ -41,6 +42,12 @@ const CONFIDENCE_OPTIONS: readonly CapsuleOption<(typeof CONFIDENCE_FILTERS)[num
   { value: 'all', label: 'Any %' },
   { value: '65', label: '65%+' },
   { value: '80', label: '80%+' },
+];
+const PCR_FILTERS = ['all', 'lt1', 'gte1'] as const;
+const PCR_OPTIONS: readonly CapsuleOption<(typeof PCR_FILTERS)[number]>[] = [
+  { value: 'all', label: 'All' },
+  { value: 'lt1', label: 'PCR < 1' },
+  { value: 'gte1', label: 'PCR ≥ 1' },
 ];
 const OBSERVATION_VIEWS: readonly CapsuleOption<ObservationView>[] = [
   { value: 'cards', label: 'Cards' },
@@ -402,7 +409,7 @@ function ObservationTable({ cards, optionTicks }: {
     <div className="observations__table-wrap">
       <table className="observations__table">
         <thead><tr>
-          <th>Time</th><th>Symbol</th><th>Contract</th><th>Expiry</th><th>DTE</th><th>Bias</th><th>Quality</th>
+          <th>Time</th><th>Symbol</th><th>Contract</th><th>Expiry</th><th>DTE</th><th>Bias</th><th>Quality</th><th>PCR</th>
           <th>Entry</th><th>SL</th><th>TGT1</th><th>TGT2</th><th>Live opt</th><th>Flow</th><th>Status</th>
         </tr></thead>
         <tbody>{cards.map(card => {
@@ -420,6 +427,7 @@ function ObservationTable({ cards, optionTicks }: {
               <td className="is-numeric">{dte ?? '—'}</td>
               <td className={card.bias === 'bullish' ? 'is-up' : 'is-down'}>{card.bias}</td>
               <td className="is-numeric">{card.reEntry ? 'RE-ENTRY' : card.early ? `early · ${card.early}` : Number.isFinite(card.quality) ? `${(card.quality * 100).toFixed(0)}%` : '—'}</td>
+              <td className="is-numeric">{formatPcrTable(card.pcrAtEntry, card.pcrShift)}</td>
               <td className="is-numeric">{priceText(card.entry)}</td>
               <td className="is-numeric">{priceText(card.sl)}</td>
               <td className="is-numeric">{priceText(card.tgt1)}</td>
@@ -465,16 +473,17 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   const [pageSizeChoice, setPageSizeChoice] = useRememberedChoice('observations.pageSize:v1', PAGE_SIZES, '10');
   const [signal, setSignal] = useRememberedChoice('observations.signal:v1', SIGNAL_FILTERS, 'all');
   const [confidence, setConfidence] = useRememberedChoice('observations.confidence:v1', CONFIDENCE_FILTERS, 'all');
+  const [pcrFilter, setPcrFilter] = useRememberedChoice('observations.pcr:v1', PCR_FILTERS, 'all');
   const [search, setSearch] = useRemembered('observations.search:v1', raw => (typeof raw === 'string' ? raw : undefined), '');
   const pageSize = Number(pageSizeChoice) || 10;
   const todayDate = marketParts(Date.now()).dateKey;
   const todayCount = cards?.filter(card => card.date === todayDate).length ?? 0;
   const filtered = useMemo(
-    () => (cards == null ? null : filterObservationCards(cards, { signal, confidence, query: search })),
-    [cards, signal, confidence, search],
+    () => (cards == null ? null : filterObservationCards(cards, { signal, confidence, pcr: pcrFilter, query: search })),
+    [cards, signal, confidence, pcrFilter, search],
   );
   const pageData = filtered == null ? null : paginateObservationCards(filtered, page, pageSize);
-  useEffect(() => { setPage(1); }, [cards?.length, view, pageSize, signal, confidence, search]);
+  useEffect(() => { setPage(1); }, [cards?.length, view, pageSize, signal, confidence, pcrFilter, search]);
   // Always track the three indices' futures; add every card symbol + its exact option contract.
   const trackedSymbols = useMemo(
     () => [...new Set([...INDEX_SYMBOLS, ...(cards ?? []).map(card => card.symbol)])],
@@ -527,6 +536,14 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
         onChange={next => { setConfidence(next); setPage(1); }}
         ariaLabel="Minimum Jev confidence"
         groupId="observations-confidence"
+        size="page"
+      />
+      <CapsuleSegmented
+        options={PCR_OPTIONS}
+        value={pcrFilter}
+        onChange={next => { setPcrFilter(next); setPage(1); }}
+        ariaLabel="PCR filter"
+        groupId="observations-pcr"
         size="page"
       />
       <input
