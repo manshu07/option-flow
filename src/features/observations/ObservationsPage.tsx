@@ -149,13 +149,15 @@ function zoneFor(card: ObservationCard, opt: number | null | undefined, key: str
     if (card.outcome.status === 'tgt1') return bankedTgt2 ? 'tgt2' : 'tgt1';
     return null;
   }
-  // Open card: live tick updates the sticky memory; a banked target never un-tints.
+  // Open card: banked target kills the WHITE gap (dip back into buying range stays green),
+  // but a live SL cross always shows red — tint follows the actual state, green pe green, red pe red.
   if (opt != null) {
     if (opt >= card.tgt2) achievedZone.set(key, 'tgt2');
     else if (opt >= card.tgt1 && achievedZone.get(key) !== 'tgt2') achievedZone.set(key, 'tgt1');
+    if (opt <= card.sl) return 'sl';
     const achieved = achievedZone.get(key);
     if (achieved) return achieved;
-    return opt <= card.sl ? 'sl' : null;
+    return null;
   }
   return bankedTgt2 ? 'tgt2' : bankedTgt1 ? 'tgt1' : null;
 }
