@@ -13,69 +13,26 @@
 import { openSync, readSync, closeSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CSV_ROOT, h6rsCore } from './h6rsLib.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = process.env.HISTORY_CSV_ROOT || '/Users/himanshuvaghela/Downloads/NSE DERIVATIVES';
 const [symbol = 'TITAN', tfArg = 'daily'] = process.argv.slice(2);
 const TF = tfArg === '5m' ? '5m' : 'daily';
 
-function load1m(sym) {
-  const file = path.join(ROOT, `${sym}-EQ`, `${sym}-EQ1.csv`);
-  const fd = openSync(file, 'r');
-  const buf = Buffer.alloc(1 << 20);
-  let pos = 0, carry = '';
-  const bars = [];
-  const take = line => {
-    const f = line.split(',');
-    if (f.length !== 7) return;
-    const [date, time, o, h, l, c, v] = f;
-    if (!/^\d{4}\.\d{2}\.\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return;
-    const mins = Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
-    if (mins < 555 || mins > 930) return;
-    bars.push({ date: date.replace(/\./g, '-'), time, o: +o, h: +h, l: +l, c: +c, v: +v || 0 });
-  };
-  for (;;) {
-    const got = readSync(fd, buf, 0, buf.length, pos);
-    if (got <= 0) break;
-    pos += got;
-    const lines = (carry + buf.toString('utf8', 0, got)).split('\n');
-    carry = lines.pop();
-    for (const l of lines) take(l);
-  }
-  take(carry);
-  closeSync(fd);
-  return bars;
-}
-
-function resample(bars, minutes) {
-  const out = [];
-  let cur = null;
-  for (const b of bars) {
-    const mins = Number(b.time.slice(0, 2)) * 60 + Number(b.time.slice(3));
-    const slot = Math.floor((mins - 555) / minutes);
-    const key = b.date + '#' + slot;
-    if (!cur || cur.key !== key) { if (cur) out.push(cur); cur = { key, date: b.date, time: b.time, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v }; }
-    else { cur.h = Math.max(cur.h, b.h); cur.l = Math.min(cur.l, b.l); cur.c = b.c; cur.v += b.v; }
-  }
-  if (cur) out.push(cur);
-  return out;
-}
-
-let bars = load1m(symbol);
-bars = TF === 'daily' ? resample(bars, 9999) : resample(bars, 5); // 9999 = one bucket per day
-const n = bars.length;
-const C = bars.map(b => b.c);
-
-// RSI (period configurable via H6RS_RSI_P, default 14)
 const RP = Number(process.env.H6RS_RSI_P) || 14;
-const osc = new Array(n).fill(NaN);
-{ let g = 0, l = 0; for (let i = 1; i < i + n; i++) { if (i >= n) break; const ch = C[i] - C[i - 1]; g = (g * (RP - 1) + Math.max(ch, 0)) / RP; l = (l * (RP - 1) + Math.max(-ch, 0)) / RP; osc[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l); } }
+const core = h6rsCore(symbol, TF === 'daily' ? 9999 : 5, RP);
+const n = core.closes.length;
+const C = core.closes;
+const osc = core.osc;
+const vols = core.vols;
+const dstr = i => core.dates[core.dayIdx[i]];
+const tstr = i => { const m = core.mins[i]; return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; };
 
 const pH = i => i > 2 && i < n - 2 && osc[i] > osc[i - 1] && osc[i] > osc[i - 2] && osc[i] >= osc[i + 1] && osc[i] > osc[i + 2];
 const pL = i => i > 2 && i < n - 2 && osc[i] < osc[i - 1] && osc[i] < osc[i - 2] && osc[i] <= osc[i + 1] && osc[i] < osc[i + 2];
 const rngAt = (i, w) => { let mx = -1e9, mn = 1e9; for (let j = Math.max(0, i - w + 1); j <= i; j++) { mx = Math.max(mx, osc[j]); mn = Math.min(mn, osc[j]); } return mx - mn; };
-const prLow = (i, w) => { let mn = 1e9; for (let j = Math.max(0, i - w + 1); j <= i; j++) mn = Math.min(mn, bars[j].l); return mn; };
-const volAvg = i => { let s = 0; for (let j = Math.max(0, i - 19); j <= i; j++) s += bars[j].v; return s / Math.min(i + 1, 20); };
+const prLow = (i, w) => { let mn = 1e9; for (let j = Math.max(0, i - w + 1); j <= i; j++) mn = Math.min(mn, core.lows[j]); return mn; };
+const volAvg = i => { let s = 0; for (let j = Math.max(0, i - 19); j <= i; j++) s += vols[j]; return s / Math.min(i + 1, 20); };
 
 const MAX_PHASE = Number(process.env.H6RS_PHASE_MAX) || 40, CONF_WIN = 15, MIN_PHASE = 3;
 const MIN_VOL = Number(process.env.H6RS_MIN_VOL) || 0;
@@ -137,9 +94,9 @@ for (let i = 15; i < n - 2; i++) {
           const e = j + 1;
           const fwd = k => e + k < n ? (C[e + k] / C[e] - 1) * 100 : null;
           let mfe = -1e9, mae = 1e9;
-          for (let j2 = e + 1; j2 < Math.min(e + 31, n); j2++) { mfe = Math.max(mfe, (bars[j2].h / C[e] - 1) * 100); mae = Math.min(mae, (bars[j2].l / C[e] - 1) * 100); }
+          for (let j2 = e + 1; j2 < Math.min(e + 31, n); j2++) { mfe = Math.max(mfe, (core.highs[j2] / C[e] - 1) * 100); mae = Math.min(mae, (core.lows[j2] / C[e] - 1) * 100); }
           const postLL = prLow(e, 15);
-          seqs.push({ entryDate: bars[e].date, entryTime: TF === '5m' ? bars[e].time : undefined, entry: C[e], bars: e - (moon.peakIdx - 25), fwd5: fwd(5), fwd10: fwd(10), fwd20: fwd(20), fwd30: fwd(30), fwd60: fwd(60), mfe, mae, hlFormed: bars[Math.min(e + 5, n - 1)].l > postLL, volState: (bars[e].v / volAvg(e)).toFixed(2), lengthBars: e - moon.peakIdx });
+          seqs.push({ entryDate: dstr(e), entryTime: TF === '5m' ? tstr(e) : undefined, entry: C[e], bars: e - (moon.peakIdx - 25), fwd5: fwd(5), fwd10: fwd(10), fwd20: fwd(20), fwd30: fwd(30), fwd60: fwd(60), mfe, mae, hlFormed: core.lows[Math.min(e + 5, n - 1)] > postLL, volState: (vols[e] / volAvg(e)).toFixed(2), lengthBars: e - moon.peakIdx });
           st = 0; moon = crown = m1 = null;
           break;
         }
