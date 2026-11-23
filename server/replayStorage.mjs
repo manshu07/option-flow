@@ -36,29 +36,61 @@ function futuresPath(scanDir, date, symbol) {
   return path.join(scanDir, date, 'futures', `${symbol}.json`);
 }
 
-function mergeMonths(previous, incoming) {
+function mergeCandle(previous, incoming, { preferIncomingCloseOi = true } = {}) {
+  const merged = { ...(previous ?? {}) };
+  for (const [key, value] of Object.entries(incoming ?? {})) {
+    if (value !== undefined && value !== null) merged[key] = value;
+  }
+  merged.at = incoming.at;
+  const open = previous?.open ?? incoming.open;
+  if (open != null) merged.open = open;
+  else delete merged.open;
+  const highs = [previous?.high, incoming.high].filter(Number.isFinite);
+  const lows = [previous?.low, incoming.low].filter(Number.isFinite);
+  if (highs.length) merged.high = Math.max(...highs);
+  if (lows.length) merged.low = Math.min(...lows);
+  merged.close = preferIncomingCloseOi ? incoming.close ?? previous?.close : previous?.close ?? incoming.close;
+  merged.oi = preferIncomingCloseOi ? incoming.oi ?? previous?.oi : previous?.oi ?? incoming.oi;
+  const volume = incoming.volume ?? previous?.volume;
+  if (volume != null) merged.volume = volume;
+  else delete merged.volume;
+  return merged;
+}
+
+function mergeMonths(previous, incoming, options) {
   const byDate = new Map();
   for (const month of [...(previous ?? []), ...(incoming ?? [])]) {
     if (!month || typeof month.date !== 'string') continue;
     const held = byDate.get(month.date);
     const candles = new Map((held?.candles ?? []).map(candle => [candle.at, candle]));
     for (const candle of month.candles ?? []) {
-      if (candle && Number.isFinite(candle.at)) candles.set(candle.at, candle);
+      if (candle && Number.isFinite(candle.at)) candles.set(candle.at, mergeCandle(candles.get(candle.at), candle, options));
     }
-    byDate.set(month.date, {
-      ...(held ?? {}),
-      ...month,
-      candles: [...candles.values()].sort((a, b) => a.at - b.at),
-    });
+    const merged = { ...(held ?? {}), date: month.date, candles: [...candles.values()].sort((a, b) => a.at - b.at) };
+    for (const field of ['prevHigh', 'prevLow']) {
+      const values = [held?.[field], month[field]].filter(Number.isFinite);
+      if (values.length) merged[field] = field === 'prevHigh' ? Math.max(...values) : Math.min(...values);
+    }
+    for (const field of ['prevClose', 'prevOi']) {
+      const preferred = options.preferIncomingCloseOi ? month[field] : held?.[field];
+      const fallback = options.preferIncomingCloseOi ? held?.[field] : month[field];
+      if (preferred != null) merged[field] = preferred;
+      else if (fallback != null) merged[field] = fallback;
+    }
+    for (const [field, value] of Object.entries(month)) {
+      if (!['date', 'candles', 'prevHigh', 'prevLow', 'prevClose', 'prevOi'].includes(field)
+        && value !== undefined && value !== null) merged[field] = value;
+    }
+    byDate.set(month.date, merged);
   }
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export function mergeFutures(previous, incoming) {
+export function mergeFutures(previous, incoming, { preferIncomingCloseOi = true } = {}) {
   return {
     symbol: incoming.symbol,
     session: incoming.session,
-    months: mergeMonths(previous?.months, incoming.months),
+    months: mergeMonths(previous?.months, incoming.months, { preferIncomingCloseOi }),
   };
 }
 
@@ -84,7 +116,7 @@ export function readReplayMinutes(scanDir, date, matchesTimestamp = () => true) 
   return minutes;
 }
 
-export function persistFutures(scanDir, date, symbol, result) {
+export function persistFutures(scanDir, date, symbol, result, options = {}) {
   const target = futuresPath(scanDir, date, symbol);
   if (!target) throw new Error('Invalid replay futures path.');
   if (!validSnapshot({ symbol, session: date, months: result?.months }, date, symbol)) throw new ReplayDataError('Invalid futures data.');
@@ -94,7 +126,7 @@ export function persistFutures(scanDir, date, symbol, result) {
   } catch (error) {
     if (error?.code !== 'REPLAY_DATA_INVALID') throw error;
   }
-  const merged = mergeFutures(existing, { symbol, session: date, months: result.months });
+  const merged = mergeFutures(existing, { symbol, session: date, months: result.months }, options);
   const dir = path.dirname(target);
   fs.mkdirSync(dir, { recursive: true });
   const temporary = path.join(dir, `.${symbol}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);

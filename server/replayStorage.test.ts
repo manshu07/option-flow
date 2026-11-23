@@ -30,6 +30,24 @@ describe('replay futures storage', () => {
     expect(fs.readdirSync(path.join(dir, DATE, 'futures'))).toEqual(['NIFTY.json']);
   });
 
+  it('merges persisted candle fields by extrema while keeping feed close/OI authoritative over REST', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'of-replay-'));
+    dirs.push(dir);
+    persistFutures(dir, DATE, 'NIFTY', {
+      months: [{ date: '2026-11-26', candles: [{ at: OPEN, open: 100, high: 110, low: 90, close: 105, oi: 100, volume: 20 }] }],
+    });
+
+    const rest = persistFutures(dir, DATE, 'NIFTY', {
+      months: [{ date: '2026-11-26', candles: [{ at: OPEN, open: 101, high: 115, low: 95, close: 103, oi: 90, volume: 30 }] }],
+    }, { preferIncomingCloseOi: false });
+    expect(rest.months[0].candles[0]).toEqual({ at: OPEN, open: 100, high: 115, low: 90, close: 105, oi: 100, volume: 30 });
+
+    const feed = persistFutures(dir, DATE, 'NIFTY', {
+      months: [{ date: '2026-11-26', candles: [{ at: OPEN, open: 102, high: 112, low: 92, close: 108, oi: 110, volume: 25 }] }],
+    });
+    expect(feed.months[0].candles[0]).toEqual({ at: OPEN, open: 100, high: 115, low: 90, close: 108, oi: 110, volume: 25 });
+  });
+
   it('does not include a candle that starts at the replay cursor', () => {
     const result = { symbol: 'NIFTY', session: DATE, months: [{ date: '2026-11-26', candles: [
       { at: OPEN, close: 101, oi: 11 },

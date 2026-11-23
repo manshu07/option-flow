@@ -879,6 +879,32 @@ async function futuresWarmPass() {
       catch (error) { log(`warm pass ${u.symbol} failed:`, String(error?.message || error).slice(0, 120)); }
     }
     log(`futures warm pass: ${warmed}/${universe.length} symbols cached`);
+    if (typeof provider.backfillTodayFutures === 'function' && isMarketSessionTime(now())) {
+      const backfill = await provider.backfillTodayFutures(session);
+      let persisted = 0;
+      for (const update of backfill?.updates ?? []) {
+        try {
+          let persistedSnapshot = null;
+          const stored = await loadFuturesWithArchiveLock(
+            archiveLock,
+            () => Promise.resolve(update),
+            result => Promise.resolve().then(() => {
+              // This pass is REST fallback data: preserve any captured feed close/OI
+              // already on disk while still widening H/L and filling missing minutes.
+              persistedSnapshot = persistFutures(SCAN_DIR, session, update.symbol, result, { preferIncomingCloseOi: false });
+              return persistedSnapshot;
+            }),
+            error => log(`boot today backfill ${update.symbol} persistence failed:`, error?.message || error),
+          );
+          if (!stored) continue;
+          futuresCache.set(`${update.symbol}|${session}`, { at: Date.now(), value: Promise.resolve(persistedSnapshot ?? stored) });
+          persisted++;
+        } catch (error) {
+          log(`boot today backfill ${update.symbol} failed:`, String(error?.message || error).slice(0, 120));
+        }
+      }
+      log(`boot today futures backfill: ${persisted}/${backfill?.attempted ?? 0} symbols persisted`);
+    }
   } catch (error) {
     log('futures warm pass failed:', String(error?.message || error));
   }

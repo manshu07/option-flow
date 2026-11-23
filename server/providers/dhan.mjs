@@ -65,6 +65,7 @@ import { readFutures } from '../replayStorage.mjs';
 import { seedPlan } from '../prevDaySeed.mjs';
 import { tokenExpiryAt } from '../tokenWatch.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const DATA_DIR = path.resolve(ROOT, process.env.MF_DATA_DIR || 'server/data');
 const MASTER_CACHE = path.join(ROOT, 'data', '.dhan-master.csv');
 const MAX_PER_SECOND = Math.max(1, Number(process.env.DHAN_MAX_RPS) || 5);
 const FUTURES_MONTHS = Math.max(1, Math.min(3, Number(process.env.DHAN_FUTURES_MONTHS) || 2));
@@ -96,6 +97,113 @@ const ymdIst = ms => new Date(ms + 330 * 60_000).toISOString().slice(0, 10);
 const ymd = s => (typeof s === 'string' ? s.slice(0, 10) : s);
 const istMinute = ms => Math.floor((ms + 330 * 60_000) / 60_000) * 60_000 - 330 * 60_000;
 const num = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+const FUTURES_JOURNAL_ROOT = path.join(DATA_DIR, 'dhan');
+const tickSignature = candle => JSON.stringify([candle.open, candle.high, candle.low, candle.close, candle.oi, candle.volume ?? null]);
+
+/** REST is the fallback source; incoming feed close/OI win while extrema merge monotonically. */
+export function mergeDhanFuturesCandle(restCandle, feedCandle) {
+  if (!restCandle) return { ...feedCandle };
+  if (!feedCandle) return { ...restCandle };
+  const highs = [restCandle.high, feedCandle.high].filter(Number.isFinite);
+  const lows = [restCandle.low, feedCandle.low].filter(Number.isFinite);
+  const merged = { ...restCandle, ...feedCandle, at: feedCandle.at };
+  const open = restCandle.open ?? feedCandle.open;
+  if (open != null) merged.open = open;
+  else delete merged.open;
+  if (highs.length) merged.high = Math.max(...highs);
+  if (lows.length) merged.low = Math.min(...lows);
+  merged.close = feedCandle.close ?? restCandle.close;
+  merged.oi = feedCandle.oi ?? restCandle.oi;
+  merged.volume = feedCandle.volume ?? restCandle.volume;
+  return merged;
+}
+
+export function shouldBackfillToday(candles, now, session, { minBars = 30, staleMs = 120_000 } = {}) {
+  if (!Number.isFinite(now) || ymdIst(now) !== session || !isMarketSessionTime(now)) return false;
+  const minuteOfDay = Math.floor((now + 330 * 60_000) / 60_000) % 1440;
+  const elapsed = Math.max(1, minuteOfDay - 9 * 60 - 15 + 1);
+  const required = Math.min(minBars, elapsed);
+  const today = (Array.isArray(candles) ? candles : []).filter(candle => Number.isFinite(candle?.at)
+    && ymdIst(candle.at) === session && Number.isFinite(candle.close) && candle.close > 0);
+  const lastAt = today.reduce((last, candle) => Math.max(last, candle.at), 0);
+  return today.length < required && (!lastAt || now - lastAt > staleMs);
+}
+
+export function shouldRunTodayBackfill(now, session, { postClose = false } = {}) {
+  if (!Number.isFinite(now) || ymdIst(now) !== session) return false;
+  return postClose ? !isMarketSessionTime(now) : isMarketSessionTime(now);
+}
+
+export function parseTodayIntraday(body, session) {
+  const timestamps = Array.isArray(body?.timestamp) ? body.timestamp.map(Number) : [];
+  return timestamps.map((rawAt, index) => {
+    const at = rawAt > 1e12 ? rawAt : rawAt * 1000;
+    const candle = {
+      at,
+      open: num(body.open?.[index]),
+      high: num(body.high?.[index]),
+      low: num(body.low?.[index]),
+      close: num(body.close?.[index]),
+      oi: num(body.open_interest?.[index]),
+    };
+    const volume = num(body.volume?.[index]);
+    if (volume != null && volume >= 0) candle.volume = volume;
+    return candle;
+  }).filter(candle => Number.isFinite(candle.at) && ymdIst(candle.at) === session
+    && Number.isFinite(candle.close) && candle.close > 0 && Number.isFinite(candle.oi) && candle.oi >= 0)
+    .sort((a, b) => a.at - b.at);
+}
+
+export function appendTickJournalBatch(file, records, append = fs.appendFileSync) {
+  if (!Array.isArray(records) || records.length === 0) return 0;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const payload = records.map(record => JSON.stringify({
+    at: record.at, sym: record.sym, expiry: record.expiry,
+    o: record.o, h: record.h, l: record.l, c: record.c, oi: record.oi, v: record.v,
+  })).join('\n') + '\n';
+  append(file, payload, 'utf8');
+  return records.length;
+}
+
+export function replayTickJournalText(text, session, contractIdFor, futTicks, journaled = new Map()) {
+  let restored = 0, invalid = 0;
+  for (const line of String(text ?? '').split('\n')) {
+    if (!line) continue;
+    let row;
+    try { row = JSON.parse(line); } catch { invalid++; continue; }
+    if (!Number.isSafeInteger(row?.at) || ymdIst(row.at) !== session
+      || typeof row.sym !== 'string' || typeof row.expiry !== 'string'
+      || ![row.o, row.h, row.l, row.c, row.oi].every(Number.isFinite)
+      || row.c <= 0 || row.oi < 0 || row.h < row.l) { invalid++; continue; }
+    const id = contractIdFor(row.sym, row.expiry);
+    if (id == null) { invalid++; continue; }
+    const candles = futTicks.get(id) ?? new Map();
+    const incoming = { at: row.at, open: row.o, high: row.h, low: row.l, close: row.c, oi: row.oi, volume: Number.isFinite(row.v) && row.v >= 0 ? row.v : undefined };
+    const merged = mergeDhanFuturesCandle(candles.get(row.at), incoming);
+    candles.set(row.at, merged);
+    futTicks.set(id, candles);
+    journaled.set(`${id}|${row.at}`, tickSignature(merged));
+    restored++;
+  }
+  return { restored, invalid };
+}
+
+/** A serialized crawl queue, active only for the first ten minutes of an in-session boot. */
+export function createBootCrawlPacer({ bootAt, paceMs = 250, startedInSession, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  let lastAt = 0;
+  let queue = Promise.resolve();
+  return () => {
+    const next = queue.then(async () => {
+      const current = now();
+      if (!startedInSession || current < bootAt || current - bootAt >= 10 * 60_000 || paceMs <= 0) return;
+      const wait = lastAt ? paceMs - (current - lastAt) : 0;
+      if (wait > 0) await sleep(wait);
+      lastAt = now();
+    });
+    queue = next.catch(() => undefined);
+    return next;
+  };
+}
 
 /** Minimal CSV reader: quoted fields, CRLF, no multiline cells (the master has none). */
 function* csvRows(text) {
@@ -124,13 +232,13 @@ export function createDhanProvider(universe) {
   const map = new Map();
   /** 'seg:id' → latest feed readings: ltp, prevClose, prevOi, oi, volume, avgPrice, bid/ask(+qty), open/high/low/close, t */
   const live = new Map();
-  /** contractId → Map(minuteStartMs → { close, oi }) — today's futures candles, tick by tick. */
+  /** contractId → Map(minuteStartMs → futures candle) — today's feed + REST candles. */
   const futTicks = new Map();
-  /** contractId → Promise<{ prevClose, prevOi, candles }> — one REST backfill per
-   *  contract per session: prev-day figures (the feed only sends PrevClose
-   *  packets on overnight subscriptions, not mid-session) and the session's
-   *  minute candles from 09:15, which the feed's live ticks then extend. */
+  /** session:contractId → Promise<{ prevClose, prevOi, candles }>. */
   const futRest = new Map();
+  const journaledTicks = new Map();
+  let tickJournalTimer = null;
+  let bootCrawlPace = async () => {};
   /** After a charts 429, hold off backfill retries for a while: the page's
    *  2-minute futures cycle re-asks every contract, and un-paced retries keep
    *  the limiter saturated so some contracts never backfill at all. */
@@ -148,6 +256,85 @@ export function createDhanProvider(universe) {
   const PINNED_LEG_CAP = 64;
   /** symbol+session → underlying's previous close, when neither the feed nor quotes had it. */
   const prevCloseCache = new Map();
+  function tickJournalPath(session) {
+    return path.join(FUTURES_JOURNAL_ROOT, session, 'futures-ticks.ndjson');
+  }
+
+  function resolveFuturesContract(symbol, expiry) {
+    return map.get(symbol)?.fut.find(contract => contract.expiry === expiry)?.id ?? null;
+  }
+
+  function replayFuturesTickJournal(session, text = null) {
+    let journal = text;
+    if (journal == null) {
+      try { journal = fs.readFileSync(tickJournalPath(session), 'utf8'); }
+      catch (error) { if (error?.code === 'ENOENT') return { restored: 0, invalid: 0 }; throw error; }
+    }
+    const result = replayTickJournalText(journal, session, resolveFuturesContract, futTicks, journaledTicks);
+    if (result.restored || result.invalid) {
+      console.log(`dhan: replayed futures tick journal ${session}: ${result.restored} candle row(s), ${result.invalid} skipped`);
+    }
+    return result;
+  }
+
+  function mergeRestCandlesIntoFeed(contractId, candles) {
+    const ticks = futTicks.get(contractId) ?? new Map();
+    for (const candle of Array.isArray(candles) ? candles : []) {
+      if (!Number.isSafeInteger(candle?.at) || ymdIst(candle.at) !== ymdIst(Date.now())) continue;
+      ticks.set(candle.at, mergeDhanFuturesCandle(candle, ticks.get(candle.at)));
+    }
+    futTicks.set(contractId, ticks);
+    return ticks;
+  }
+
+  function flushFuturesTickJournal(session = ymdIst(Date.now())) {
+    const records = [];
+    const signatures = [];
+    for (const held of map.values()) {
+      for (const contract of held.fut.filter(future => future.expiry >= session).slice(0, FUTURES_MONTHS)) {
+        const key = `${session}:${contract.id}`;
+        const last = futTicks.get(contract.id);
+        if (!last) continue;
+        for (const candle of candlesFromFeed(contract.id)) {
+          if (ymdIst(candle.at) !== session || !(Number.isFinite(candle.close) && candle.close > 0)
+            || !(Number.isFinite(candle.oi) && candle.oi >= 0)) continue;
+          const record = {
+            at: candle.at,
+            sym: held.symbol,
+            expiry: contract.expiry,
+            o: Number.isFinite(candle.open) ? candle.open : candle.close,
+            h: Number.isFinite(candle.high) ? candle.high : candle.close,
+            l: Number.isFinite(candle.low) ? candle.low : candle.close,
+            c: candle.close,
+            oi: candle.oi,
+            v: Number.isFinite(candle.volume) && candle.volume >= 0 ? candle.volume : 0,
+          };
+          const journalKey = `${key}:${record.at}`;
+          const signature = tickSignature({ open: record.o, high: record.h, low: record.l, close: record.c, oi: record.oi, volume: record.v });
+          if (journaledTicks.get(journalKey) === signature) continue;
+          records.push(record);
+          signatures.push([journalKey, signature]);
+        }
+      }
+    }
+    if (!records.length) return 0;
+    try {
+      const written = appendTickJournalBatch(tickJournalPath(session), records);
+      for (const [key, signature] of signatures) journaledTicks.set(key, signature);
+      return written;
+    } catch (error) {
+      console.warn(`dhan: futures tick journal flush failed: ${error?.message || error}`);
+      return 0;
+    }
+  }
+
+  function startTickJournal(session) {
+    const replayed = replayFuturesTickJournal(session);
+    if (tickJournalTimer) clearInterval(tickJournalTimer);
+    tickJournalTimer = setInterval(() => flushFuturesTickJournal(ymdIst(Date.now())), 60_000);
+    tickJournalTimer.unref?.();
+    return replayed;
+  }
   /** symbol:expiry → Dhan rejected the expiry outright (Invalid Expiry Date).
    *  Without this, every build re-runs the live-wait + REST retry loop for the
    *  same dead expiry — the retry crawl is what stretched builds past 30s. */
@@ -1156,6 +1343,14 @@ export function createDhanProvider(universe) {
       const noFuture = universe.filter(u => map.has(u.symbol) && !map.get(u.symbol).fut.length).map(u => u.symbol);
       if (noFuture.length) console.warn(`dhan: no futures in Dhan's master for ${noFuture.length} symbols: ${noFuture.slice(0, 20).join(' ')} (they board on spot moves only)`);
 
+      const session = ymdIst(Date.now());
+      for (const held of map.values()) {
+        for (const future of held.fut.filter(item => item.expiry >= session).slice(0, FUTURES_MONTHS)) {
+          if (!futTicks.has(future.id)) futTicks.set(future.id, new Map());
+        }
+      }
+      // Restore the local journal before ensureQuotes or any futures REST seed.
+
       // Seed spot for the strike windows with the single whole-universe quote request.
       await ensureQuotes();
 
@@ -1164,7 +1359,6 @@ export function createDhanProvider(universe) {
       conns.push({ socket: null, subs: new Set(), queue: [], unsubQueue: [], holds: null, draining: false, reconnectTimer: null });
       for (let i = 1; i < 5; i++) conns.push({ socket: null, subs: new Set(), queue: [], unsubQueue: [], holds: new Set(), draining: false, reconnectTimer: null });
 
-      const session = ymdIst(Date.now());
       let { coreKeys, optionKeys } = buildWindows(session);
       let nextEachSide = NEXT_EXPIRY_ENABLED ? NEXT_EXPIRY_STRIKES_EACH_SIDE : null;
       // Capacity guard: December trims ±7 → ±5 → ±3 to keep every connection
@@ -1347,28 +1541,41 @@ export function createDhanProvider(universe) {
       return Promise.all(months.map(async ({ id, expiry, expiryCode, instrument }, month) => {
         const key = `${SEG_BYTE[held.exchSeg]}:${id}`;
         const feed = live.get(key) ?? {};
+        const restKey = `${session}:${id}`;
         // Serve from the feed while it is alive (or went quiet less than a minute
         // ago); a dead feed falls back to REST so the board keeps moving.
         const feedLive = feedHealthy() || Date.now() - (feedHealthyAt || 0) < 60_000;
         const fromFeed = session === today && feedLive;
         if (!fromFeed) {
-          const rest = await restFuturesMonth(id, held, expiry, expiryCode, instrument, session, month === 0);
-          return { date: expiry, prevClose: rest.prevClose, prevOi: rest.prevOi, prevHigh: rest.prevHigh, prevLow: rest.prevLow, candles: rest.candles };
+          if (!futRest.has(restKey)) futRest.set(restKey, restFuturesMonth(id, held, expiry, expiryCode, instrument, session, month === 0).catch(() => null));
+          const rest = await futRest.get(restKey);
+          if (!rest) futRest.delete(restKey);
+          if (session === today && rest) {
+            mergeRestCandlesIntoFeed(id, rest.candles);
+            return { date: expiry, prevClose: rest.prevClose, prevOi: rest.prevOi, prevHigh: rest.prevHigh, prevLow: rest.prevLow, candles: candlesFromFeed(id) };
+          }
+          return { date: expiry, prevClose: rest?.prevClose ?? null, prevOi: rest?.prevOi ?? null, prevHigh: rest?.prevHigh ?? null, prevLow: rest?.prevLow ?? null, candles: rest?.candles ?? [] };
         }
         // One REST backfill per contract per session: yesterday's close and OI,
         // plus the minutes before the feed was subscribed, which its ticks then
         // extend. A backfill that failed (rate limit) is retried on a later
         // call — but not while the charts limiter is cooling down, so the
         // retries pace themselves instead of stampeding.
-        const backfill = futRest.get(id);
+        let backfill = futRest.get(restKey);
+        if (!backfill) {
+          backfill = restFuturesMonth(id, held, expiry, expiryCode, instrument, session, month === 0).catch(() => null);
+          futRest.set(restKey, backfill);
+        }
         let backfillOk = true;
         if (backfill) backfillOk = await backfill.then(v => !!v, () => false);
         const cooling = Date.now() < chartsCooldownUntil;
         if (backfill && !backfillOk && !cooling) {
-          futRest.delete(id);
-          futRest.set(id, restFuturesMonth(id, held, expiry, expiryCode, instrument, session, true).catch(() => null));
+          futRest.delete(restKey);
+          backfill = restFuturesMonth(id, held, expiry, expiryCode, instrument, session, month === 0).catch(() => null);
+          futRest.set(restKey, backfill);
         }
-        const rest = await futRest.get(id);
+        const rest = await futRest.get(restKey);
+        if (rest && session === today) mergeRestCandlesIntoFeed(id, rest.candles);
         const merged = new Map((rest?.candles ?? []).map(c => [c.at, c]));
         for (const candle of candlesFromFeed(id)) {
           const base = merged.get(candle.at);
@@ -1395,7 +1602,7 @@ export function createDhanProvider(universe) {
         let diskNear = null;
         if (candles.length < 30) {
           try {
-            const disk = readFutures(path.join(ROOT, 'server', 'data', 'dhan'), session, u.symbol);
+            const disk = readFutures(FUTURES_JOURNAL_ROOT, session, u.symbol);
             diskNear = disk?.months?.find(item => item?.date === expiry) ?? disk?.months?.[0] ?? null;
             if (Array.isArray(diskNear?.candles) && diskNear.candles.length > finalCandles.length) {
               const byAt = new Map(diskNear.candles.map(item => [item.at, item]));
@@ -1433,6 +1640,76 @@ export function createDhanProvider(universe) {
         }
         return { date: expiry, prevClose, prevOi, prevHigh, prevLow, candles: finalCandles };
       }));
+    },
+
+    async backfillTodayFutures(session = ymdIst(Date.now()), { symbols = null, force = false, postClose = false } = {}) {
+      const now = Date.now();
+      if (!shouldRunTodayBackfill(now, session, { postClose })) return { updates: [], attempted: 0, failed: [], skipped: 'session-guard' };
+      const selected = symbols == null ? null : new Set(symbols);
+      const targets = [];
+      for (const held of map.values()) {
+        if (selected && !selected.has(held.symbol)) continue;
+        const [near] = held.fut.filter(contract => contract.expiry >= session).slice(0, FUTURES_MONTHS);
+        if (!near) continue;
+        const restKey = `${session}:${near.id}`;
+        const cachedPromise = futRest.get(restKey);
+        const cachedRest = cachedPromise ? await cachedPromise.catch(() => null) : null;
+        if (cachedRest) mergeRestCandlesIntoFeed(near.id, cachedRest.candles);
+        const candles = candlesFromFeed(near.id);
+        if (!force && !shouldBackfillToday(candles, now, session)) continue;
+        targets.push({ held, near, restKey, cachedRest });
+      }
+
+      const updates = [];
+      const failed = [];
+      for (const target of targets) {
+        const { held, near, restKey } = target;
+        // Honor a previous charts cooldown before sending the queued next request.
+        const cooldown = Math.max(chartsCooldownUntil, rest429Until) - Date.now();
+        if (cooldown > 0) await sleep(cooldown);
+        try {
+          const response = await post('/charts/intraday', {
+            securityId: String(near.id),
+            exchangeSegment: held.exchSeg,
+            instrument: near.instrument,
+            interval: 1,
+            oi: true,
+            fromDate: session,
+            toDate: session,
+          }, { retry: false });
+          const restCandles = parseTodayIntraday(response, session);
+          if (!restCandles.length) continue;
+
+          const previous = await futRest.get(restKey)?.catch(() => null);
+          const restByAt = new Map((previous?.candles ?? []).map(candle => [candle.at, candle]));
+          for (const candle of restCandles) {
+            restByAt.set(candle.at, mergeDhanFuturesCandle(restByAt.get(candle.at), candle));
+          }
+          const nextRest = {
+            ...(previous ?? {}),
+            candles: [...restByAt.values()].sort((a, b) => a.at - b.at),
+          };
+          futRest.set(restKey, Promise.resolve(nextRest));
+          mergeRestCandlesIntoFeed(near.id, restCandles);
+          updates.push({
+            symbol: held.symbol,
+            session,
+            months: [{
+              date: near.expiry,
+              prevClose: nextRest.prevClose ?? null,
+              prevOi: nextRest.prevOi ?? null,
+              prevHigh: nextRest.prevHigh ?? null,
+              prevLow: nextRest.prevLow ?? null,
+              candles: candlesFromFeed(near.id),
+            }],
+          });
+        } catch (error) {
+          if (/429/.test(String(error?.message || error))) chartsCooldownUntil = Math.max(chartsCooldownUntil, Date.now() + 20_000);
+          failed.push(held.symbol);
+          console.warn(`dhan: today futures backfill ${held.symbol} ${near.expiry}: ${error?.message || error}`);
+        }
+      }
+      return { updates, attempted: targets.length, failed, skipped: null };
     },
 
     // Tick-level spots straight from the feed's live readings — no REST, no
