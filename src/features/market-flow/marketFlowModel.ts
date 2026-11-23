@@ -103,6 +103,20 @@ export interface FlowCheck {
 
 export interface FlowCandle { at: number; close: number; oi: number; open?: number | null; high?: number | null; low?: number | null }
 
+export interface CaptureGap { from: number; to: number }
+
+/** A gap is reported only when the time between real minute inputs exceeds five minutes. */
+export function captureGaps(candles: readonly FlowCandle[], thresholdMinutes = 5): CaptureGap[] {
+  const threshold = thresholdMinutes * MINUTE;
+  const gaps: CaptureGap[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const from = candles[i - 1].at;
+    const to = candles[i].at;
+    if (to - from > threshold) gaps.push({ from, to });
+  }
+  return gaps;
+}
+
 export interface FlowProfileRow { strike: number; put: number; call: number }
 
 /** How many strikes either side of spot the profile keeps. */
@@ -581,6 +595,12 @@ function median(values: readonly number[]): number | null {
 
 const timeFormat = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
 export const clockOf = (ms: number) => timeFormat.format(ms);
+
+export function captureGapLabel(gaps: readonly CaptureGap[]): string {
+  if (!gaps.length) return 'Capture gaps: none';
+  const ranges = gaps.slice(0, 3).map(gap => `${clockOf(gap.from)}–${clockOf(gap.to)}`).join(', ');
+  return `Capture gaps: ${gaps.length} (${ranges}${gaps.length > 3 ? ', …' : ''})`;
+}
 
 /** A strike or level as digits: never grouped, never compacted. */
 export const levelText = (level: number) => (Number.isInteger(level) ? String(level) : level.toFixed(2));

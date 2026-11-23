@@ -8,7 +8,7 @@ import { BuildMark, buildUpText, ChangeText, DotMeter, heatStyle, pctText, TickF
 import { SymbolMark } from '@/components/common/SymbolMark';
 import { FlowPopup } from './FlowPopup';
 import { useRememberedChoice } from '@/lib/remembered';
-import { levelText, type FlowSector, type FlowSettings, type FlowStock, type MarketFlow } from './marketFlowModel';
+import { captureGapLabel, captureGaps, levelText, type FlowSector, type FlowSettings, type FlowStock, type MarketFlow } from './marketFlowModel';
 import { useBox } from './useBox';
 import { useLiveFutures, type LiveFutureTick } from './feed';
 
@@ -831,10 +831,13 @@ function RangeBar({ stock }: { stock: FlowStock }) {
 
 /** 5-minute candles from the minute closes, with the base (previous close or window start), the zone and S1/R1. */
 export function CandleChart({ stock, width, height, levels = true, tf = 'auto' }: { stock: FlowStock; width: number; height: number; levels?: boolean; tf?: CardTf }) {
+  const gapPatternId = `mf-candle-gap-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   // Use the whole session (not just the window) so the zone and level lines
   // always fall inside the axis, and cap the bucket so >=30 bars render.
   const full = stock.candles.length ? stock.candles : windowCandles(stock);
   if (full.length < 3) return <span className="mf-candles is-empty">{stock.futures === 'pending' ? 'Loading future…' : stock.futures === 'failed' ? 'Could not load future' : 'No line yet'}</span>;
+  const gaps = captureGaps(full);
+  const gapLabel = captureGapLabel(gaps);
   const desired = tf === 'auto' ? (full.length > 120 ? 5 : full.length > 30 ? 2 : 1) : tf;
   const span = Math.max(1, Math.min(desired, Math.floor(full.length / 30) || 1));
   const candles = candlesFromCloses(full, span);
@@ -861,28 +864,37 @@ export function CandleChart({ stock, width, height, levels = true, tf = 'auto' }
   const cw = Math.max(1.2, (w / Math.max(1, candles.length)) * 0.62);
   const y = (p: number) => pad.top + (1 - (p - low) / (high - low)) * (height - pad.top - pad.bottom);
   return (
-    <svg className="mf-candles" width={width} height={height} aria-hidden="true">
-      {stock.zone && stock.zone.to > t0 && (
-        <rect className="mf-candles__zone" x={xt(Math.max(t0, stock.zone.from))} width={Math.max(3, xt(Math.min(t1, stock.zone.to)) - xt(Math.max(t0, stock.zone.from)))} y={y(stock.zone.high)} height={Math.max(3, y(stock.zone.low) - y(stock.zone.high))} rx="1.5" />
-      )}
-      {base != null && <line className="mf-candles__base" x1={pad.left} x2={pad.left + w} y1={y(base)} y2={y(base)} />}
-      {lv.map(([name, price, cls]) => (
-        <g key={name} className={cls}>
-          <line className="mf-candles__level" x1={pad.left} x2={pad.left + w + 4} y1={y(price)} y2={y(price)} />
-          <text className="mf-candles__tag" x={pad.left + w + 7} y={y(price) + 3.5}>{name} {levelText(price)}</text>
-        </g>
-      ))}
-      {candles.map(c => {
-        const cx = xt(c.at + (span * MINUTE) / 2);
-        const upC = c.close >= c.open;
-        return (
-          <g key={c.at} className={upC ? 'is-up' : 'is-down'}>
-            <line className="mf-candles__wick" x1={cx} x2={cx} y1={y(c.high)} y2={y(c.low)} />
-            <rect className="mf-candles__body" x={cx - cw / 2} width={cw} y={y(Math.max(c.open, c.close))} height={Math.max(1, Math.abs(y(c.open) - y(c.close)))} />
+    <span className="mf-candles__wrap" style={{ display: 'block' }}>
+      <svg className="mf-candles" width={width} height={height} aria-hidden="true">
+        <defs>
+          <pattern id={gapPatternId} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke="var(--text-muted)" strokeOpacity="0.28" strokeWidth="2" />
+          </pattern>
+        </defs>
+        {gaps.map(gap => <rect key={`${gap.from}-${gap.to}`} className="mf-candles__gap" x={xt(gap.from + MINUTE)} width={Math.max(2, xt(gap.to) - xt(gap.from + MINUTE))} y={pad.top} height={height - pad.top - pad.bottom} fill={`url(#${gapPatternId})`} opacity="0.7" />)}
+        {stock.zone && stock.zone.to > t0 && (
+          <rect className="mf-candles__zone" x={xt(Math.max(t0, stock.zone.from))} width={Math.max(3, xt(Math.min(t1, stock.zone.to)) - xt(Math.max(t0, stock.zone.from)))} y={y(stock.zone.high)} height={Math.max(3, y(stock.zone.low) - y(stock.zone.high))} rx="1.5" />
+        )}
+        {base != null && <line className="mf-candles__base" x1={pad.left} x2={pad.left + w} y1={y(base)} y2={y(base)} />}
+        {lv.map(([name, price, cls]) => (
+          <g key={name} className={cls}>
+            <line className="mf-candles__level" x1={pad.left} x2={pad.left + w + 4} y1={y(price)} y2={y(price)} />
+            <text className="mf-candles__tag" x={pad.left + w + 7} y={y(price) + 3.5}>{name} {levelText(price)}</text>
           </g>
-        );
-      })}
-      <circle className="mf-candles__last" cx={xt(candles[candles.length - 1].at + (span * MINUTE) / 2)} cy={y(candles[candles.length - 1].close)} r="2.5" />
-    </svg>
+        ))}
+        {candles.map(c => {
+          const cx = xt(c.at + (span * MINUTE) / 2);
+          const upC = c.close >= c.open;
+          return (
+            <g key={c.at} className={upC ? 'is-up' : 'is-down'}>
+              <line className="mf-candles__wick" x1={cx} x2={cx} y1={y(c.high)} y2={y(c.low)} />
+              <rect className="mf-candles__body" x={cx - cw / 2} width={cw} y={y(Math.max(c.open, c.close))} height={Math.max(1, Math.abs(y(c.open) - y(c.close)))} />
+            </g>
+          );
+        })}
+        <circle className="mf-candles__last" cx={xt(candles[candles.length - 1].at + (span * MINUTE) / 2)} cy={y(candles[candles.length - 1].close)} r="2.5" />
+      </svg>
+      <span className="mf-candles__gap-note" style={{ display: 'block', padding: '1px 4px 2px', color: 'var(--text-muted)', fontSize: 9, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{gapLabel}</span>
+    </span>
   );
 }

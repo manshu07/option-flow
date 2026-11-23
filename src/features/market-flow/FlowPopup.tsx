@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { SymbolMark } from '@/components/common/SymbolMark';
 import { CaretLeftIcon, CaretRightIcon, CheckIcon, MinusIcon, XIcon } from '@/assets/svg/icons';
 import { expiryDisplay } from '@/components/common/expiryDisplay';
@@ -7,7 +7,7 @@ import { candlesFromCloses } from './diagramModel';
 import { MINUTE } from './flowChartModel';
 import { useFlowFocus, type FocusState } from './flowFocus';
 import { buildUpText, ChangeText, DotMeter, signedText, Spark, toneOf, windowCandles } from './FlowParts';
-import { clockOf, compactUnits, levelText, type FlowLevel, type FlowStock, type MarketFlow } from './marketFlowModel';
+import { captureGapLabel, captureGaps, clockOf, compactUnits, levelText, type FlowLevel, type FlowStock, type MarketFlow } from './marketFlowModel';
 import { useBox } from './useBox';
 import { useRememberedChoice } from '@/lib/remembered';
 
@@ -160,15 +160,19 @@ const levelPair = (first: FlowLevel | null, second: FlowLevel | null, letter: st
 function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlow['window'] }) {
   const [ref, box] = useBox<HTMLDivElement>();
   const [tf, setTf] = useRememberedChoice<ChartTf>('marketFlow.miniChart.tf:v1', CHART_TFS, 'auto');
+  const gapPatternId = `mf-mini-gap-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   // Minimum 30 bars per timeframe: start from the window, extend to the full
   // session when the window is too short, then cap the bucket size so at least
   // 30 bars render. All drawn features (levels, zone, base, tags) are kept.
   const winCandles = windowCandles(stock);
   const desiredSpan = tf === 'auto' ? (winCandles.length > 120 ? 5 : winCandles.length > 30 ? 2 : 1) : tf;
   const candles = winCandles.length < 30 * desiredSpan && stock.candles.length ? stock.candles : winCandles;
+  const gaps = captureGaps(candles);
+  const gapLabel = captureGapLabel(gaps);
   const span = Math.max(1, Math.min(desiredSpan, Math.floor(candles.length / 30) || 1));
   const note = stock.futures === 'pending' ? 'Loading future…' : stock.futures === 'failed' ? 'Could not load future' : stock.futures === 'unavailable' ? 'No future listed for this underlying' : candles.length < 2 ? 'Too few minutes yet for a line' : null;
   const { width: w, height: h } = box;
+  const chartH = Math.max(1, h - 14);
   let body = null;
   if (!note && w > 0 && h > 0) {
     const pad = { top: 8, right: 80, bottom: 18, left: 6 };
@@ -195,7 +199,7 @@ function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlo
     const t0 = Math.min(stock.fut?.from ?? candles[0].at, bars[0].at);
     const t1 = candles[candles.length - 1].at + MINUTE;
     const x = (t: number) => pad.left + ((t - t0) / Math.max(1, t1 - t0)) * (w - pad.left - pad.right);
-    const y = (price: number) => pad.top + (1 - (price - low) / (high - low)) * (h - pad.top - pad.bottom);
+    const y = (price: number) => pad.top + (1 - (price - low) / (high - low)) * (chartH - pad.top - pad.bottom);
     const last = candles[candles.length - 1];
     const bw = Math.max(1.2, ((w - pad.left - pad.right) / Math.max(1, bars.length)) * 0.62);
     // Level tags are kept 12px apart at the right edge.
@@ -205,7 +209,13 @@ function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlo
     for (let i = 1; i < tags.length; i++) if (tags[i].y - tags[i - 1].y < 14) tags[i].y = tags[i - 1].y + 14;
     const ticks = [t0, t0 + (t1 - t0) / 2, t1];
     body = (
-      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`${stock.symbol} future, ${candles.length} minutes, from ${fmtPrice(candles[0].close)} to ${fmtPrice(last.close)}`}>
+      <svg width={w} height={chartH} viewBox={`0 0 ${w} ${chartH}`} role="img" aria-label={`${stock.symbol} future, ${candles.length} minutes, from ${fmtPrice(candles[0].close)} to ${fmtPrice(last.close)}`}>
+        <defs>
+          <pattern id={gapPatternId} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke="var(--text-muted)" strokeOpacity="0.28" strokeWidth="2" />
+          </pattern>
+        </defs>
+        {gaps.map(gap => <rect key={`${gap.from}-${gap.to}`} className="mf-mini__gap" x={x(gap.from + MINUTE)} width={Math.max(2, x(gap.to) - x(gap.from + MINUTE))} y={pad.top} height={chartH - pad.top - pad.bottom} fill={`url(#${gapPatternId})`} opacity="0.7" />)}
         {stock.zone && stock.zone.to > t0 && (
           <rect className="mf-mini__zone" x={x(Math.max(t0, stock.zone.from))} width={Math.max(3, x(Math.min(t1, stock.zone.to)) - x(Math.max(t0, stock.zone.from)))}
             y={y(stock.zone.high)} height={Math.max(3, y(stock.zone.low) - y(stock.zone.high))} rx="2" />
@@ -223,13 +233,13 @@ function MiniChart({ stock, window: win }: { stock: FlowStock; window: MarketFlo
         })}
         <circle className="mf-mini__dot" cx={x(last.at + MINUTE)} cy={y(last.close)} r="3" />
         {tags.map(tag => <text key={tag.name} className={`mf-mini__tag ${tag.cls}`} x={w - pad.right + 8} y={tag.y + 3.5}>{tag.name}</text>)}
-        {ticks.map((t, i) => <text key={i} className="mf-mini__time" x={x(t)} y={h - 4} textAnchor={i === 0 ? 'start' : i === 2 ? 'end' : 'middle'}>{clockOf(t)}</text>)}
+        {ticks.map((t, i) => <text key={i} className="mf-mini__time" x={x(t)} y={chartH - 4} textAnchor={i === 0 ? 'start' : i === 2 ? 'end' : 'middle'}>{clockOf(t)}</text>)}
       </svg>
     );
   }
   return (
     <div className="mf-mini" ref={ref}>
-      {note ? <p className="mf-mini__note">{note}</p> : body}
+      {note ? <p className="mf-mini__note">{note}</p> : <>{body}<p className="mf-mini__gap-note" style={{ position: 'absolute', right: 0, bottom: 0, left: 0, margin: 0, padding: '1px 4px', color: 'var(--text-muted)', fontSize: 10, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{gapLabel}</p></>}
       {body != null && (
         <label className="mf-mini__tf">
           <select aria-label="Chart timeframe" value={String(tf)} onChange={event => setTf((event.currentTarget.value === 'auto' ? 'auto' : Number(event.currentTarget.value)) as ChartTf)}>

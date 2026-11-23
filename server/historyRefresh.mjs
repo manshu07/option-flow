@@ -35,6 +35,15 @@ export function refreshWindow(at, lookbackDays = 7) {
   return { from, to: date };
 }
 
+/** True when fewer than the requested fraction of this session's minute candles exist. */
+export function futureCaptureBelowCoverage(candles, sessionDate, expectedMinutes, threshold = 0.6) {
+  if (!(Number.isFinite(expectedMinutes) && expectedMinutes > 0 && Number.isFinite(threshold) && threshold >= 0)) return false;
+  const present = new Set((Array.isArray(candles) ? candles : [])
+    .filter(candle => Number.isFinite(candle?.at) && istParts(candle.at).date === sessionDate)
+    .map(candle => Math.floor(candle.at / 60_000)));
+  return present.size / expectedMinutes < threshold;
+}
+
 const STEPS = [
   { name: 'bhavcopy', script: 'scripts/fetchBhavcopy.mjs', args: window => [window.from, window.to] },
   { name: 'capture', script: 'scripts/accumulateFutures.mjs', args: () => [] },
@@ -46,7 +55,7 @@ const STEPS = [
  * heap; a failure is logged and the rest still run, so one bad evening does
  * not stop the capture fold or the stats rebuild.
  */
-export async function runHistoryRefresh({ root, at = Date.now(), log = () => {}, run }) {
+export async function runHistoryRefresh({ root, at = Date.now(), log = () => {}, run, todayBackfill = null }) {
   const window = refreshWindow(at);
   const results = [];
   for (const step of STEPS) {
@@ -57,6 +66,18 @@ export async function runHistoryRefresh({ root, at = Date.now(), log = () => {},
     } catch (error) {
       results.push({ step: step.name, error: String(error?.message || error) });
       log(`history refresh ${step.name} failed: ${String(error?.message || error)}`);
+    }
+  }
+  if (typeof todayBackfill === 'function') {
+    try {
+      const count = await todayBackfill(window);
+      const symbols = Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0;
+      results.push({ step: 'today-backfill', code: 0, symbols });
+      log(`history refresh today-backfill=${symbols} symbols`);
+    } catch (error) {
+      const message = String(error?.message || error);
+      results.push({ step: 'today-backfill', error: message });
+      log(`history refresh today-backfill failed: ${message}`);
     }
   }
   return { window, results };

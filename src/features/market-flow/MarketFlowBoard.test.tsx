@@ -340,4 +340,22 @@ describe('the wide desktop diagram', () => {
     expect(detail).toHaveClass('is-full');
     expect(container.querySelector('.mf-dgcard[data-sym="DOWN1"] .mf-candles rect')).not.toBeNull();
   });
+
+  it('renders sparse capture gaps without fabricating candle bars', () => {
+    const base = build(1, 0);
+    const sparse = {
+      ...base.bullish[0],
+      candles: [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 25, 26, 27, 28, 29, 30, 40, 41, 42, 43]
+        .map((minute, i) => ({ at: OPEN + minute * MINUTE, close: 1000 + i, oi: 2_000_000 + i })),
+    };
+    const { container } = render(board({ ...base, stocks: [sparse], bullish: [sparse], featured: { bullish: [sparse], bearish: [] } }, 'diagram'));
+    const chart = container.querySelector('.mf-dgcard[data-sym="BAJAJ-AUTO"] .mf-candles')!;
+    expect(chart.querySelectorAll(':scope > g.is-up, :scope > g.is-down')).toHaveLength(22);
+    expect(chart.querySelectorAll('.mf-candles__gap')).toHaveLength(3);
+    expect(screen.getByText('Capture gaps: 3 (09:20–09:27, 09:32–09:40, 09:45–09:55)')).toBeInTheDocument();
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.mf-dgcard[data-sym="BAJAJ-AUTO"] .mf-dgcard__main')!);
+    const detail = screen.getByRole('dialog', { name: 'BAJAJ-AUTO in detail' });
+    expect(detail.querySelectorAll('.mf-mini__gap')).toHaveLength(3);
+    expect(within(detail).getByText('Capture gaps: 3 (09:20–09:27, 09:32–09:40, 09:45–09:55)')).toBeInTheDocument();
+  });
 });

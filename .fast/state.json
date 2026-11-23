@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "command": [
+    "node",
+    "scripts/scanReplay.mjs"
+  ],
+  "lang": "node",
+  "runtime": "/Users/himanshuvaghela/.nvm/versions/node/v22.23.2/bin/node",
+  "base": ".",
+  "wall": 242.160083,
+  "hotspots": [
+    {
+      "id": "scripts/scanReplay.mjs:main",
+      "file": "scripts/scanReplay.mjs",
+      "line": 18,
+      "end_line": 39,
+      "name": "main",
+      "qualname": "main",
+      "module": "__main__",
+      "kind": "function",
+      "ncalls": 0,
+      "tottime": 0.195712,
+      "cumtime": 7.079624,
+      "share": 0.029235305473528435,
+      "portability": 0.0,
+      "score": 0.0,
+      "blockers": [
+        "lives in the entry script, which runs on import: put its main code under if (import.meta.main) (or require.main === module)",
+        "async",
+        "does I/O: fetch, setTimeout, process",
+        "not deterministic: Date.now"
+      ],
+      "warnings": [
+        "calls hit, they get ported together with it",
+        "no TypeScript types, types are inferred from recorded calls"
+      ],
+      "params": [],
+      "returns": null,
+      "source": "async function main() {\n  // wait for boot\n  for (let i = 0; i < 60; i++) {\n    try { const r = await fetch('http://127.0.0.1:8799/api/health'); if (r.ok) break; } catch {}\n    await new Promise(r => setTimeout(r, 2000));\n  }\n  const base = 'http://127.0.0.1:8799';\n  const deadline = Date.now() + 240_000;\n  let cycle = 0;\n  while (Date.now() < deadline) {\n    for (const mm of minutesOfDay) {\n      if (Date.now() >= deadline) break;\n      await hit(`${base}/api/archive/2026-11-19/minute/${mm}`);\n      const sym = SYMBOLS[cycle % SYMBOLS.length];\n      await hit(`${base}/api/archive/2026-11-19/futures/${sym}?asOf=${mm}`);\n      cycle++;\n    }\n  }\n  child.kill('SIGTERM');\n  await new Promise(r => child.on('exit', r));\n  process.exit(0);\n}",
+      "calls": [
+        "hit"
+      ],
+      "covered_by": null,
+      "owner": null
+    }
+  ],
+  "ports": {
+    "scripts.h6rsLib.h6rsCore": {
+      "id": "scripts.h6rsLib.h6rsCore",
+      "file": "scripts/h6rsLib.mjs",
+      "module": "scripts.h6rsLib",
+      "func": "h6rsCore",
+      "ext": "fa_scripts_h6rslib_h6rscore",
+      "crate_dir": ".fast/ports/scripts.h6rsLib.h6rsCore",
+      "recorded": 1,
+      "calls_seen": 1,
+      "verify": {
+        "built": true,
+        "build_log": null,
+        "total": 1,
+        "derived": 0,
+        "edges": 0,
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
+        "micro": {
+          "original_ns": 1724174750.0000002,
+          "rust_ns": 410664749.99999994,
+          "speedup": 4.198497070907597
+        },
+        "lang": "node",
+        "source_hash": "233d8414720c59b1"
+      },
+      "enabled": true,
+      "lang": "node",
+      "owner": null,
+      "line": 90,
+      "sources": [
+        "export function h6rsCore(sym, minutes, rsiP, root = CSV_ROOT) {\n  const { dates, dayIdx, mins, closes, highs, lows, vols, opens } = loadBars(sym, minutes, root);\n  const n = closes.length;\n  const osc = new Float64Array(n);\n  const p = rsiP;\n  let g = 0, l = 0;\n  for (let i = 1; i < n; i++) {\n    const ch = closes[i] - closes[i - 1];\n    g = (g * (p - 1) + Math.max(ch, 0)) / p;\n    l = (l * (p - 1) + Math.max(-ch, 0)) / p;\n    osc[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l);\n  }\n  return { dates, dayIdx, mins, closes, highs, lows, vols, opens, osc };\n}",
+        "export function loadBars(sym, minutes, root = CSV_ROOT) {\n  const bars = load1m(sym, root);\n  const dates = [];\n  const dateIdx = new Map();\n  const outCloses = [], outHighs = [], outLows = [], outVols = [], outOpens = [], outDay = [], outMins = [];\n  let curSlot = -1, curDay = -1, h = 0, l = 0, c = 0, v = 0, o = 0, w = 0;\n  for (let i = 0; i < bars.length; i++) {\n    const m = Number(bars[i].time.slice(0, 2)) * 60 + Number(bars[i].time.slice(3));\n    let d = dateIdx.get(bars[i].date);\n    if (d == null) { d = dates.length; dates.push(bars[i].date); dateIdx.set(bars[i].date, d); }\n    const s = Math.floor((m - 555) / minutes);\n    if (s !== curSlot || d !== curDay) {\n      if (w > 0) { outCloses.push(c); outHighs.push(h); outLows.push(l); outVols.push(v); outOpens.push(o); outDay.push(curDay); outMins.push(curSlot * minutes + 555); }\n      curSlot = s; curDay = d; h = -Infinity; l = Infinity; c = 0; v = 0; o = 0; w = 0;\n    }\n    if (w === 0) o = bars[i].o;\n    h = Math.max(h, bars[i].h); l = Math.min(l, bars[i].l); c = bars[i].c; v += bars[i].v; w++;\n  }\n  if (w > 0) { outCloses.push(c); outHighs.push(h); outLows.push(l); outVols.push(v); outOpens.push(o); outDay.push(curDay); outMins.push(curSlot * minutes + 555); }\n  return {\n    dates,\n    dayIdx: Int32Array.from(outDay),\n    mins: Int32Array.from(outMins),\n    closes: Float64Array.from(outCloses),\n    highs: Float64Array.from(outHighs),\n    lows: Float64Array.from(outLows),\n    vols: Float64Array.from(outVols),\n    opens: Float64Array.from(outOpens),\n  };\n}"
+      ]
+    },
+    "scripts.h6rsLib.load1m": {
+      "id": "scripts.h6rsLib.load1m",
+      "file": "scripts/h6rsLib.mjs",
+      "module": "scripts.h6rsLib",
+      "func": "load1m",
+      "ext": "fa_scripts_h6rslib_load1m",
+      "crate_dir": ".fast/ports/scripts.h6rsLib.load1m",
+      "recorded": 1,
+      "calls_seen": 1,
+      "verify": {
+        "built": true,
+        "build_log": null,
+        "total": 1,
+        "derived": 0,
+        "edges": 0,
+        "passed": 1,
+        "failed": 0,
+        "failures": [],
+        "micro": {
+          "original_ns": 2082575000.0000007,
+          "rust_ns": 4363489750.0,
+          "speedup": 0.4772728067024795
+        },
+        "lang": "node",
+        "source_hash": "0ae95bcee42cc865"
+      },
+      "enabled": false,
+      "lang": "node",
+      "owner": null,
+      "line": 7,
+      "sources": [
+        "export function load1m(sym, root = CSV_ROOT) {\n  const file = path.join(root, `${sym}-EQ`, `${sym}-EQ1.csv`);\n  const fd = openSync(file, 'r');\n  const buf = Buffer.alloc(1 << 20);\n  let pos = 0, carry = '';\n  const bars = [];\n  const take = line => {\n    const f = line.split(',');\n    if (f.length !== 7) return;\n    const [date, time, o, h, l, c, v] = f;\n    if (!/^\\d{4}\\.\\d{2}\\.\\d{2}$/.test(date) || !/^\\d{2}:\\d{2}$/.test(time)) return;\n    const mins = Number(time.slice(0, 2)) * 60 + Number(time.slice(3));\n    if (mins < 555 || mins > 930) return;\n    bars.push({ date: date.replace(/\\./g, '-'), time, o: +o, h: +h, l: +l, c: +c, v: +v || 0 });\n  };\n  for (;;) {\n    const got = readSync(fd, buf, 0, buf.length, pos);\n    if (got <= 0) break;\n    pos += got;\n    const lines = (carry + buf.toString('utf8', 0, got)).split('\\n');\n    carry = lines.pop();\n    for (const l of lines) take(l);\n  }\n  take(carry);\n  closeSync(fd);\n  return bars;\n}"
+      ]
+    }
+  },
+  "bench": {
+    "lang": "node",
+    "command": [
+      "node",
+      "scripts/h6rs.mjs",
+      "TITAN",
+      "5m"
+    ],
+    "runs": 5,
+    "ports": [
+      "scripts.h6rsLib.h6rsCore"
+    ],
+    "before": {
+      "median": 1.902665875,
+      "mean": 2.0530286332,
+      "min": 1.867220333,
+      "max": 2.652351,
+      "stddev": 0.30057367663663076
+    },
+    "after": {
+      "median": 0.546135416,
+      "mean": 0.7268635748000001,
+      "min": 0.528346583,
+      "max": 1.430272,
+      "stddev": 0.3522883497676963
+    },
+    "speedup": 3.4838719835008827
+  }
+}

@@ -4,7 +4,7 @@ import type { ContractMarket, ContractQuote, ContractSeries } from '../options-s
 import type { FuturesSeries } from '../options-scanner/futuresModel';
 import { findAdvisoryPhrase } from '@/utils/marketVocabulary';
 import {
-  buildMarketFlow, compactUnits, oiProfile, DEFAULT_FLOW_SETTINGS, flowWhy, heaviestLevels, nearSeries, readZone, trimToSession, ZONE_SPAN_MINUTES, type FlowCandle, type FlowSettings,
+  buildMarketFlow, captureGapLabel, captureGaps, compactUnits, oiProfile, DEFAULT_FLOW_SETTINGS, flowWhy, heaviestLevels, nearSeries, readZone, trimToSession, type FlowCandle, type FlowSettings,
 } from './marketFlowModel';
 
 const DATE = '2026-10-09';
@@ -35,6 +35,33 @@ function candles(start: number, drift: number, oiStart: number, oiStep: number, 
 function futures(symbol: string, prevClose: number, prevOi: number, rows: FlowCandle[]): FuturesSeries {
   return { symbol, contractDate: '2026-10-27', months: ['2026-10-27'], prevClose, prevOi, candles: rows };
 }
+
+function sparseCandles(): FlowCandle[] {
+  const starts = [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 25, 26, 27, 28, 29, 30, 40, 41, 42, 43];
+  return starts.map((minute, i) => ({ at: OPEN + minute * MINUTE, close: 100 + i, oi: 1000 + i }));
+}
+
+describe('capture gaps', () => {
+  it('finds three sparse-input gaps and keeps the plain summary bounded', () => {
+    const gaps = captureGaps(sparseCandles());
+    expect(gaps).toEqual([
+      { from: OPEN + 5 * MINUTE, to: OPEN + 12 * MINUTE },
+      { from: OPEN + 17 * MINUTE, to: OPEN + 25 * MINUTE },
+      { from: OPEN + 30 * MINUTE, to: OPEN + 40 * MINUTE },
+    ]);
+    expect(captureGapLabel(gaps)).toBe('Capture gaps: 3 (09:20–09:27, 09:32–09:40, 09:45–09:55)');
+  });
+
+  it('calls a complete session gap-free', () => {
+    const fullDay = candles(100, 0.1, 1000, 1, 375);
+    expect(captureGapLabel(captureGaps(fullDay))).toBe('Capture gaps: none');
+  });
+
+  it('lists no more than three ranges', () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({ at: OPEN + i * 10 * MINUTE, close: 100 + i, oi: 1000 + i }));
+    expect(captureGapLabel(captureGaps(many))).toBe('Capture gaps: 4 (09:15–09:25, 09:25–09:35, 09:35–09:45, …)');
+  });
+});
 
 const SECTORS = { banks: 'Banks', metals: 'Metals' };
 

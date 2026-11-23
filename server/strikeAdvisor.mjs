@@ -643,13 +643,27 @@ export function adaptiveLevels(card, opts = {}) {
     !Number.isFinite(out.sl) || out.sl <= 0 || out.sl < entry * 0.02
     || (Number.isFinite(out.tgt1) && out.tgt1 > entry * 6));
   if (degenerate) {
-    return {
+    const fallback = {
       ...card,
       sl: round2(entry * 0.70),
       tgt1: round2(entry * 1.60),
       tgt2: round2(entry * 2.20),
       levelsBasis: 'fixed-sane',
     };
+    // Preserve the "stock price each level needs" readout (delta-approximate): a CE
+    // target needs spot above, the stop below; a PE mirrors it.
+    const spot = Number(card?.spot);
+    const delta = Number(card?.delta);
+    if (Number.isFinite(spot) && spot > 0 && Number.isFinite(delta) && Math.abs(delta) > 0) {
+      const need = level => {
+        const premMove = level - entry;
+        const spotMove = card.side === 'CE' ? premMove / Math.abs(delta) : -premMove / Math.abs(delta);
+        return { level: round2(spot + spotMove), pct: round2((spotMove / spot) * 100) };
+      };
+      fallback.needs = { tgt1: need(fallback.tgt1), tgt2: need(fallback.tgt2), sl: need(fallback.sl) };
+      fallback.requiredMovePct = fallback.needs.tgt1.pct;
+    }
+    return fallback;
   }
   return out;
 }

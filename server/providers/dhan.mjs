@@ -1258,6 +1258,13 @@ export function createDhanProvider(universe) {
     label: 'Dhan',
 
     async init() {
+      const bootAt = Date.now();
+      const configuredPace = Number(process.env.BOOT_CRAWL_PACE_MS ?? 250);
+      bootCrawlPace = createBootCrawlPacer({
+        bootAt,
+        paceMs: Number.isFinite(configuredPace) && configuredPace >= 0 ? configuredPace : 250,
+        startedInSession: isMarketSessionTime(bootAt),
+      });
       if (!token || token === 'PUT-YOUR-TOKEN-HERE') throw new Error('Set DHAN_ACCESS_TOKEN (web.dhan.co → My Profile → DhanHQ Trading Access; see PROVIDERS.md).');
       if (!clientId || clientId === 'PUT-YOUR-CLIENT-ID-HERE') throw new Error('Set DHAN_CLIENT_ID (your Dhan client id, shown next to the avatar on web.dhan.co).');
 
@@ -1496,6 +1503,7 @@ export function createDhanProvider(universe) {
     },
 
     async optionChain(u, expiry) {
+      await bootCrawlPace();
       const held = entry(u.symbol);
       // A ladder expiry Dhan has already rejected would burn the whole
       // live-wait + REST retry loop again — fail fast instead.

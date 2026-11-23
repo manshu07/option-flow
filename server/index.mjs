@@ -49,7 +49,7 @@ import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAle
 import { orbScan, orbSlotDue, orbMessage } from './orb.mjs';
 import { participation } from './participation.mjs';
 import { hoursLeft, tokenReminder } from './tokenWatch.mjs';
-import { historyRefreshDue, runHistoryRefresh, istParts } from './historyRefresh.mjs';
+import { futureCaptureBelowCoverage, historyRefreshDue, runHistoryRefresh, istParts } from './historyRefresh.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { sectorMapFromUnderlyings } from './orbModel.mjs';
@@ -436,6 +436,7 @@ async function build() {
           child.on('exit', code => resolve(code ?? -1));
           child.on('error', () => resolve(-1));
         }),
+        todayBackfill: () => historyRefreshTodayBackfill(at),
       })
         .then(result => log(`history refresh done: ${result.results.map(item => `${item.step}=${item.code ?? 'error'}`).join(' ')}`))
         .catch(error => log('history refresh failed:', String(error?.message || error)))
@@ -908,6 +909,45 @@ async function futuresWarmPass() {
   } catch (error) {
     log('futures warm pass failed:', String(error?.message || error));
   }
+}
+
+async function historyRefreshTodayBackfill(at) {
+  if (!Number.isFinite(at) || isMarketSessionTime(at) || !isTradingDay(at)
+    || typeof provider.backfillTodayFutures !== 'function') return 0;
+  const session = getLatestTradingSessionDate(new Date(at));
+  const expectedMinutes = Math.max(0, marketCloseMinuteFor(at) - (9 * 60 + 15) + 1);
+  if (!expectedMinutes) return 0;
+  const sparseSymbols = [];
+  for (const underlying of universe) {
+    try {
+      const stored = readFutures(SCAN_DIR, session, underlying.symbol);
+      const nearMonth = stored?.months?.find(month => month.date >= session) ?? stored?.months?.[0];
+      if (futureCaptureBelowCoverage(nearMonth?.candles, session, expectedMinutes, 0.6)) sparseSymbols.push(underlying.symbol);
+    } catch (error) {
+      log(`history refresh coverage ${underlying.symbol} failed: ${String(error?.message || error)}`);
+    }
+  }
+  if (!sparseSymbols.length) return 0;
+
+  const result = await provider.backfillTodayFutures(session, { symbols: sparseSymbols, force: true, postClose: true });
+  let persisted = 0;
+  for (const update of result?.updates ?? []) {
+    let persistedSnapshot = null;
+    await loadFuturesWithArchiveLock(
+      archiveLock,
+      () => Promise.resolve(update),
+      snapshot => Promise.resolve().then(() => {
+        persistedSnapshot = persistFutures(SCAN_DIR, session, update.symbol, snapshot, { preferIncomingCloseOi: false });
+        return persistedSnapshot;
+      }),
+      error => log(`history refresh today-backfill ${update.symbol} persistence failed:`, error?.message || error),
+    );
+    if (!persistedSnapshot) continue;
+    futuresCache.set(`${update.symbol}|${session}`, { at: Date.now(), value: Promise.resolve(persistedSnapshot) });
+    persisted++;
+  }
+  if (result?.failed?.length) log(`history refresh today-backfill failed symbols: ${result.failed.join(' ')}`);
+  return persisted;
 }
 
 const archive = createArchiveService({

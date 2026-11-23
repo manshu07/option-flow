@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   appendTickJournalBatch,
   collectTickJournalBatch,
+  createBootCrawlPacer,
   mergeDhanFuturesCandle,
   parseTodayIntraday,
   replayTickJournalText,
@@ -95,6 +96,36 @@ describe('capture resilience helpers', () => {
     expect(appendTickJournalBatch(path.join(tempDir(), SESSION, 'futures-ticks.ndjson'), changed.records, append)).toBe(1);
     expect(append).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(append.mock.calls[0][1]).trim())).toMatchObject({ sym: 'NIFTY', expiry: '2026-11-26', at });
+  });
+
+  it('paces concurrent option-chain crawls only in the first ten in-session boot minutes', async () => {
+    const bootAt = minute(9, 15);
+    let now = bootAt;
+    const waits: number[] = [];
+    const pace = createBootCrawlPacer({
+      bootAt,
+      paceMs: 250,
+      startedInSession: true,
+      now: () => now,
+      sleep: async ms => { waits.push(ms); now += ms; },
+    });
+    await Promise.all([pace(), pace(), pace()]);
+    expect(waits).toEqual([250, 250]);
+
+    now = bootAt + 10 * 60_000;
+    await Promise.all([pace(), pace()]);
+    expect(waits).toEqual([250, 250]);
+
+    const preMarketWaits: number[] = [];
+    const preMarket = createBootCrawlPacer({
+      bootAt: minute(8, 0),
+      paceMs: 250,
+      startedInSession: false,
+      now: () => minute(9, 16),
+      sleep: async ms => { preMarketWaits.push(ms); },
+    });
+    await preMarket();
+    expect(preMarketWaits).toEqual([]);
   });
 
 });
