@@ -50,6 +50,13 @@ const STEPS = [
   { name: 'fut-stats', script: 'scripts/ingestFutStats.mjs', args: () => [] },
 ];
 
+export function formatHistoryRefreshSummary(results) {
+  return `history refresh done: ${results.map(item => {
+    const value = item.step === 'today-backfill' ? item.symbols : item.code;
+    return `${item.step}=${value ?? 'error'}`;
+  }).join(' ')}`;
+}
+
 /**
  * Run the three offline steps in order. Each is a child process with its own
  * heap; a failure is logged and the rest still run, so one bad evening does

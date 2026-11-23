@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { historyRefreshDue, futureCaptureBelowCoverage, refreshWindow, runHistoryRefresh, istParts } from './historyRefresh.mjs';
+import { formatHistoryRefreshSummary, historyRefreshDue, futureCaptureBelowCoverage, refreshWindow, runHistoryRefresh, istParts } from './historyRefresh.mjs';
 
 const at = (iso: string) => Date.parse(`${iso}+05:30`);
 
@@ -70,7 +70,7 @@ describe('runHistoryRefresh', () => {
       at: at('2026-11-19T19:40:00'),
       log: line => logs.push(line),
       run: async script => { calls.push(script); return 0; },
-      todayBackfill: async window => { calls.push(`today-backfill:${window.to}`); return 7; },
+      todayBackfill: async window => { calls.push(`today-backfill:${window.to}`); return 105; },
     });
     expect(calls).toEqual([
       'scripts/fetchBhavcopy.mjs',
@@ -78,7 +78,8 @@ describe('runHistoryRefresh', () => {
       'scripts/ingestFutStats.mjs',
       'today-backfill:2026-11-19',
     ]);
-    expect(result.results.at(-1)).toEqual({ step: 'today-backfill', code: 0, symbols: 7 });
-    expect(logs.at(-1)).toBe('history refresh today-backfill=7 symbols');
+    expect(result.results.at(-1)).toEqual({ step: 'today-backfill', code: 0, symbols: 105 });
+    expect(logs.at(-1)).toBe('history refresh today-backfill=105 symbols');
+    expect(formatHistoryRefreshSummary(result.results)).toBe('history refresh done: bhavcopy=0 capture=0 fut-stats=0 today-backfill=105');
   });
 });

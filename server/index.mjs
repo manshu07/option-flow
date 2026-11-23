@@ -49,7 +49,7 @@ import { BROADCAST_FOOTER, createAlertDigestState, flushScheduledDigests, runAle
 import { orbScan, orbSlotDue, orbMessage } from './orb.mjs';
 import { participation } from './participation.mjs';
 import { hoursLeft, tokenReminder } from './tokenWatch.mjs';
-import { futureCaptureBelowCoverage, historyRefreshDue, runHistoryRefresh, istParts } from './historyRefresh.mjs';
+import { formatHistoryRefreshSummary, futureCaptureBelowCoverage, historyRefreshDue, runHistoryRefresh, istParts } from './historyRefresh.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { sectorMapFromUnderlyings } from './orbModel.mjs';
@@ -214,7 +214,7 @@ function startHistoryRefreshChain(at) {
     }),
     todayBackfill: () => historyRefreshTodayBackfill(at),
   })
-    .then(result => log(`history refresh done: ${result.results.map(item => `${item.step}=${item.code ?? 'error'}`).join(' ')}`))
+    .then(result => log(formatHistoryRefreshSummary(result.results)))
     .catch(error => log('history refresh failed:', String(error?.message || error)))
     .finally(() => { historyState.running = false; });
   return true;
