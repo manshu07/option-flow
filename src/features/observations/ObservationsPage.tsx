@@ -129,12 +129,35 @@ function flowLabel(card: ObservationCard): string {
 }
 
 /** Live tint zone: the tick decides while the card is open, the recorded
- *  outcome decides once the journal has resolved it. */
-function zoneFor(card: ObservationCard, opt: number | null | undefined): 'sl' | 'tgt1' | 'tgt2' | null {
-  if (opt != null) return opt <= card.sl ? 'sl' : opt >= card.tgt2 ? 'tgt2' : opt >= card.tgt1 ? 'tgt1' : null;
-  if (card.outcome?.status === 'sl') return 'sl';
-  if (card.outcome?.status === 'tgt1') return card.outcome?.followThrough?.touches?.tgt2 ? 'tgt2' : 'tgt1';
-  return null;
+ *  outcome decides once the journal has resolved it. A touched target never un-tints. */
+// Sticky achieved-zone memory: once TGT1/TGT2 is touched live, the card STAYS green —
+// a later dip back into the buying range or even a post-target SL does not un-hit a
+// target (owner rule 2026-11-23). Red is reserved for SL without a prior TGT1.
+const achievedZone = new Map<string, 'tgt1' | 'tgt2'>();
+
+function zoneFor(card: ObservationCard, opt: number | null | undefined, key: string): 'sl' | 'tgt1' | 'tgt2' | null {
+  const ft = card.outcome?.followThrough;
+  const bankedTgt2 = achievedZone.get(key) === 'tgt2' || !!ft?.touches?.tgt2;
+  const bankedTgt1 = bankedTgt2 || achievedZone.get(key) === 'tgt1' || !!ft?.touches?.tgt1;
+  if (card.outcome?.status && card.outcome.status !== 'open') {
+    // Resolved: journal authority. SL resolves red ONLY when TGT1 was never hit first
+    // (sl-first / none-observed). A target-first card stays green even if SL came later.
+    if (card.outcome.status === 'sl') {
+      const tgtFirst = ft?.sequence === 'target-first' || (bankedTgt1 && ft?.sequence !== 'sl-first');
+      return tgtFirst ? (bankedTgt2 ? 'tgt2' : 'tgt1') : 'sl';
+    }
+    if (card.outcome.status === 'tgt1') return bankedTgt2 ? 'tgt2' : 'tgt1';
+    return null;
+  }
+  // Open card: live tick updates the sticky memory; a banked target never un-tints.
+  if (opt != null) {
+    if (opt >= card.tgt2) achievedZone.set(key, 'tgt2');
+    else if (opt >= card.tgt1 && achievedZone.get(key) !== 'tgt2') achievedZone.set(key, 'tgt1');
+    const achieved = achievedZone.get(key);
+    if (achieved) return achieved;
+    return opt <= card.sl ? 'sl' : null;
+  }
+  return bankedTgt2 ? 'tgt2' : bankedTgt1 ? 'tgt1' : null;
 }
 
 function outcomeLabel(card: ObservationCard): string {
@@ -361,7 +384,7 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
   const up = card.bias === 'bullish';
   const closes = useFutures(card.symbol);
   const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
-  const zone = zoneFor(card, optionTicks[optionKey]?.ltp);
+  const zone = zoneFor(card, optionTicks[optionKey]?.ltp, card.id);
   const dte = daysToExpiry(card.date, card.expiry);
   const expiry = expiryLabel(card.date, card.expiry);
   const stamped = istDateTime(card.at);
@@ -417,7 +440,7 @@ function ObservationTable({ cards, optionTicks }: {
           const dte = daysToExpiry(card.date, card.expiry);
           const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
           const liveOption = optionTicks[optionKey]?.ltp;
-          const zone = zoneFor(card, liveOption);
+          const zone = zoneFor(card, liveOption, card.id);
           return (
             <tr key={card.id} className={zone ? `obs-row--zone-${zone}` : undefined}>
               <td>{stamped ? `${stamped.date} ${stamped.time}` : '—'}</td>
