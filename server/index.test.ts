@@ -46,6 +46,16 @@ describe('sealed archive futures persistence', () => {
     expect(result).toEqual({ symbol: 'ALPHA', session: '2026-11-13', months: [] });
     expect(writes).toBe(0);
   });
+
+  it('reports and absorbs a futures disk-write failure without losing the provider result', async () => {
+    const result = { symbol: 'ALPHA', session: '2026-11-23', months: [{ date: '2026-11-26', candles: [] }] };
+    const load = vi.fn(async () => result);
+    const persist = vi.fn(async () => { throw new Error('disk full'); });
+    const logger = vi.fn();
+    await expect(loadFuturesWithArchiveLock('open', load, persist, logger)).resolves.toEqual(result);
+    expect(persist).toHaveBeenCalledExactlyOnceWith(result);
+    expect(logger).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'disk full' }));
+  });
 });
 
 describe('stored session snapshot (post-close fast path)', () => {

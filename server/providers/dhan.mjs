@@ -235,6 +235,74 @@ export function createBootCrawlPacer({ bootAt, paceMs = 250, startedInSession, n
   };
 }
 
+export function createFuturesFlushWatchdog({
+  flush,
+  now = Date.now,
+  isMarketSessionTime: inSession = isMarketSessionTime,
+  feedFlowing = () => false,
+  logger = console.warn,
+  setInterval: setIntervalFn = globalThis.setInterval,
+  clearInterval: clearIntervalFn = globalThis.clearInterval,
+  flushEveryMs = 60_000,
+  watchdogEveryMs = 5 * 60_000,
+  stallMs = 3 * 60_000,
+} = {}) {
+  let flushTimer = null;
+  let watchdogTimer = null;
+  let lastFlushAt = now();
+  let failureLogged = false;
+
+  const runFlush = () => {
+    try {
+      if (flush() === false) return false;
+      lastFlushAt = now();
+      failureLogged = false;
+      return true;
+    } catch (error) {
+      if (!failureLogged) {
+        logger(`dhan: futures tick flush failed: ${error?.message || error}`);
+        failureLogged = true;
+      }
+      return false;
+    }
+  };
+
+  const newFlushTimer = () => {
+    flushTimer = setIntervalFn(runFlush, flushEveryMs);
+    flushTimer?.unref?.();
+  };
+
+  const checkLiveness = () => {
+    const at = now();
+    if (!inSession(at) || !feedFlowing()) return;
+    const stalledMs = at - lastFlushAt;
+    if (stalledMs <= stallMs) return;
+    if (flushTimer !== null) clearIntervalFn(flushTimer);
+    newFlushTimer();
+    logger(`futures flush watchdog: restarted after ${Math.floor(stalledMs / 1000)}s stall`);
+    runFlush();
+  };
+
+  return {
+    start() {
+      if (flushTimer !== null) return;
+      newFlushTimer();
+      watchdogTimer = setIntervalFn(checkLiveness, watchdogEveryMs);
+      watchdogTimer?.unref?.();
+      runFlush();
+    },
+    stop() {
+      if (flushTimer !== null) clearIntervalFn(flushTimer);
+      if (watchdogTimer !== null) clearIntervalFn(watchdogTimer);
+      flushTimer = null;
+      watchdogTimer = null;
+    },
+    flushNow: runFlush,
+    checkLiveness,
+    get lastFlushAt() { return lastFlushAt; },
+  };
+}
+
 /** Minimal CSV reader: quoted fields, CRLF, no multiline cells (the master has none). */
 function* csvRows(text) {
   let row = [], field = '', quoted = false;
@@ -267,7 +335,7 @@ export function createDhanProvider(universe) {
   /** session:contractId → Promise<{ prevClose, prevOi, candles }>. */
   const futRest = new Map();
   const journaledTicks = new Map();
-  let tickJournalTimer = null;
+  let tickJournalFlush = null;
   let bootCrawlPace = async () => {};
   /** After a charts 429, hold off backfill retries for a while: the page's
    *  2-minute futures cycle re-asks every contract, and un-paced retries keep
@@ -322,23 +390,25 @@ export function createDhanProvider(universe) {
       .filter(future => future.expiry >= session)
       .slice(0, FUTURES_MONTHS)
       .map(future => ({ id: future.id, symbol: held.symbol, expiry: future.expiry })));
-    const { records, signatures } = collectTickJournalBatch(contracts, futTicks, session, journaledTicks);
-    if (!records.length) return 0;
+    let batch;
     try {
-      const written = appendTickJournalBatch(tickJournalPath(session), records);
-      for (const [key, signature] of signatures) journaledTicks.set(key, signature);
-      return written;
+      batch = collectTickJournalBatch(contracts, futTicks, session, journaledTicks);
     } catch (error) {
-      console.warn(`dhan: futures tick journal flush failed: ${error?.message || error}`);
-      return 0;
+      throw new Error(`batch collection: ${error?.message || error}`, { cause: error });
     }
+    if (!batch.records.length) return true;
+    let written;
+    try { written = appendTickJournalBatch(tickJournalPath(session), batch.records); }
+    catch (error) { throw new Error(`journal append: ${error?.message || error}`, { cause: error }); }
+    for (const [key, signature] of batch.signatures) journaledTicks.set(key, signature);
+    return written >= 0;
   }
 
   function startTickJournal(session) {
     const replayed = replayFuturesTickJournal(session);
-    if (tickJournalTimer) clearInterval(tickJournalTimer);
-    tickJournalTimer = setInterval(() => flushFuturesTickJournal(ymdIst(Date.now())), 60_000);
-    tickJournalTimer.unref?.();
+    tickJournalFlush?.stop();
+    tickJournalFlush = newFlushSupervisor();
+    tickJournalFlush.start();
     return replayed;
   }
   /** symbol:expiry → Dhan rejected the expiry outright (Invalid Expiry Date).
@@ -573,6 +643,15 @@ export function createDhanProvider(universe) {
 
   function feedHealthy() {
     return conns.some(c => c.socket && c.socket.readyState === 1) && feedHealthyAt > 0 && Date.now() - feedHealthyAt < 15_000;
+  }
+
+  function newFlushSupervisor() {
+    return createFuturesFlushWatchdog({
+      flush: () => flushFuturesTickJournal(ymdIst(Date.now())),
+      isMarketSessionTime,
+      feedFlowing: feedHealthy,
+      logger: message => console.warn(message),
+    });
   }
 
   function pickConn(reserve) {
