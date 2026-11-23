@@ -219,6 +219,9 @@ async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
 // carries no OI/build-up content — subscribers get the same stripped hit text as the owner.
 const levelHitsFired = new Set();
 async function checkLevelHits(session, at) {
+  // Alerts are a market-hours feature: after close the LTP freezes and a restart
+  // clears the fired-set — without this guard every refixed level re-fires at night.
+  if (!isMarketSessionTime(at)) return;
   try {
     const store = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'observations.json'), 'utf8'));
     const cards = (store.cards ?? []).filter(c => c.date === session && (!c.outcome || c.outcome.status === 'open'));
