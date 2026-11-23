@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { candidateStrikes, chainWalls, chooseChain, orbStrategy, earlyCards, adaptiveLevels, levelsFor, advisorQuestions, advisorDecisions, createSectorCardBudget, dedupeObservations, loadObservations, observationKey, runAdvisor } from './strikeAdvisor.mjs';
+import { candidateStrikes, chainWalls, chooseChain, orbStrategy, earlyCards, adaptiveLevels, levelsFor, advisorQuestions, advisorDecisions, createSectorCardBudget, dedupeObservations, loadObservations, observationKey, runAdvisor, saveObservations } from './strikeAdvisor.mjs';
 import { observationCaption } from './observationCardSvg.mjs';
 import { gammaProfile } from '../src/features/market-flow/gammaModel';
 
@@ -35,6 +35,28 @@ describe('levels and keys', () => {
     expect(observationKey({ symbol: 'X', date: '2026-11-19' })).toBe('X|2026-11-19');
     expect(observationKey({ symbol: 'X', date: '2026-11-19', reEntry: 1 })).toBe('X|2026-11-19:re1');
   });
+
+  it('store write keeps an original SL card beside its re-entry when resolved history is capped', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-reentry-store-'));
+    const obsPath = join(dir, 'observations.json');
+    const date = '2026-11-23';
+    const original = { id: `BANKNIFTY|${date}`, symbol: 'BANKNIFTY', date, entry: 243, sl: 200, tgt1: 300, outcome: { status: 'sl', r: -1 } };
+    const oldResolved = Array.from({ length: 4 }, (_, index) => ({
+      id: `OLD${index}|${date}`, symbol: `OLD${index}`, date, entry: 10, sl: 5, tgt1: 15, outcome: { status: 'sl', r: -1 },
+    }));
+    const reEntry = { ...original, id: `BANKNIFTY|${date}:re1`, at: 2, reEntry: 1, outcome: { status: 'open', r: null } };
+    try {
+      const stored = saveObservations(obsPath, [...oldResolved, original, reEntry], 2);
+      expect(stored).toHaveLength(2);
+      const reread = loadObservations(obsPath);
+      expect(reread).toHaveLength(2);
+      expect(reread.find(card => !card.reEntry)).toMatchObject({ id: original.id, outcome: { status: 'sl', r: -1 } });
+      expect(reread.find(card => card.reEntry === 1)).toMatchObject({ id: reEntry.id, outcome: { status: 'open', r: null } });
+      expect(new Set(reread.map(observationKey))).toEqual(new Set([original.id, reEntry.id]));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('candidateStrikes', () => {
@@ -60,27 +82,46 @@ describe('candidateStrikes', () => {
     expect(adaptiveLevels({ entry: 50 })).toMatchObject({ levelsBasis: 'fixed' });
   });
 
-  it('sizes levels on the underlying and prints the stock price each target needs (decay included)', () => {
+  it('uses a sane index premium fallback when the computed stop/target degenerates', () => {
     const card = {
-      symbol: 'IREDA', side: 'CE', strike: 120, spot: 119.8, entry: 2.53, delta: 0.54, iv: 40.4,
-      expiry: '2026-11-23', atr: { value: 2.4, barMinutes: 15, state: 'normal' },
+      symbol: 'NIFTY', side: 'CE', strike: 25_000, spot: 24_999.8, entry: 243, delta: 0.54, iv: 40.4,
+      expiry: '2026-11-23', atr: { value: 500, barMinutes: 15, state: 'normal' },
     };
     const priced = adaptiveLevels(card, { holdDays: 2, now: Date.parse('2026-11-18T15:30:00+05:30') });
-    // 2026-11-23: this cheap-premium fixture's raw ATR+decay output was degenerate
-    // (sl 0.05 / tgt1 25.32 = 10x entry — the exact pathology that shipped on the
-    // index cards). The degenerate-level guard now redirects it to the realistic band.
-    expect(priced.levelsBasis).toBe('fixed-sane');
-    expect(priced.sl).toBeGreaterThan(0);
+    expect(priced.levelsBasis).toBe('index-fixed-sane');
+    expect(priced.sl).toBeGreaterThan(priced.entry * 0.05);
     expect(priced.tgt1).toBeLessThan(priced.entry * 3);
     expect(priced.tgt1).toBeGreaterThan(priced.entry);
     expect(priced.sl).toBeLessThan(priced.entry);
-    // A CE target needs the stock ABOVE spot, the stop BELOW it.
-    expect(priced.needs.tgt1.level).toBeGreaterThan(119.8);
-    expect(priced.needs.sl.level).toBeLessThan(119.8);
-    expect(priced.needs.tgt1.pct).toBeGreaterThan(0);
+    expect(priced.needs?.tgt1?.level).toBeGreaterThan(card.spot);
+    expect(priced.needs?.sl?.level).toBeLessThan(card.spot);
+    expect(priced.needs?.tgt1?.pct).toBeGreaterThan(0);
     expect(priced.requiredMovePct).toBeGreaterThan(0);
-    // The quoted target and the quoted level agree: pricing that move returns the target.
-    expect(priced.tgt1).toBeGreaterThan(2.53);
+  });
+
+  it('prefers the index underlying percentiles when they yield sane premium levels', () => {
+    const at = Date.parse('2026-11-23T10:30:00+05:30');
+    const card = {
+      symbol: 'NIFTY', side: 'CE', strike: 1000, spot: 1000,
+      entry: 7.618032194494049, delta: 0.5, iv: 15, expiry: '2026-11-28', date: '2026-11-23', at,
+      atr: { value: 500, barMinutes: 15, state: 'expanded' },
+    };
+    const recent = { p10: 0.5, p20: 1, p30: 10, p50: 3, p70: 7.5, p85: 8, p95: 12, n: 700 };
+    const moveStats = {
+      instrument: 'INDEX', holds: [2], entryTimes: ['10:30'], recentCloses: Array(20).fill(1000),
+      daily: { 2: { recent: { up: recent, down: recent } } },
+    };
+    const priced = adaptiveLevels(card, { now: at, holdDays: 2, moveStats });
+
+    expect(priced.levelsBasis).toBe('index-percentile-fallback');
+    expect(priced.history.targetPct).toBe(1);
+    expect(priced.history.adversePct).toBe(1);
+    expect(priced.sl).toBeGreaterThanOrEqual(card.entry * 0.05);
+    expect(priced.sl).toBeLessThan(card.entry);
+    expect(priced.tgt1).toBeGreaterThan(card.entry);
+    expect(priced.tgt1).toBeLessThanOrEqual(card.entry * 3);
+    expect(priced.needs.sl.level).toBeLessThan(card.spot);
+    expect(priced.needs.tgt1.level).toBeGreaterThan(card.spot);
   });
 
   it('sizes levels from the stock\'s own history when move stats exist, and reports the reach rate', () => {

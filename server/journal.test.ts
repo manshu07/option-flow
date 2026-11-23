@@ -502,15 +502,15 @@ describe('day rollover and history', () => {
     ];
 
     const kept = retainObservations([...unresolved, ...resolved], 50);
-    expect(kept).toHaveLength(51);
-    expect(kept.every(item => !item.outcome)).toBe(true);
+    expect(kept).toHaveLength(52);
+    expect(kept.every(item => !item.outcome || item.outcome.status === 'open')).toBe(true);
 
     const resolvedOnly = retainObservations([
       { id: 'newest', symbol: 'NEWEST', date: DATE, outcome: { status: 'sl' } },
       { id: 'middle', symbol: 'MIDDLE', date: DATE, outcome: { status: 'tgt1' } },
       { id: 'oldest', symbol: 'OLDEST', date: DATE, outcome: { status: 'open' } },
     ], 2);
-    expect(resolvedOnly.map(item => item.symbol)).toEqual(['NEWEST', 'MIDDLE']);
+    expect(resolvedOnly.map(item => item.symbol)).toEqual(['NEWEST', 'OLDEST']);
   });
 });
 

@@ -49,6 +49,11 @@ const PCR_OPTIONS: readonly CapsuleOption<(typeof PCR_FILTERS)[number]>[] = [
   { value: 'lt1', label: 'PCR < 1' },
   { value: 'gte1', label: 'PCR ≥ 1' },
 ];
+const CLUB_MODES = ['flat', 'symbol'] as const;
+const CLUB_OPTIONS: readonly CapsuleOption<(typeof CLUB_MODES)[number]>[] = [
+  { value: 'flat', label: 'Flat' },
+  { value: 'symbol', label: 'Club by symbol' },
+];
 const OBSERVATION_VIEWS: readonly CapsuleOption<ObservationView>[] = [
   { value: 'cards', label: 'Cards' },
   { value: 'table', label: 'Table' },
@@ -170,6 +175,41 @@ function outcomeLabel(card: ObservationCard): string {
     case 'ambiguous': return 'Ambiguous';
     default: return '—';
   }
+}
+
+function parseClubSections(raw: unknown): Record<string, boolean> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  return Object.fromEntries(Object.entries(raw).filter(([symbol, expanded]) => symbol.length > 0 && typeof expanded === 'boolean'));
+}
+
+function clubOutcomeSummary(cards: readonly ObservationCard[]): string {
+  const counts = { sl: 0, tgt1: 0, open: 0, ambiguous: 0 };
+  for (const card of cards) {
+    const status = card.outcome?.status ?? 'open';
+    if (status === 'sl') counts.sl++;
+    else if (status === 'tgt1') counts.tgt1++;
+    else if (status === 'ambiguous') counts.ambiguous++;
+    else if (status === 'open') counts.open++;
+    else counts.open++;
+  }
+  return [
+    counts.sl ? `${counts.sl} SL` : null,
+    counts.tgt1 ? `${counts.tgt1} TGT1` : null,
+    counts.open ? `${counts.open} open` : null,
+    counts.ambiguous ? `${counts.ambiguous} ambiguous` : null,
+  ].filter(Boolean).join(' · ') || 'no outcomes';
+}
+
+function clubBySymbol(cards: readonly ObservationCard[]) {
+  const grouped = new Map<string, ObservationCard[]>();
+  for (const card of cards) {
+    if (!grouped.has(card.symbol)) grouped.set(card.symbol, []);
+    grouped.get(card.symbol)!.push(card);
+  }
+  return [...grouped.entries()].map(([symbol, items]) => ({
+    symbol,
+    cards: items.sort((a, b) => b.at - a.at),
+  })).sort((a, b) => b.cards[0].at - a.cards[0].at || a.symbol.localeCompare(b.symbol));
 }
 
 function captureTime(at: number | null): string {
@@ -494,6 +534,8 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   const [cards, setCards] = useState<ObservationCard[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [view, setView] = useRememberedChoice('observations-view:v1', ['cards', 'table'] as const, 'cards');
+  const [clubMode, setClubMode] = useRememberedChoice('observations-club-by-symbol:v1', CLUB_MODES, 'flat');
+  const [clubSections, setClubSections] = useRemembered('observations-club-sections:v1', parseClubSections, {});
   const [page, setPage] = useState(1);
   const [pageSizeChoice, setPageSizeChoice] = useRememberedChoice('observations.pageSize:v1', PAGE_SIZES, '10');
   const [signal, setSignal] = useRememberedChoice('observations.signal:v1', SIGNAL_FILTERS, 'all');
@@ -508,6 +550,7 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
     [cards, signal, confidence, pcrFilter, search],
   );
   const pageData = filtered == null ? null : paginateObservationCards(filtered, page, pageSize);
+  const clubs = useMemo(() => pageData ? clubBySymbol(pageData.items) : [], [pageData]);
   useEffect(() => { setPage(1); }, [cards?.length, view, pageSize, signal, confidence, pcrFilter, search]);
   // Always track the three indices' futures; add every card symbol + its exact option contract.
   const trackedSymbols = useMemo(
@@ -545,6 +588,14 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
         onChange={next => { setView(next); setPage(1); }}
         ariaLabel="Observation view"
         groupId="observations-view"
+        size="page"
+      />
+      <CapsuleSegmented
+        options={CLUB_OPTIONS}
+        value={clubMode}
+        onChange={next => { setClubMode(next); setPage(1); }}
+        ariaLabel="Club cards by symbol"
+        groupId="observations-club-by-symbol"
         size="page"
       />
       <CapsuleSegmented
@@ -609,9 +660,42 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
         </div>
       )}
       {view === 'cards' && pageData && pageData.total > 0 && (
-        <div className="observations__list">
-          {pageData.items.map(card => <Card key={card.id} card={card} spots={spots} futuresTicks={futuresTicks} optionTicks={optionTicks} />)}
-        </div>
+        clubMode === 'flat'
+          ? <div className="observations__list">
+            {pageData.items.map(card => <Card key={card.id} card={card} spots={spots} futuresTicks={futuresTicks} optionTicks={optionTicks} />)}
+          </div>
+          : <div className="observations__list">
+            {clubs.map(group => {
+              const newest = group.cards[0];
+              const optionKey = `${newest.symbol}|${newest.strike}|${newest.side}|${newest.expiry}`;
+              const zone = zoneFor(newest, optionTicks[optionKey]?.ltp, newest.id);
+              const expanded = clubSections[group.symbol] ?? true;
+              const sectionId = `observations-club-${encodeURIComponent(group.symbol)}`;
+              return (
+                <section className="observations__club" key={group.symbol} data-testid="observations-club-section">
+                  <button
+                    type="button"
+                    className="obs-card__head"
+                    style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--mf-line, #c9c9cf)', borderRadius: 9, background: 'var(--mf-panel, #fff)', textAlign: 'left', cursor: 'pointer' }}
+                    aria-expanded={expanded}
+                    aria-controls={sectionId}
+                    onClick={() => setClubSections(current => ({ ...current, [group.symbol]: !expanded }))}
+                  >
+                    <span className="obs-card__symbol">{group.symbol}</span>
+                    <span
+                      className={`obs-card__bias ${newest.bias === 'bullish' ? 'is-up' : 'is-down'}${zone ? ` obs-card--zone-${zone}` : ''}`}
+                      data-testid="observations-club-count"
+                    >({group.cards.length})</span>
+                    <span>— {clubOutcomeSummary(group.cards)}</span>
+                    <span aria-hidden="true" style={{ marginLeft: 'auto' }}>{expanded ? '▾' : '▸'}</span>
+                  </button>
+                  {expanded && <div id={sectionId} className="observations__club-cards">
+                    {group.cards.map(card => <Card key={card.id} card={card} spots={spots} futuresTicks={futuresTicks} optionTicks={optionTicks} />)}
+                  </div>}
+                </section>
+              );
+            })}
+          </div>
       )}
       {view === 'table' && pageData && pageData.total > 0 && <ObservationTable cards={pageData.items} optionTicks={optionTicks} />}
       {pageData && pageData.total > 0 && (

@@ -333,6 +333,45 @@ describe('ObservationsPage cards and table', () => {
     expect(within(table).getAllByRole('row')[3].querySelectorAll('td')[7]).toHaveTextContent('—');
   });
 
+  it('clubs page cards by symbol, shows counts/statuses in newest-first order and remembers sections', async () => {
+    const older = { ...card, id: 'nifty-old', symbol: 'NIFTY', at: card.at + 60_000, outcome: { status: 'tgt1' as const } };
+    const newest = { ...card, id: 'nifty-new', symbol: 'NIFTY', at: card.at + 120_000, reEntry: 1, outcome: { status: 'sl' as const } };
+    const bank = { ...card, id: 'bank-open', symbol: 'BANKNIFTY', at: card.at + 90_000, outcome: { status: 'open' as const } };
+    responseCards = [older, newest, bank];
+    const { unmount } = render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    await screen.findByText('1–3 of 3');
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Club by symbol' }));
+    const sections = screen.getAllByTestId('observations-club-section');
+    expect(sections).toHaveLength(2);
+    const nifty = sections[0];
+    const bankSection = sections[1];
+    expect(nifty).toHaveTextContent('NIFTY');
+    expect(nifty).toHaveTextContent('1 SL · 1 TGT1');
+    expect(within(nifty).getByTestId('observations-club-count')).toHaveTextContent('(2)');
+    expect(within(nifty).getByTestId('observations-club-count')).toHaveClass('obs-card--zone-sl');
+    expect(within(nifty).getAllByRole('article')).toHaveLength(2);
+    const niftyTimes = within(nifty).getAllByRole('time').map(time => Date.parse(time.getAttribute('datetime') ?? ''));
+    expect(niftyTimes).toEqual([newest.at, older.at]);
+    expect(bankSection).toHaveTextContent('1 open');
+    expect(within(bankSection).getAllByRole('article')).toHaveLength(1);
+
+    fireEvent.click(within(nifty).getByRole('button', { name: /NIFTY/ }));
+    expect(within(nifty).getByRole('button', { name: /NIFTY/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(nifty).queryAllByRole('article')).toHaveLength(0);
+    expect(within(nifty).getByTestId('observations-club-count')).toHaveTextContent('(2)');
+    expect(localStorage.getItem('observations-club-by-symbol:v1')).toBe('"symbol"');
+    expect(JSON.parse(localStorage.getItem('observations-club-sections:v1') ?? '{}')).toMatchObject({ NIFTY: false });
+
+    unmount();
+    render(<MemoryRouter><ObservationsPage /></MemoryRouter>);
+    await screen.findByText('1–3 of 3');
+    const restoredNifty = screen.getAllByTestId('observations-club-section')[0];
+    expect(within(restoredNifty).getByTestId('observations-club-count')).toHaveTextContent('(2)');
+    expect(within(restoredNifty).queryAllByRole('article')).toHaveLength(0);
+  });
+
   it('exposes the same verification in the existing Status table cell', async () => {
     responseCards = [{ ...card, outcome: { status: 'tgt1', followThrough: evidence({
       touches: { sl: null, tgt1: { at: card.at + 120_000, after: card.at + 120_000, source: 'ltp' }, tgt2: null },

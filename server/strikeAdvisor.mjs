@@ -536,11 +536,18 @@ export function retainObservations(cards, maxCards = MAX_CARDS) {
   const unique = dedupeObservations(Array.isArray(cards) ? cards : []);
   const limit = Number.isSafeInteger(maxCards) && maxCards >= 0 ? maxCards : MAX_CARDS;
   if (unique.length <= limit) return unique;
-  const unresolved = unique.filter(card => !card?.outcome || typeof card.outcome !== 'object');
-  const resolved = unique.filter(card => card?.outcome && typeof card.outcome === 'object');
-  const resolvedToKeep = Math.max(0, limit - unresolved.length);
-  const keptResolved = new Set(resolved.slice(0, resolvedToKeep));
-  return unique.filter(card => !card?.outcome || typeof card.outcome !== 'object' || keptResolved.has(card));
+  const unresolved = unique.filter(card => !card?.outcome || typeof card.outcome !== 'object' || card.outcome.status === 'open');
+  const resolved = unique.filter(card => !unresolved.includes(card));
+  // A re-entry depends on its original SL card for audit/history. Pin that
+  // original even when ordinary resolved history is evicted at the store cap.
+  const reEntryOriginalKeys = new Set(unique.filter(card => card?.reEntry)
+    .map(card => `${card.symbol}|${card.date}`));
+  const pinnedOriginals = new Set(resolved.filter(card => !card?.reEntry
+    && reEntryOriginalKeys.has(observationKey(card))));
+  const resolvedToKeep = Math.max(0, limit - unresolved.length - pinnedOriginals.size);
+  const recentResolved = resolved.filter(card => !pinnedOriginals.has(card));
+  const keptResolved = new Set(recentResolved.slice(0, resolvedToKeep));
+  return unique.filter(card => unresolved.includes(card) || pinnedOriginals.has(card) || keptResolved.has(card));
 }
 
 /** Read + normalise the observations store. */
@@ -551,10 +558,12 @@ export function loadObservations(path) {
   } catch { return []; }
 }
 
-function saveObservations(path, cards) {
+export function saveObservations(path, cards, maxCards = MAX_CARDS) {
   const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ cards }, null, 2));
+  const retained = retainObservations(cards, maxCards);
+  writeFileSync(tmp, JSON.stringify({ cards: retained }, null, 2));
   renameSync(tmp, path);
+  return retained;
 }
 
 const notified = new Set(); // `symbol|sessionDate` — one Telegram note per card per day
@@ -630,42 +639,122 @@ export function adaptiveLevels(card, opts = {}) {
     tgt1: Number.isFinite(priced.tgt1) ? snapTick(priced.tgt1) : priced.tgt1,
     tgt2: Number.isFinite(priced.tgt2) ? snapTick(priced.tgt2) : priced.tgt2,
   };
-  // Degenerate-level guard (2026-11-23 index cards shipped SL 0.05 / TGT1 12x premium:
-  // the underlying-ATR sizing is spot-scale on index options and the BS reprice explodes).
-  // Owner's first condition: targets must always be realistic. A level set that fails the
-  // sanity band falls back to a fixed realistic band of the premium instead.
   const entry = Number(card?.entry);
   const basis = String(priced.levelsBasis || '');
-  // 'fixed' (no data yet) and 'decay-too-heavy' (an honest refusal) are intentional —
-  // never redirected by the guard.
-  const guardable = basis !== 'fixed' && basis !== 'decay-too-heavy';
-  const degenerate = guardable && Number.isFinite(entry) && entry > 0 && (
-    !Number.isFinite(out.sl) || out.sl <= 0 || out.sl < entry * 0.02
-    || (Number.isFinite(out.tgt1) && out.tgt1 > entry * 6));
+  // Do not loosen the existing no-edge/decay refusals. Only index option
+  // premium levels can be degenerate from spot-scale ATR conversion.
+  const degenerate = INDEX_SYMBOLS.has(card?.symbol) && basis !== 'decay-too-heavy' && basis !== 'no-edge'
+    && Number.isFinite(entry) && entry > 0
+    && (!Number.isFinite(out.sl) || out.sl < entry * 0.05 || out.sl >= entry
+      || !Number.isFinite(out.tgt1) || out.tgt1 <= entry || out.tgt1 > entry * 3);
   if (degenerate) {
-    const fallback = {
-      ...card,
-      sl: round2(entry * 0.70),
-      tgt1: round2(entry * 1.60),
-      tgt2: round2(entry * 2.20),
-      levelsBasis: 'fixed-sane',
-    };
-    // Preserve the "stock price each level needs" readout (delta-approximate): a CE
-    // target needs spot above, the stop below; a PE mirrors it.
+    const indexFallback = indexPercentileFallback(card, opts, entry);
+    if (indexFallback) return { ...out, ...indexFallback };
+    const fixed = levelsFor({ ltp: entry }, { support: card.support ?? null, resistance: card.resistance ?? null });
     const spot = Number(card?.spot);
-    const delta = Number(card?.delta);
-    if (Number.isFinite(spot) && spot > 0 && Number.isFinite(delta) && Math.abs(delta) > 0) {
-      const need = level => {
-        const premMove = level - entry;
-        const spotMove = card.side === 'CE' ? premMove / Math.abs(delta) : -premMove / Math.abs(delta);
-        return { level: round2(spot + spotMove), pct: round2((spotMove / spot) * 100) };
-      };
-      fallback.needs = { tgt1: need(fallback.tgt1), tgt2: need(fallback.tgt2), sl: need(fallback.sl) };
-      fallback.requiredMovePct = fallback.needs.tgt1.pct;
-    }
-    return fallback;
+    const years = yearsToExpiry(card?.expiry, Number.isFinite(opts?.now) ? opts.now : Date.now());
+    const iv = years && spot > 0 ? optionIv({ premium: entry, spot, strike: card.strike, years, side: card.side, captured: card.iv }) : null;
+    const days = Number(out.holdDays) || Number(opts?.holdDays) || 2;
+    const delta = Number.isFinite(card?.delta) && Math.abs(card.delta) > 0 ? Math.abs(card.delta)
+      : Number.isFinite(out.deltaUsed) && out.deltaUsed > 0 ? out.deltaUsed : null;
+    const need = level => {
+      const underlying = iv ? spotForPremium({ target: level, spot, strike: card.strike, years, iv, side: card.side, days }) : null;
+      const premiumMove = level - entry;
+      const direction = card.side === 'PE' ? -Math.sign(premiumMove) : Math.sign(premiumMove);
+      if (Number.isFinite(underlying) && spot > 0 && direction * (underlying - spot) > 0) {
+        return { level: round2(underlying), pct: round2((Math.abs(underlying - spot) / spot) * 100) };
+      }
+      if (!(delta > 0 && spot > 0)) return null;
+      const spotMove = card.side === 'PE' ? -premiumMove / delta : premiumMove / delta;
+      return { level: round2(spot + spotMove), pct: round2((Math.abs(spotMove) / spot) * 100) };
+    };
+    const needs = spot > 0 ? { sl: need(fixed.sl), tgt1: need(fixed.tgt1), tgt2: need(fixed.tgt2) } : null;
+    return {
+      ...out,
+      ...fixed,
+      levelsBasis: 'index-fixed-sane',
+      needs,
+      history: null,
+      backtest: null,
+      requiredMovePct: needs?.tgt1?.pct ?? null,
+    };
   }
   return out;
+}
+
+function indexPercentileFallback(card, opts, entry) {
+  const stats = opts?.moveStats;
+  const spot = card?.spot;
+  const strike = card?.strike;
+  const side = card?.side;
+  const now = Number.isFinite(opts?.now) ? opts.now : Date.now();
+  if (!stats || !(Number.isFinite(spot) && spot > 0 && Number.isFinite(strike) && strike > 0)
+    || (side !== 'CE' && side !== 'PE')) return null;
+  const years = yearsToExpiry(card?.expiry, now);
+  const iv = years ? optionIv({ premium: entry, spot, strike, years, side, captured: card?.iv }) : null;
+  if (!(Number.isFinite(years) && years > 0 && Number.isFinite(iv) && iv > 0)) return null;
+  const days = Math.max(1, Math.min(Number(opts?.holdDays) || Number(card?.holdDays) || 2, Math.floor(years * 365)));
+  const hhmm = hhmmIst(Number.isFinite(card?.at) ? card.at : now);
+  const adverseSide = side === 'PE' ? 'CE' : 'PE';
+
+  for (const targetPercentile of [30, 20, 10]) {
+    const targetMove = moveFor({ stats, hhmm, holdDays: days, side, percentile: targetPercentile });
+    if (!(Number.isFinite(targetMove?.pct) && targetMove.pct > 0)) continue;
+    const targetDistance = spot * targetMove.pct / 100;
+    const targetSpot = side === 'PE' ? spot - targetDistance : spot + targetDistance;
+    const rawTgt1 = premiumAtLevel({ level: targetSpot, strike, years, iv, side, days });
+    const tgt1 = Number.isFinite(rawTgt1) ? snapTick(rawTgt1) : null;
+    if (!(Number.isFinite(tgt1) && tgt1 > entry && tgt1 <= entry * 3)) continue;
+
+    for (const stopPercentile of [85, 70, 50, 30, 20, 10]) {
+      const adverseMove = moveFor({ stats, hhmm, holdDays: days, side: adverseSide, percentile: stopPercentile });
+      if (!(Number.isFinite(adverseMove?.pct) && adverseMove.pct > 0)) continue;
+      const stopDistance = spot * adverseMove.pct / 100;
+      const stopSpot = side === 'PE' ? spot + stopDistance : spot - stopDistance;
+      const rawSl = premiumAtLevel({ level: stopSpot, strike, years, iv, side, days });
+      const sl = Number.isFinite(rawSl) ? snapTick(rawSl) : null;
+      if (!(Number.isFinite(sl) && sl >= entry * 0.05 && sl < entry)) continue;
+
+      const stretchMove = moveFor({ stats, hhmm, holdDays: days, side, percentile: 50 });
+      const stretchDistance = Number.isFinite(stretchMove?.pct) ? spot * stretchMove.pct / 100 : null;
+      const stretchSpot = stretchDistance == null ? null : side === 'PE' ? spot - stretchDistance : spot + stretchDistance;
+      const rawTgt2 = stretchSpot == null ? null : premiumAtLevel({ level: stretchSpot, strike, years, iv, side, days });
+      const tgt2 = Number.isFinite(rawTgt2) && rawTgt2 > tgt1 && rawTgt2 <= entry * 3 ? snapTick(rawTgt2) : null;
+      const slNeed = levelFor({ spot, move: -stopDistance, side });
+      const tgt1Need = levelFor({ spot, move: targetDistance, side });
+      const tgt2Need = tgt2 == null || stretchDistance == null ? null : levelFor({ spot, move: stretchDistance, side });
+      const pct = need => need && spot > 0 ? round2((Math.abs(need.level - spot) / spot) * 100) : null;
+      const targetStock = spotForPremium({ target: tgt1, spot, strike, years, iv, side, days });
+      return {
+        sl,
+        tgt1,
+        tgt2,
+        levelsBasis: 'index-percentile-fallback',
+        needs: {
+          sl: slNeed && { level: round2(slNeed.level), pct: pct(slNeed) },
+          tgt1: tgt1Need && { level: round2(tgt1Need.level), pct: pct(tgt1Need) },
+          tgt2: tgt2Need && { level: round2(tgt2Need.level), pct: pct(tgt2Need) },
+        },
+        history: {
+          instrument: stats.instrument ?? 'INDEX',
+          era: targetMove.era ?? 'recent',
+          holdDays: days,
+          samples: targetMove.samples ?? 0,
+          targetPct: targetMove.pct,
+          stretchPct: stretchMove?.pct ?? null,
+          adversePct: adverseMove.pct,
+          reach: {
+            tgt1: reachRate({ stats, hhmm, holdDays: days, side, pct: targetMove.pct }),
+            tgt2: tgt2 == null ? null : reachRate({ stats, hhmm, holdDays: days, side, pct: stretchMove.pct }),
+            sl: reachRate({ stats, hhmm, holdDays: days, side: adverseSide, pct: adverseMove.pct }),
+          },
+        },
+        backtest: null,
+        requiredMovePct: targetStock == null ? null : round2((Math.abs(targetStock - spot) / spot) * 100),
+      };
+    }
+  }
+  return null;
 }
 
 function computeAdaptiveLevels(card, { holdDays = Number(process.env.ADVISOR_HOLD_DAYS) || 2, now = Date.now(), moveStats = null, levelGrid = null, policy = process.env.ADVISOR_LEVEL_POLICY || 'achievable' } = {}) {
@@ -1077,8 +1166,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
         const prior = existing.find(item => observationKey(item) === key);
         return Boolean(prior?.early);
       });
-      const stored = retainObservations([...freshCards, ...existing]);
-      saveObservations(obsPath, stored);
+      saveObservations(obsPath, [...freshCards, ...existing]);
       const fresh = freshCards.filter(card => {
         const key = observationKey(card);
         return key && !existingKeys.has(key) && !notified.has(key);
