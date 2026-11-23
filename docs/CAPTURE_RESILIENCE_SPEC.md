@@ -1,5 +1,28 @@
 # CAPTURE_RESILIENCE_SPEC — restart-proof capture + honest gap-aware charts (Kilo Batch-4)
 
+## MANDATORY FIRST STEP — read before ANY code
+
+Read the spec, then read these EXACT files end-to-end before writing a single line (use the
+grep line anchors to find them fast; they are the affected surfaces):
+
+| File | Sections to read | Stories |
+|---|---|---|
+| `server/providers/dhan.mjs` | `futTicks` Map (~128), `noteTick` (~280-390), `futRest` one-shot backfill (~129-140), boot backfill usage (~1358-1370), charts pacing + 429 rest (~134-140) | S1, S2, S5 |
+| `server/index.mjs` | history-refresh block (bb1db3e chain, search `history refresh`), boot backfill counters, `MF_DATA_DIR` session paths, isMarketSessionTime guard | S1, S2, S3 |
+| `server/replayStorage.mjs` | `readFutures` + persisted futures-file shape (S1/S2 merge target) | S1, S2 |
+| `src/features/market-flow/FlowDiagram.tsx` | CandleChart component (S4 renders here) | S4 |
+| `src/features/market-flow/marketFlowModel.ts` | candle resampling + `FEATURED_HOLD_SHARE` area | S4 |
+| `src/features/market-flow/FlowPopup.tsx` | mini chart + tf selector (existing ≥30-bar rule 9ff5081) | S4 |
+| `src/features/observations/observationModel.ts` | `formatPcrContext` (reuse-style formatter reference) | S4 |
+| `server/marketSession.ts` (via src/lib) | `isMarketSessionTime` (S3 guard) | S3 |
+
+After reading, list the files you WILL touch in one line each (why + which story), and if any
+file outside this list becomes necessary, STOP and ask before touching it. If after reading you
+find a better existing helper than what the spec assumes — reuse it and note the deviation in
+the pause summary.
+
+Owner rule (standing): reuse-first, no deletions, old must keep working — search before building.
+
 Owner-approved 2026-11-23 (everything except the time-spaced x-axis option, explicitly rejected).
 Root cause this batch fixes: 2026-11-23 lost large capture chunks (WS full drop + 429 storms +
 two mid-session restarts) and the day's charts rendered from ~22 gappy candles. Futures candles
