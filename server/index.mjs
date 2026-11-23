@@ -51,6 +51,7 @@ import { orbScan, orbSlotDue, orbMessage } from './orb.mjs';
 import { participation } from './participation.mjs';
 import { hoursLeft, tokenReminder } from './tokenWatch.mjs';
 import { formatHistoryRefreshSummary, futureCaptureBelowCoverage, historyRefreshDue, runHistoryRefresh, istParts } from './historyRefresh.mjs';
+import { mcxEveningBrief, mcxWatchPoll } from './mcx.mjs';
 import { sendTelegram } from './telegram.mjs';
 import { activeChatIds, loadSubscribers, pollCommands } from './subscribers.mjs';
 import { sectorMapFromUnderlyings } from './orbModel.mjs';
@@ -1487,6 +1488,27 @@ server.listen(PORT, HOST, async () => {
   try {
     await provider.init?.();
     state.ready = true;
+    let mcxTaskErrorLogged = false;
+    const runMcxWatch = async () => {
+      const pollAt = Date.now();
+      const poll = await mcxWatchPoll(pollAt, { dataDir: DATA_DIR, log });
+      await mcxEveningBrief(pollAt, {
+        dataDir: DATA_DIR,
+        quotes: poll?.quotes ?? {},
+        sendOwner: sendTelegram,
+        log,
+      });
+    };
+    const safeMcxWatch = () => {
+      void runMcxWatch().catch(error => {
+        if (mcxTaskErrorLogged) return;
+        mcxTaskErrorLogged = true;
+        log('mcx: background poll stopped after unexpected error:', String(error?.message || error));
+      });
+    };
+    safeMcxWatch();
+    const mcxWatchTimer = setInterval(safeMcxWatch, 60_000);
+    mcxWatchTimer.unref?.();
   } catch (error) {
     state.lastError = { at: Date.now(), message: `Provider failed to start: ${error?.message || error}` };
     log(state.lastError.message);

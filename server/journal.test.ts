@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { resolveCard, runJournal, trackCardFollowThrough, withJournalStoreLock } from './journal.mjs';
+import { mcxEveningBrief, mcxSessionOpen, mcxWatchPoll } from './mcx.mjs';
 import { retainObservations } from './strikeAdvisor.mjs';
 import { backfillJournalFollowThrough } from '../scripts/backfillJournalArchive.mjs';
 
@@ -540,6 +541,61 @@ describe('day rollover and history', () => {
       { id: 'oldest', symbol: 'OLDEST', date: DATE, outcome: { status: 'open' } },
     ], 2);
     expect(resolvedOnly.map(item => item.symbol)).toEqual(['NEWEST', 'OLDEST']);
+  });
+});
+
+describe('MCX evening watchlist', () => {
+  const pollAt = Date.parse('2026-11-23T10:00:00+05:30');
+  const ids = { GOLD: 495213, SILVER: 495214, NATURALGAS: 574319, GOLDM: 575011, SILVERM: 483080, NATURALGASM: 574320 };
+
+  it('polls all six contracts once inside the MCX weekday window and normalizes quotes', async () => {
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(JSON.parse(String(init.body))).toEqual({ MCX_COMM: Object.values(ids) });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'success', data: { MCX_COMM: {
+          '495213': { last_price: 126021, oi: 9748, ohlc: { close: 125996, high: 126041, low: 125900 } },
+        } } }),
+      };
+    });
+    const result = await mcxWatchPoll(pollAt, {
+      fetchImpl, accessToken: 'test-token', clientId: 'test-client', log: vi.fn(), securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410',
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ polled: true, quotes: { GOLD: {
+      lastPrice: 126021, previousClose: 125996, oi: 9748, high: 126041, low: 125900,
+    } } });
+  });
+
+  it('skips weekends, NSE holidays, and times outside the configured session without fetching', async () => {
+    const fetchImpl = vi.fn();
+    expect(mcxSessionOpen(pollAt, { closeMinuteEnv: '1410' })).toBe(true);
+    expect(mcxSessionOpen(Date.parse('2026-11-22T10:00:00+05:30'), { closeMinuteEnv: '1410' })).toBe(false);
+    expect(mcxSessionOpen(Date.parse('2026-11-24T10:00:00+05:30'), { closeMinuteEnv: '1410' })).toBe(false);
+    expect(mcxSessionOpen(Date.parse('2026-11-23T08:59:00+05:30'), { closeMinuteEnv: '1410' })).toBe(false);
+    expect(mcxSessionOpen(Date.parse('2026-11-23T23:31:00+05:30'), { closeMinuteEnv: '1410' })).toBe(false);
+    await expect(mcxWatchPoll(Date.parse('2026-11-23T23:31:00+05:30'), { fetchImpl, closeMinuteEnv: '1410' }))
+      .resolves.toMatchObject({ skipped: 'outside MCX session' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('sends an owner-only 21:00 brief once and restores its day latch after reload', async () => {
+    const statePath = join(tempDir(), 'mcx-brief-state.json');
+    const sendOwner = vi.fn(async () => ({ sent: true }));
+    const quotes = {
+      GOLD: { lastPrice: 126021, previousClose: 125996, percentChange: 0.0198, oi: null, high: 126041, low: 125900 },
+    };
+    const at = Date.parse('2026-11-23T21:00:20+05:30');
+
+    await expect(mcxEveningBrief(at, { statePath, quotes, sendOwner, log: vi.fn(), closeMinuteEnv: '1410' }))
+      .resolves.toMatchObject({ sent: true });
+    await expect(mcxEveningBrief(at + 20_000, { statePath, quotes, sendOwner, log: vi.fn(), closeMinuteEnv: '1410' }))
+      .resolves.toMatchObject({ sent: false, skipped: 'already sent' });
+    expect(sendOwner).toHaveBeenCalledTimes(1);
+    expect(sendOwner.mock.calls[0][0]).toContain('OI —');
+    expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ dayKey: '2026-11-23', sentBrief: true, fired: {} });
   });
 });
 
