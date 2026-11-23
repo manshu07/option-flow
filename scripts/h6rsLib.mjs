@@ -59,20 +59,21 @@ export function loadBars(sym, minutes, root = CSV_ROOT) {
   const bars = load1m(sym, root);
   const dates = [];
   const dateIdx = new Map();
-  const outCloses = [], outHighs = [], outLows = [], outVols = [], outDay = [], outMins = [];
-  let curSlot = -1, curDay = -1, h = 0, l = 0, c = 0, v = 0, w = 0;
+  const outCloses = [], outHighs = [], outLows = [], outVols = [], outOpens = [], outDay = [], outMins = [];
+  let curSlot = -1, curDay = -1, h = 0, l = 0, c = 0, v = 0, o = 0, w = 0;
   for (let i = 0; i < bars.length; i++) {
     const m = Number(bars[i].time.slice(0, 2)) * 60 + Number(bars[i].time.slice(3));
     let d = dateIdx.get(bars[i].date);
     if (d == null) { d = dates.length; dates.push(bars[i].date); dateIdx.set(bars[i].date, d); }
     const s = Math.floor((m - 555) / minutes);
     if (s !== curSlot || d !== curDay) {
-      if (w > 0) { outCloses.push(c); outHighs.push(h); outLows.push(l); outVols.push(v); outDay.push(curDay); outMins.push(curSlot * minutes + 555); }
-      curSlot = s; curDay = d; h = -Infinity; l = Infinity; c = 0; v = 0; w = 0;
+      if (w > 0) { outCloses.push(c); outHighs.push(h); outLows.push(l); outVols.push(v); outOpens.push(o); outDay.push(curDay); outMins.push(curSlot * minutes + 555); }
+      curSlot = s; curDay = d; h = -Infinity; l = Infinity; c = 0; v = 0; o = 0; w = 0;
     }
+    if (w === 0) o = bars[i].o;
     h = Math.max(h, bars[i].h); l = Math.min(l, bars[i].l); c = bars[i].c; v += bars[i].v; w++;
   }
-  if (w > 0) { outCloses.push(c); outHighs.push(h); outLows.push(l); outVols.push(v); outDay.push(curDay); outMins.push(curSlot * minutes + 555); }
+  if (w > 0) { outCloses.push(c); outHighs.push(h); outLows.push(l); outVols.push(v); outOpens.push(o); outDay.push(curDay); outMins.push(curSlot * minutes + 555); }
   return {
     dates,
     dayIdx: Int32Array.from(outDay),
@@ -81,12 +82,13 @@ export function loadBars(sym, minutes, root = CSV_ROOT) {
     highs: Float64Array.from(outHighs),
     lows: Float64Array.from(outLows),
     vols: Float64Array.from(outVols),
+    opens: Float64Array.from(outOpens),
   };
 }
 
 // h6rsCore — parse → resample → RSI. The RSI loop stays byte-identical to scripts/h6rs.mjs.
 export function h6rsCore(sym, minutes, rsiP, root = CSV_ROOT) {
-  const { dates, dayIdx, mins, closes, highs, lows, vols } = loadBars(sym, minutes, root);
+  const { dates, dayIdx, mins, closes, highs, lows, vols, opens } = loadBars(sym, minutes, root);
   const n = closes.length;
   const osc = new Float64Array(n);
   const p = rsiP;
@@ -97,7 +99,7 @@ export function h6rsCore(sym, minutes, rsiP, root = CSV_ROOT) {
     l = (l * (p - 1) + Math.max(-ch, 0)) / p;
     osc[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l);
   }
-  return { dates, dayIdx, mins, closes, highs, lows, vols, osc };
+  return { dates, dayIdx, mins, closes, highs, lows, vols, opens, osc };
 }
 
 // >>> fast-anything: scripts.h6rsLib.h6rsCore >>>

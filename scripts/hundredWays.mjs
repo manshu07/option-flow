@@ -12,8 +12,9 @@
  * still clears minPct across a multi-year span and a recent occurrence are the
  * owner's per-stock DNA.
  */
-import { openSync, readSync, closeSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { h6rsCore } from './h6rsLib.mjs';
 
 const ROOT = process.env.HISTORY_CSV_ROOT || '/Users/himanshuvaghela/Downloads/NSE DERIVATIVES';
 const FUT_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'server', 'data', 'fut-daily');
@@ -24,40 +25,15 @@ const minPct = Number(args[2]) || 1.0;
 const WARMUP = 60;
 
 function loadDaily(symbol) {
-  const file = path.join(ROOT, `${symbol}-EQ`, `${symbol}-EQ1.csv`);
-  const fd = openSync(file, 'r');
-  const buf = Buffer.alloc(1 << 20);
-  let pos = 0, carry = '';
-  const bars = [];
-  const take = line => {
-    if (!line.trim()) return;
-    const f = line.split(',');
-    if (f.length !== 7) return;
-    const [date, time, open, high, low, close, volume] = f;
-    if (!/^\d{4}\.\d{2}\.\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return;
-    const mins = Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
-    if (mins < 555 || mins > 930) return;
-    const at = Date.parse(`${date.replace(/\./g, '-')}T${time}:00+05:30`);
-    if (!Number.isFinite(at)) return;
-    const key = date.replace(/\./g, '-');
-    const b = bars.at(-1);
-    if (b && b.date === key) {
-      b.high = Math.max(b.high, Number(high)); b.low = Math.min(b.low, Number(low));
-      b.close = Number(close); b.volume += Number(volume) || 0;
-    } else {
-      bars.push({ date: key, at, open: Number(open), high: Number(high), low: Number(low), close: Number(close), volume: Number(volume) || 0 });
-    }
-  };
-  for (;;) {
-    const n = readSync(fd, buf, 0, buf.length, pos);
-    if (n <= 0) break;
-    pos += n;
-    const lines = (carry + buf.toString('utf8', 0, n)).split('\n');
-    carry = lines.pop();
-    for (const l of lines) take(l);
+  // h6rsCore (Rust-accelerated) parses the 1m CSV and resamples to daily typed arrays;
+  // we rebuild the small per-day objects the indicator layer expects.
+  const core = h6rsCore(symbol, 9999, 14, ROOT);
+  const n = core.closes.length;
+  const bars = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const date = core.dates[core.dayIdx[i]];
+    bars[i] = { date, at: Date.parse(`${date}T09:15:00+05:30`), open: core.opens[i], high: core.highs[i], low: core.lows[i], close: core.closes[i], volume: core.vols[i] };
   }
-  take(carry);
-  closeSync(fd);
   return bars;
 }
 
