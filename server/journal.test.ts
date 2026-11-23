@@ -232,6 +232,35 @@ describe('post-call follow-through evidence', () => {
     expect(trackCardFollowThrough(followCard(), minutes)).toMatchObject({ sequence: 'ambiguous' });
   });
 
+  it('keeps NIFTY 25400PE target-first when the post-entry day high crosses before the later stop quote', () => {
+    const date = '2026-11-23';
+    const candidate = {
+      id: 'NIFTY|2026-11-23', at: 1795425754010, date, symbol: 'NIFTY', bias: 'bearish', side: 'PE',
+      strike: 25400, expiry: date, entry: 35.55, sl: 24.89, tgt1: 56.88, tgt2: 78.21,
+    };
+    const capture = (snapshotAt: number, seriesAt: number, premium: number, high: number) => ({
+      date,
+      t: snapshotAt,
+      series: [{ s: 'NIFTY', e: date, t: seriesAt, r: [optionRow(25400, 1, premium, high, 2.4000000953674316)] }],
+    });
+    const minutes = [
+      capture(1795426284778, 1795426265348, 43.6, 49.75), // 15:01:24 / 15:01:05 IST
+      capture(1795426351843, 1795426323643, 47.2, 57), // 15:02:31 / 15:02:03: new high crosses TGT1
+      capture(1795427373340, 1795427343240, 24, 57), // 15:19:33 / 15:19:03: LTP crosses SL
+      capture(1795427733608, 1795427703005, 61.45, 66.5), // 15:25:33 / 15:25:03: later LTP crosses TGT1
+    ];
+
+    const graded = resolveCard(candidate, minutes);
+    expect(graded).toMatchObject({ status: 'tgt1', r: 2, hitAt: 1795426351843 });
+    expect(trackCardFollowThrough(candidate, minutes)).toMatchObject({
+      sequence: 'target-first',
+      touches: {
+        tgt1: { at: 1795426323643, after: 1795426265348, source: 'day-range' },
+        sl: { at: 1795427343240, source: 'ltp' },
+      },
+    });
+  });
+
   it('starts futures evidence at the first full minute, excluding pre-call extremes and post-close candles', () => {
     const at = Date.parse(`${DATE}T09:45:23+05:30`);
     const first = Date.parse(`${DATE}T09:46:00+05:30`);
