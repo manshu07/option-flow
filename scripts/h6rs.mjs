@@ -66,9 +66,10 @@ bars = TF === 'daily' ? resample(bars, 9999) : resample(bars, 5); // 9999 = one 
 const n = bars.length;
 const C = bars.map(b => b.c);
 
-// RSI(14)
+// RSI (period configurable via H6RS_RSI_P, default 14)
+const RP = Number(process.env.H6RS_RSI_P) || 14;
 const osc = new Array(n).fill(NaN);
-{ let g = 0, l = 0; for (let i = 1; i < i + n; i++) { if (i >= n) break; const ch = C[i] - C[i - 1]; g = (g * 13 + Math.max(ch, 0)) / 14; l = (l * 13 + Math.max(-ch, 0)) / 14; osc[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l); } }
+{ let g = 0, l = 0; for (let i = 1; i < i + n; i++) { if (i >= n) break; const ch = C[i] - C[i - 1]; g = (g * (RP - 1) + Math.max(ch, 0)) / RP; l = (l * (RP - 1) + Math.max(-ch, 0)) / RP; osc[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l); } }
 
 const pH = i => i > 2 && i < n - 2 && osc[i] > osc[i - 1] && osc[i] > osc[i - 2] && osc[i] >= osc[i + 1] && osc[i] > osc[i + 2];
 const pL = i => i > 2 && i < n - 2 && osc[i] < osc[i - 1] && osc[i] < osc[i - 2] && osc[i] <= osc[i + 1] && osc[i] < osc[i + 2];
@@ -97,7 +98,7 @@ for (let i = 15; i < n - 2; i++) {
       }
     }
   } else if (st === 1) {
-    if (i - stStart >= MIN_PHASE && rngAt(i, 10) <= 0.6 * moon.amp) { st = 2; stStart = i; }
+    if (i - stStart >= MIN_PHASE && rngAt(i, 10) <= (Number(process.env.H6RS_COMP) || 0.6) * moon.amp) { st = 2; stStart = i; }
   } else if (st === 2) {
     // Crown: two osc peaks with trough; bullish divergence vs prior trough (price LL, osc HL)
     const peaks = [];
@@ -115,7 +116,7 @@ for (let i = 15; i < n - 2; i++) {
       }
     }
   } else if (st === 3) {
-    if (i - stStart >= MIN_PHASE && rngAt(i, 10) <= 0.6 * moon.amp) { st = 4; stStart = i; }
+    if (i - stStart >= MIN_PHASE && rngAt(i, 10) <= (Number(process.env.H6RS_COMP) || 0.6) * moon.amp) { st = 4; stStart = i; }
   } else if (st === 4) {
     // M: two upper peaks with retracement between
     const peaks = [];
@@ -159,6 +160,8 @@ if (seqs.length) {
   console.log(`  HL formed within 5 bars: ${seqs.filter(s => s.hlFormed).length}/${seqs.length} · vol>1x at entry: ${seqs.filter(s => +s.volState > 1).length}/${seqs.length}`);
   const gated = stats(seqs.filter(s => +s.volState >= 1.2));
   if (gated) console.log(`  [vol≥1.2x subset] n=${gated.n} · fwd5 ${gated.fwd5.toFixed(2)}% fwd10 ${gated.fwd10.toFixed(2)}% fwd20 ${gated.fwd20.toFixed(2)}% · MFE med ${gated.mfeMed.toFixed(2)}% worst ${gated.mfeWorst.toFixed(2)}% · MAE worst ${gated.maeWorst.toFixed(2)}% · HL ${gated.hl}/${gated.n}`);
+  const pre = seqs.filter(s => s.entryDate < '2024-01-01'), post = seqs.filter(s => s.entryDate >= '2024-01-01');
+  console.log(`  CONFIG ${TF} rsi=${RP} phaseMax=${MAX_PHASE} comp=${Number(process.env.H6RS_COMP) || 0.6} | n=${seqs.length} fwd20med=${pct(seqs.map(s => s.fwd20), .5).toFixed(2)} mfeP25=${pct(seqs.map(s => s.mfe), .25).toFixed(2)} | learn(<2024) n=${pre.length} fwd20med=${pct(pre.map(s => s.fwd20), .5).toFixed(2)} | check(2024+) n=${post.length} fwd20med=${pct(post.map(s => s.fwd20), .5).toFixed(2)} mfeP25=${pct(post.map(s => s.mfe), .25).toFixed(2)}`);
 }
 writeFileSync(path.resolve(HERE, '..', 'server', 'data', `h6rs-${symbol}-${TF}.json`), JSON.stringify({ symbol, tf: TF, rules: 'frozen-v1: RSI14 40/55, pivots, comp 0.6xMoon', entries: seqs }, null, 1));
 console.log(`\nreport → server/data/h6rs-${symbol}-${TF}.json`);
