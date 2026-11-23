@@ -57,6 +57,13 @@ const ATR_STOP_MULT = 1.0;
 const ATR_TGT1_MULT = 1.5;
 const ATR_TGT2_MULT = 2.5;
 const QUALITY_YES = 0.65;
+// Index policy (owner-approved 2026-11-23): indices move smaller than stocks, so the
+// early move gate and the model quality floor are relaxed for them, and expiry-day
+// (0-DTE) index chains stay cardable — the expiry-day cut is exactly what he trades.
+const INDEX_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCPNIFTY', 'BANKEX', 'SENSEX50', 'NIFTYNXT50', 'FOCIT']);
+const MOVE_GATE = Number(process.env.ADVISOR_MOVE_GATE) || 1.5;
+const INDEX_MOVE_GATE = Number(process.env.ADVISOR_INDEX_MOVE_GATE) || 0.7;
+const INDEX_QUALITY_YES = Number(process.env.ADVISOR_INDEX_QUALITY) || 0.5;
 const PICK_MIN = 0.5;
 // The owner reads the whole history, not just the last fifty: the store keeps
 // a large tail (env-tunable) and never evicts an unresolved card.
@@ -131,13 +138,16 @@ const NEXT_EXPIRY_DTE = Number(process.env.ADVISOR_NEXT_EXPIRY_DTE) || 3;
  * offers no liquid candidate at all (dust OI/volume or wide spreads) but the
  * next one does — otherwise a tradeable monthly sits unused (AMBUJACEM).
  */
-export function chooseChain(series, now = Date.now()) {
+export function chooseChain(series, now = Date.now(), symbol = null) {
   const next = series?.next;
   if (!next || typeof next.e !== 'string' || typeof series?.e !== 'string') return series;
   const expiryAt = Date.parse(`${series.e}T15:30:00+05:30`);
   if (!Number.isFinite(expiryAt)) return series;
   const merged = { ...series, e: next.e, sp: next.sp, pc: next.pc, atm: next.atm, r: next.r, t: next.t ?? series.t, tp: next.tp ?? series.tp };
   const dte = (expiryAt - now) / (24 * 60 * 60_000);
+  // Index expiry-day exception: inside 1 DTE an index stays on its own expiry —
+  // the expiry-day cut is exactly the trade he wants carded (theta warning still renders).
+  if (INDEX_SYMBOLS.has(symbol) && dte <= 1) return series;
   if (dte <= NEXT_EXPIRY_DTE) return merged;
   const hasCandidate = chain => candidateStrikes(chain, 'bullish').length > 0 || candidateStrikes(chain, 'bearish').length > 0;
   if (hasCandidate(series) || !hasCandidate(merged)) return series;
@@ -244,7 +254,7 @@ export function normalizeQuality(raw) {
 }
 
 /** The advisor's decision table — pure. */
-export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, pickMin = PICK_MIN } = {}) {
+export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, pickMin = PICK_MIN, indexQualityYes = INDEX_QUALITY_YES } = {}) {
   const cards = [];
   const skipped = [];
   for (const watch of watches) {
@@ -253,8 +263,9 @@ export function advisorDecisions(watches, answers, { qualityYes = QUALITY_YES, p
     const pick = answers?.[`strike_${symbol}`];
     const candidates = watch.candidates ?? [];
     const chosen = candidates.find(c => c.id === pick?.choice);
-    if (!(quality >= qualityYes) || !chosen || (pick?.probabilities?.[pick.choice] ?? 0) < pickMin) {
-      skipped.push({ symbol, reason: !(quality >= qualityYes) ? `quality ${quality == null ? 'unknown' : `${Math.round(quality * 100)}%`}` : 'strike pick not decisive' });
+    const gate = INDEX_SYMBOLS.has(symbol) ? indexQualityYes : qualityYes;
+    if (!(quality >= gate) || !chosen || (pick?.probabilities?.[pick.choice] ?? 0) < pickMin) {
+      skipped.push({ symbol, reason: !(quality >= gate) ? `quality ${quality == null ? 'unknown' : `${Math.round(quality * 100)}%`}` : 'strike pick not decisive' });
       continue;
     }
     if (!(chosen.ltp > MIN_ENTRY_PREMIUM)) { skipped.push({ symbol, reason: 'premium too thin' }); continue; }
@@ -345,7 +356,7 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
   const out = [];
   for (const mover of marketMovers(market)) {
     if (out.length >= max) break;
-    if (!Number.isFinite(mover.changePct) || Math.abs(mover.changePct) < 1.5) continue;
+    if (!Number.isFinite(mover.changePct) || Math.abs(mover.changePct) < (INDEX_SYMBOLS.has(mover.symbol) ? INDEX_MOVE_GATE : MOVE_GATE)) continue;
     const oiPct = Number.isFinite(mover.oiPct) ? mover.oiPct : 0;
     const strong = oiPct >= 5;
     const momentum = oiPct < 2;
@@ -386,7 +397,7 @@ export function earlyCards(market, date, now, existing = [], { max = 2, minExpec
     const key = `${mover.symbol}|${date}`;
     if (seen.has(key)) continue;
     const series = (market.series ?? []).find(item => item?.s === mover.symbol);
-    const chain = chooseChain(series, now);
+    const chain = chooseChain(series, now, mover.symbol);
     if (!chain) continue;
     const candidate = candidateStrikes(chain, bias)[0];
     if (!candidate || !(candidate.ltp > MIN_ENTRY_PREMIUM)) continue;
@@ -813,7 +824,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
   const seriesFor = symbol => (market?.series ?? []).find(item => item?.s === symbol) ?? null;
   const prepared = [];
   for (const watch of watches) {
-    const series = chooseChain(seriesFor(watch.symbol), now);
+    const series = chooseChain(seriesFor(watch.symbol), now, watch.symbol);
     const candidates = candidateStrikes(series, watch.bias);
     if (!candidates.length) continue;
     const spot = Number.isFinite(series?.sp) ? series.sp : null;
@@ -840,7 +851,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
   if (!prepared.length) return { skipped: 'no readable chains on watched symbols' };
   try {
     const questions = {};
-    const spotOf = p => chooseChain(seriesFor(p.symbol), now) ?? {};
+    const spotOf = p => chooseChain(seriesFor(p.symbol), now, p.symbol) ?? {};
     const state = { chain: Object.fromEntries(prepared.map(p => {
       const s = spotOf(p);
       return [p.symbol, {
@@ -964,7 +975,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       if (premium <= prev.sl) slHitLive.add(`${prev.symbol}|${prev.date}`);
       if (!hit || premium < prev.entry) continue;
       const series = (market.series ?? []).find(item => item?.s === prev.symbol);
-      const chain = chooseChain(series, now);
+      const chain = chooseChain(series, now, prev.symbol);
       if (!chain) continue;
       const candidate = candidateStrikes(chain, prev.bias ?? 'bullish')[0];
       if (!candidate || !(candidate.ltp > MIN_ENTRY_PREMIUM)) continue;
