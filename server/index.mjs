@@ -37,6 +37,7 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -1071,8 +1072,19 @@ const SECURITY_HEADERS = {
 };
 
 function send(res, status, body, type = 'application/json', extra = {}) {
-  res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': type, 'Cache-Control': 'no-store', ...extra });
-  res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
+  let payload = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
+  const headers = { ...SECURITY_HEADERS, 'Content-Type': type, 'Cache-Control': 'no-store', ...extra };
+  // JSON payloads reach megabytes (market ~2MB, observations ~220KB); gzip shrinks them ~10x,
+  // which is the whole client-perceived load time on the tunnel.
+  const accept = String(res.req?.headers?.['accept-encoding'] || '');
+  if (accept.includes('gzip') && typeof payload === 'string' && payload.length > 1024) {
+    headers['Content-Encoding'] = 'gzip';
+    headers.Vary = [headers.Vary, 'Accept-Encoding'].filter(Boolean).join(', ');
+    payload = zlib.gzipSync(payload);
+    headers['Content-Length'] = payload.length;
+  }
+  res.writeHead(status, headers);
+  res.end(payload);
 }
 
 function sendArchiveReadError(res, error) {
