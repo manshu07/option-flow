@@ -214,6 +214,34 @@ async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
   return { sent };
 }
 
+// Level-hit alerts: each OPEN card's live premium is checked on every market rebuild;
+// SL / TGT1 / TGT2 crossings fire exactly once per card+level per session. The message
+// carries no OI/build-up content — subscribers get the same stripped hit text as the owner.
+const levelHitsFired = new Set();
+async function checkLevelHits(session, at) {
+  try {
+    const store = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'observations.json'), 'utf8'));
+    const cards = (store.cards ?? []).filter(c => c.date === session && (!c.outcome || c.outcome.status === 'open'));
+    const ist = new Date(at + 330 * 60_000).toTimeString().slice(0, 5);
+    for (const card of cards) {
+      if (typeof card.expiry !== 'string' || !Number.isFinite(card.entry)) continue;
+      const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
+      const ltp = provider.ticksFor?.({ symbols: [], options: [{ symbol: card.symbol, strike: card.strike, side: card.side, expiry: card.expiry }] })?.options?.[optionKey]?.ltp;
+      if (!Number.isFinite(ltp)) continue;
+      for (const [key, label, icon] of [['sl', 'SL HIT', '🔻'], ['tgt1', 'TGT1 HIT', '🎯'], ['tgt2', 'TGT2 HIT', '🏁']]) {
+        const fireKey = `${card.id}|${key}`;
+        if (levelHitsFired.has(fireKey)) continue;
+        const hit = key === 'sl' ? ltp <= card.sl : ltp >= card[key];
+        if (!Number.isFinite(card[key]) || !hit) continue;
+        levelHitsFired.add(fireKey);
+        await sendOwnerAndSubscribers(
+          `${icon} <b>${label}</b> — ${card.symbol} ${card.strike}${card.side}\nPremium ₹${ltp.toFixed(2)} · level ₹${Number(card[key]).toFixed(2)} · entry ₹${Number(card.entry).toFixed(2)} · ${ist} IST`
+        );
+      }
+    }
+  } catch (error) { log('level-hit check failed:', String(error?.message || error)); }
+}
+
 /** The newest stored minute snapshot for a session, or null when nothing was captured. */
 function lastStoredMinuteFile(session) {
   const dir = path.join(SCAN_DIR, session);
@@ -270,6 +298,7 @@ async function build() {
   const clock = now();
   const session = getLatestTradingSessionDate(new Date(clock));
   pcrHistory.resetForSession(session);
+  levelHitsFired.clear();
   // Post-close fast path: the market is shut and nothing is moving — serve the
   // session's last built snapshot (the real closing state, written by every
   // successful build) instead of crawling 215 chains through the paced REST
@@ -358,6 +387,7 @@ async function build() {
       : readMinutes(session);
     const file = { ...enriched.market, minutes };
     state.latest = file;
+    checkLevelHits(session, at)?.catch?.(() => {});
     state.latestJson = JSON.stringify(file);
     fs.mkdirSync(SCAN_DIR, { recursive: true });
     fs.writeFileSync(path.join(SCAN_DIR, 'latest.json'), state.latestJson);
