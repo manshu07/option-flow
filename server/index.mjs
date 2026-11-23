@@ -7,6 +7,7 @@
  *   GET /api/futures/<SYMBOL>?session=YYYY-MM-DD   its futures months and 1-minute candles
  *   GET /api/orb                     the ORB scanner list for the current session
  *   GET /api/participation           near vs next expiry OI shifts (rollover view)
+ *   GET /api/pcr                     current near-chain PCR and trailing 15m shift
  *   GET /api/replay/<date>/manifest  captured market minutes and futures coverage
  *   GET /api/replay/<date>/futures/<SYMBOL>?asOf=HHMM  persisted futures at a cursor
  *   GET /api/strikes/<SYMBOL>?date=&asOf=HHMM      one underlying's per-strike premium
@@ -58,7 +59,7 @@ import { gapOpenDue, gapOpenMessage } from './gapOpen.mjs';
 import { weeklyReviewDue, weeklyReviewMessage } from './weeklyReview.mjs';
 import { capturePreviousOiBaseline, fillMissingPrevOi } from './oiBaseline.mjs';
 import { isFullOptionChainSnapshot, persistFullOptionChainSnapshots } from './optionChainSnapshots.mjs';
-import { createPcrHistory } from './pcrHistory.mjs';
+import { createPcrHistory, pcrSnapshot } from './pcrHistory.mjs';
 import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
@@ -1235,6 +1236,12 @@ async function handle(req, res) {
     const limit = Math.max(0, Math.min(300, Number(url.searchParams.get('limit')) || 0));
     const result = participation(state.latest.series, { limit });
     return send(res, 200, { at: result.at, session: state.latest.date, totals: result.totals, rows: result.rows });
+  }
+
+  if (p === '/api/pcr') {
+    if (!state.latest) return send(res, 503, { error: 'The first market file is still being built.' }, 'application/json', { 'Retry-After': '5' });
+    const ts = Number.isFinite(state.latest.at) ? state.latest.at : now();
+    return send(res, 200, pcrSnapshot(state.latest.series, ts, (symbol, at) => pcrHistory.shiftFor(symbol, at)));
   }
 
   if (p === '/api/observations') return send(res, 200, { cards: loadObservations(path.join(DATA_DIR, 'observations.json')) });

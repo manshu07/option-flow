@@ -124,6 +124,20 @@ describe('buildMarketFlow', () => {
     expect(flow.futures.latestAt).toBe(OPEN + 60 * MINUTE);
   });
 
+  it('joins the server PCR only to the identical market build and falls back to captured OI on a mismatch', () => {
+    const flow = buildMarketFlow(file, reads, universe, SECTORS, settings, {
+      pcrBySymbol: new Map([
+        ['AAA', { symbol: 'AAA', pcr: 0.87, pcrShift15m: -4, ts: file.at }],
+        ['BBB', { symbol: 'BBB', pcr: 1.2, pcrShift15m: 8, ts: file.at + 1 }],
+      ]),
+    });
+    const by = Object.fromEntries(flow.stocks.map(stock => [stock.symbol, stock]));
+    expect(by.AAA.options.pcr).toBe(0.87);
+    expect(by.AAA.pcrShift15m).toBe(-4);
+    expect(by.BBB.options.pcr).toBeCloseTo(0.75, 4);
+    expect(by.BBB.pcrShift15m).toBeNull();
+  });
+
   it('keeps the build-up columns to futures that were read, and ranks each side by the size of the move, futures before spot', () => {
     const flow = buildMarketFlow(file, reads, universe, SECTORS, settings);
     expect(flow.buckets.LONG_BUILD.map(stock => stock.symbol)).toEqual(['AAA']);

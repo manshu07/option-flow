@@ -44,6 +44,28 @@ export async function fetchMarket(signal?: AbortSignal): Promise<ContractMarket 
   return parseMarketFile(await res.json());
 }
 
+export interface PcrContextRow {
+  symbol: string;
+  pcr: number | null;
+  pcrShift15m: number | null;
+  ts: number;
+}
+
+/** Live server-side near-chain PCR history, sampled with the current market file. */
+export async function fetchPcrContext(signal?: AbortSignal): Promise<PcrContextRow[]> {
+  const res = await fetch(`${API}/api/pcr`, { cache: 'no-store', signal });
+  if (!res.ok) throw new Error(`PCR ${res.status}`);
+  const body = await res.json();
+  if (!Array.isArray(body)) return [];
+  return body.filter((row): row is PcrContextRow => row && typeof row.symbol === 'string' && row.symbol.length > 0
+    && Number.isFinite(row.ts)).map(row => ({
+    symbol: row.symbol,
+    pcr: typeof row.pcr === 'number' && Number.isFinite(row.pcr) && row.pcr >= 0 ? row.pcr : null,
+    pcrShift15m: typeof row.pcrShift15m === 'number' && Number.isFinite(row.pcrShift15m) ? row.pcrShift15m : null,
+    ts: row.ts,
+  }));
+}
+
 export async function fetchMarketMinute(date: string, minute: string, signal: AbortSignal | undefined, source: ReplaySource): Promise<ContractMarket | null> {
   const checkedSource = validateReplaySource(source);
   const root = checkedSource === 'archive' ? '/api/archive' : '/api/market';

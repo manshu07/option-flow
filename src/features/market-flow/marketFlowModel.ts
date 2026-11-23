@@ -39,6 +39,13 @@ export interface FlowSettings {
   lines: 'all' | 'band';
 }
 
+export interface PcrContextRow {
+  symbol: string;
+  pcr: number | null;
+  pcrShift15m: number | null;
+  ts: number;
+}
+
 /** The move a window must show before an underlying is called bullish or bearish rather than rangebound. */
 export const FLOOR_DEFAULT: Record<FlowWindow, number> = { day: 0.5, '1h': 0.3, '15m': 0.15 };
 export const NAMED_COUNTS = [3, 5, 8] as const;
@@ -149,6 +156,8 @@ export interface FlowStock {
     callOiAdded: number | null;
     pcr: number | null;
   };
+  /** Server PCR-history shift, joined only to the same market build timestamp. */
+  pcrShift15m?: number | null;
   support: FlowLevel | null;
   support2: FlowLevel | null;
   resistance: FlowLevel | null;
@@ -204,6 +213,8 @@ export interface FlowBuildOptions {
   failed?: ReadonlySet<string>;
   /** The clock, for which expiries have settled. */
   now?: number;
+  /** Same-build /api/pcr readings; absent symbols fall back to market-file OI. */
+  pcrBySymbol?: ReadonlyMap<string, PcrContextRow>;
 }
 
 export const BUCKET_SIDE: Record<FlowBucket, Exclude<FlowSide, 'rangebound'>> = {
@@ -426,6 +437,8 @@ export function buildMarketFlow(
     const futDay = window === 'day' ? fut : read('day');
     const futHour = window === '1h' ? fut : read('1h');
     const futQuarter = window === '15m' ? fut : read('15m');
+    const pcrReading = options.pcrBySymbol?.get(item.symbol);
+    const usePcrReading = pcrReading != null && pcrReading.ts === market.at;
     const spotChangePct = pct(series.spot, series.spotPrevClose);
     const changePct = fut ? fut.priceChangePct : window === 'day' ? spotChangePct : null;
     const source: FlowStock['source'] = fut ? 'futures' : changePct != null ? 'spot' : null;
@@ -447,7 +460,8 @@ export function buildMarketFlow(
       lot: series.lot, expiry: series.expiry, spot: series.spot, prevClose: series.spotPrevClose, spotChangePct,
       fut, futDay, futHour, futQuarter, futures: futuresState,
       changePct, source, oiChangePct: fut?.oiChangePct ?? null, buildUp: fut?.buildUp ?? null, side,
-      options: { putOi, callOi, putOiAdded, callOiAdded, pcr: callOi > 0 ? putOi / callOi : null },
+      options: { putOi, callOi, putOiAdded, callOiAdded, pcr: usePcrReading ? pcrReading.pcr : callOi > 0 ? putOi / callOi : null },
+      pcrShift15m: usePcrReading ? pcrReading.pcrShift15m : null,
       support, support2, resistance, resistance2,
       zone: futuresState === 'read' ? zoneRead.zone : null,
       profile: oiProfile(series),

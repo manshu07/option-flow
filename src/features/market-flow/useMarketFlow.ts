@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getThemeDirectory, type Underlying } from '@/lib/underlyings';
-import { useFuturesFeed, useMarketFeed } from './feed';
+import { fetchPcrContext, useFuturesFeed, useMarketFeed, type PcrContextRow } from './feed';
 import { buildMarketFlow, nearSeries, type FlowSettings, type MarketFlow } from './marketFlowModel';
 
 /** While the futures arrive the board is rebuilt at most this often, so a burst of arrivals is one redraw. */
@@ -21,6 +21,20 @@ export const COMMIT_MS = 750;
 export function useMarketFlow(universe: readonly Underlying[], settings: FlowSettings) {
   const data = useMarketFeed();
   const market = data.market;
+  const [pcrSnapshot, setPcrSnapshot] = useState<{ ts: number | null; bySymbol: ReadonlyMap<string, PcrContextRow> }>({ ts: null, bySymbol: new Map() });
+  const marketAt = market?.at;
+  useEffect(() => {
+    if (marketAt == null) return undefined;
+    let current = true;
+    const controller = new AbortController();
+    fetchPcrContext(controller.signal).then(rows => {
+      if (!current) return;
+      setPcrSnapshot({ ts: rows[0]?.ts ?? null, bySymbol: new Map(rows.map(row => [row.symbol, row])) });
+    }).catch(() => {
+      if (current) setPcrSnapshot({ ts: null, bySymbol: new Map() });
+    });
+    return () => { current = false; controller.abort(); };
+  }, [marketAt]);
   const sectorLabels = useMemo(() => {
     const labels = getThemeDirectory()?.sectors ?? {};
     return Object.fromEntries(Object.entries(labels).map(([id, entry]) => [id, entry.label])) as Record<string, string>;
@@ -54,13 +68,16 @@ export function useMarketFlow(universe: readonly Underlying[], settings: FlowSet
   const lastFeatured = useRef<MarketFlow['featured'] | null>(null);
   const flow: MarketFlow | null = useMemo(() => {
     const built = market
-      ? buildMarketFlow(market, committed.series, universe, sectorLabels, { window: win, scope, floorPct, named: null, lines: 'all' }, { failed: committed.failed })
+      ? buildMarketFlow(market, committed.series, universe, sectorLabels, { window: win, scope, floorPct, named: null, lines: 'all' }, {
+        failed: committed.failed,
+        pcrBySymbol: pcrSnapshot.ts === market.at ? pcrSnapshot.bySymbol : undefined,
+      })
       : null;
     if (!built) { lastFeatured.current = null; return null; }
     if (built.provisional && lastFeatured.current) return { ...built, featured: lastFeatured.current };
     if (!built.provisional) lastFeatured.current = built.featured;
     return built;
-  }, [market, committed, universe, sectorLabels, win, scope, floorPct]);
+  }, [market, committed, universe, sectorLabels, win, scope, floorPct, pcrSnapshot]);
 
   return {
     flow,

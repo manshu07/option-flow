@@ -97,11 +97,11 @@ function finite(value: unknown): value is number {
 }
 
 /** One canonical PCR label shared by the app card and Telegram/SVG copies. */
-export function formatPcrContext(pcrAtEntry: unknown, pcrShift: unknown): string {
+export function formatPcrContext(pcrAtEntry: unknown, pcrShift: unknown, { includeWindow = true }: { includeWindow?: boolean } = {}): string {
   const pcr = finite(pcrAtEntry) && pcrAtEntry >= 0 ? pcrAtEntry.toFixed(2) : '—';
   const shift = finite(pcrShift)
-    ? `${pcrShift < 0 ? '−' : pcrShift > 0 ? '+' : ''}${Math.round(Math.abs(pcrShift))}% 15m`
-    : '— 15m';
+    ? `${pcrShift < 0 ? '−' : pcrShift > 0 ? '+' : ''}${Math.round(Math.abs(pcrShift))}%${includeWindow ? ' 15m' : ''}`
+    : `—${includeWindow ? ' 15m' : ''}`;
   return `PCR ${pcr} (${shift})`;
 }
 

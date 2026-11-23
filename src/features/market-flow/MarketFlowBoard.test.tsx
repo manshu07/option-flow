@@ -81,6 +81,40 @@ describe('the desktop board', () => {
     expect(tile('BAJAJ-AUTO').querySelector('.mf-tile__rk')!.textContent).toBe('1');
   });
 
+  it('shows same-build PCR beside the spot chip, amber at one or above and hidden without chain OI', () => {
+    const base = build(3, 1);
+    const low = {
+      ...base.bullish[0],
+      source: 'spot' as const,
+      options: { ...base.bullish[0].options, pcr: 0.87 },
+      pcrShift15m: -4,
+    };
+    const high = {
+      ...base.bullish[1],
+      options: { ...base.bullish[1].options, pcr: 1.2 },
+      pcrShift15m: 3,
+    };
+    const missing = {
+      ...base.bullish[2],
+      options: { ...base.bullish[2].options, pcr: null },
+      pcrShift15m: null,
+    };
+    const flow = {
+      ...base,
+      stocks: [low, high, missing, ...base.bearish],
+      bullish: [low, high, missing],
+      featured: { bullish: [low, high], bearish: base.featured.bearish },
+    };
+    render(board(flow, 'desktop'));
+
+    expect(tile(low.symbol)).toHaveTextContent('spot');
+    expect(tile(low.symbol)).toHaveTextContent('PCR 0.87 (−4%)');
+    expect(tile(low.symbol).querySelector('.mf-tile__pcr')).not.toHaveClass('is-high');
+    expect(tile(high.symbol)).toHaveTextContent('PCR 1.20 (+3%)');
+    expect(tile(high.symbol).querySelector('.mf-tile__pcr')).toHaveClass('is-high');
+    expect(tile(missing.symbol).querySelector('.mf-tile__pcr')).toBeNull();
+  });
+
   it('uses the true minus, no advice words, and no native tooltips', () => {
     const { container } = render(board(build(3, 2), 'desktop'));
     expect(container.querySelector('.mf-half.is-bearish .mf-num.is-down')!.textContent).toBe('−1.50%');

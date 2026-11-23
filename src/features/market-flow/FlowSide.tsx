@@ -5,6 +5,7 @@ import { SymbolMark } from '@/components/common/SymbolMark';
 import { demoFeatured } from './demoFeatured';
 import { BuildMark, buildUpText, ChangeText, DotMeter, heatStyle, pctText, TickFlash, signedText, Spark, toneOf } from './FlowParts';
 import { levelText, type FlowStock } from './marketFlowModel';
+import { formatPcrContext } from '../observations/observationModel';
 
 export type HalfSide = 'bullish' | 'bearish';
 
@@ -98,6 +99,7 @@ export const FlowHalf = memo(function FlowHalf({ side, stocks, featured, holding
 
 const FlowTile = memo(function FlowTile({ stock, first, side, total }: { stock: FlowStock; first: boolean; side: HalfSide; total: number }) {
   const spot = stock.source !== 'futures';
+  const pcr = stock.options.pcr;
   const label = `${stock.symbol}, ${WORD[side]} ${pctText(Math.abs(stock.changePct ?? 0)).replace(/^\+/, '')}${spot ? ' on the spot' : ''}, ${buildUpText(stock)}, rank ${stock.rank} of ${total}`;
   return (
     <button type="button" className={`mf-tile ${toneOf(stock)}${spot ? ' is-spot' : ''}`} data-tile="" data-sym={stock.symbol} data-sector={stock.sector}
@@ -111,7 +113,10 @@ const FlowTile = memo(function FlowTile({ stock, first, side, total }: { stock: 
       <span className="mf-tile__row">
         <ChangeText value={stock.changePct} className="mf-tile__pct" />
         <BuildMark stock={stock} />
-        <span className="mf-tile__spark">{spot ? <small>spot</small> : <Spark stock={stock} width={34} height={12} />}</span>
+        <span className="mf-tile__spark">
+          {spot ? <small>spot</small> : <Spark stock={stock} width={34} height={12} />}
+          {pcr != null && Number.isFinite(pcr) && pcr >= 0 && <small className={`mf-tile__pcr${pcr >= 1 ? ' is-high' : ''}`}>{formatPcrContext(pcr, stock.pcrShift15m, { includeWindow: false })}</small>}
+        </span>
       </span>
     </button>
   );

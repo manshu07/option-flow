@@ -1,7 +1,7 @@
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { marketSnapshot } from '../../../tests/e2e/fixtures/replay-fixture';
-import { clearFuturesCache, fetchMarketMinute, fetchReplayDays, fetchReplayFutures, fetchReplayManifest, getCachedFutures, putCachedFutures, sourceForDay, useFuturesFeed } from './feed';
+import { clearFuturesCache, fetchMarketMinute, fetchPcrContext, fetchReplayDays, fetchReplayFutures, fetchReplayManifest, getCachedFutures, putCachedFutures, sourceForDay, useFuturesFeed } from './feed';
 import type { FeedStatus } from './feed';
 
 const DATE = '2026-10-30';
@@ -61,6 +61,28 @@ describe('replay feed routes', () => {
   it('does not issue a live request for an invalid direct source', async () => {
     await expect(fetchReplayManifest(DATE, undefined, 'recorded' as 'live')).rejects.toThrow('Invalid replay source');
     expect(request).not.toHaveBeenCalled();
+  });
+});
+
+describe('live PCR context endpoint', () => {
+  const request = vi.fn();
+  beforeEach(() => {
+    vi.stubGlobal('fetch', request);
+    request.mockReset();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reads /api/pcr and keeps nullable ratios/shifts safe', async () => {
+    request.mockResolvedValue(jsonResponse([
+      { symbol: 'NIFTY', pcr: 0.87, pcrShift15m: -4, ts: 1234 },
+      { symbol: 'BANKNIFTY', pcr: NaN, pcrShift15m: null, ts: 1234 },
+      { symbol: '', pcr: 1, pcrShift15m: 0, ts: 1234 },
+    ]));
+    expect(await fetchPcrContext()).toEqual([
+      { symbol: 'NIFTY', pcr: 0.87, pcrShift15m: -4, ts: 1234 },
+      { symbol: 'BANKNIFTY', pcr: null, pcrShift15m: null, ts: 1234 },
+    ]);
+    expect(request).toHaveBeenCalledWith('/api/pcr', expect.objectContaining({ cache: 'no-store' }));
   });
 });
 

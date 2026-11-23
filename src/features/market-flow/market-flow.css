@@ -158,8 +158,10 @@
 .mf-tile__rk { flex: none; font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-muted); }
 .mf-tile__pct { flex: none; font-size: 12px; line-height: 1.25; }
 .mf-tile .mf-mark { flex: none; }
-.mf-tile__spark { flex: 1 1 auto; display: flex; justify-content: flex-end; min-width: 0; }
+.mf-tile__spark { flex: 1 1 auto; display: flex; align-items: center; justify-content: flex-end; gap: 3px; min-width: 0; }
 .mf-tile__spark small { font-size: 10.5px; color: var(--text-muted); }
+.mf-tile__pcr { flex: none; max-width: 100%; overflow: hidden; padding: 1px 3px; border-radius: 3px; background: color-mix(in srgb, var(--text-muted) 8%, transparent); font-size: 8px !important; line-height: 1.2; white-space: nowrap; color: var(--text-muted) !important; }
+.mf-tile__pcr.is-high { color: #a86400 !important; background: color-mix(in srgb, #d28a20 14%, transparent); }
 .mf-tile.is-spot { background: transparent; border: 1px dashed var(--flow-hair); }
 .mf-tile.is-spot .mf-tile__sym { color: var(--text-muted); }
 .mf-tile:hover { border-color: color-mix(in srgb, var(--text) 30%, transparent); }

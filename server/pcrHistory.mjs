@@ -14,6 +14,19 @@ export function pcrForNearSeries(series) {
   return Number.isFinite(pcr) ? pcr : null;
 }
 
+/** Current-chain PCR snapshot for the read-only /api/pcr response. */
+export function pcrSnapshot(seriesList, at, shiftFor) {
+  if (!Number.isFinite(at)) return [];
+  return (Array.isArray(seriesList) ? seriesList : []).filter(series => typeof series?.s === 'string' && series.s).map(series => {
+    let pcrShift15m = null;
+    try {
+      const shift = shiftFor?.(series.s, at);
+      if (Number.isFinite(shift)) pcrShift15m = shift;
+    } catch { /* missing history is represented as null */ }
+    return { symbol: series.s, pcr: pcrForNearSeries(series), pcrShift15m, ts: at };
+  });
+}
+
 /** In-memory, session-scoped near-chain PCR history for early-card filtering. */
 export function createPcrHistory(limit = DEFAULT_LIMIT) {
   const maxPoints = Number.isSafeInteger(limit) && limit > 0 ? limit : DEFAULT_LIMIT;

@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { createPcrHistory, pcrForNearSeries } from './pcrHistory.mjs';
+import { createPcrHistory, pcrForNearSeries, pcrSnapshot } from './pcrHistory.mjs';
 
 const series = (symbol: string, rows: unknown[][]) => ({ s: symbol, r: rows });
 
 describe('session PCR history', () => {
+  it('builds one API row per captured series with current near PCR and the injected 15-minute shift', () => {
+    const at = 12_345;
+    const rows = pcrSnapshot([
+      series('NIFTY', [[25_000, 0, 1, 1, 100, null], [25_000, 1, 1, 1, 87, null]]),
+      series('EMPTY', [[1, 0, 1, 1, 0, null]]),
+    ], at, symbol => symbol === 'NIFTY' ? -4.2 : null);
+    expect(rows).toEqual([
+      { symbol: 'NIFTY', pcr: 0.87, pcrShift15m: -4.2, ts: at },
+      { symbol: 'EMPTY', pcr: null, pcrShift15m: null, ts: at },
+    ]);
+  });
+
   it('uses near rows rather than next-expiry rows for the card PCR context', () => {
     const near = series('NIFTY', [[25_000, 0, 1, 1, 200, null], [25_000, 1, 1, 1, 100, null]]) as { s: string; r: unknown[][]; next?: unknown };
     near.next = { e: '2026-12-31', r: [[25_000, 0, 1, 1, 1, null], [25_000, 1, 1, 1, 9, null]] };
