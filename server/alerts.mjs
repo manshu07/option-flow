@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { sendTelegram } from './telegram.mjs';
 import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
+import { isTradingDay } from '../src/lib/marketSession.ts';
 
 /**
  * The alert engine: evaluates a rules file against each freshly built market
@@ -794,6 +795,14 @@ export async function flushScheduledDigests({ digestState, now = Date.now(), bro
   const currentMinute = istMinuteOfDay(now);
   const dueSlots = DIGEST_MINUTES.filter(minute => minute <= currentMinute && !digestState.sentSlots.has(minute));
   if (!dueSlots.length) return { sent: 0, skipped: 'not due' };
+  // A restart wipes the in-memory sentSlots: at night every past slot looks "due" and the
+  // whole EOD re-fires. Past the send window (or a non-trading day) the due slots are
+  // marked silently — marked-not-sent beats re-spamming hours later.
+  const lastSlot = DIGEST_MINUTES[DIGEST_MINUTES.length - 1] ?? 0;
+  if (!isTradingDay(now) || currentMinute > lastSlot + 45) {
+    for (const minute of dueSlots) digestState.sentSlots.add(minute);
+    return { sent: 0, skipped: 'window passed' };
+  }
 
   for (const minute of dueSlots) digestState.sentSlots.add(minute);
   const events = [...digestState.pending.values()];
