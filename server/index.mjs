@@ -398,7 +398,7 @@ async function build() {
     state.lastBuild = { at, ms: Date.now() - started, series: series.length, failed: failed.length, failedSymbols: failed.slice(0, 20), firstError };
     state.lastError = null;
     log(`market file: ${series.length} series, ${failed.length} failed, ${Date.now() - started} ms${firstError ? ` (first error: ${firstError})` : ''}`);
-    if (process.env.TELEGRAM_BOT_TOKEN) {
+    if (process.env.TELEGRAM_BOT_TOKEN && isTradingDay(at)) {
       const gapDate = gapOpenDue(at, alertDigestState.gapOpenDay ?? null);
       if (gapDate) {
         alertDigestState.gapOpenDay = gapDate;
@@ -440,7 +440,7 @@ async function build() {
     }
     // Token-expiry reminder: owner-only, once per level per session. The server
     // keeps the token it read at boot, so this is the only warning before 401s.
-    if (process.env.TELEGRAM_BOT_TOKEN) {
+    if (process.env.TELEGRAM_BOT_TOKEN && isTradingDay(at)) {
       const reminder = tokenReminder({ expiresAt: provider.health?.()?.tokenExpiresAt ?? null, now: at });
       const key = reminder && `${session}|${reminder.level}`;
       if (reminder && tokenWatch.sentFor !== key) {
