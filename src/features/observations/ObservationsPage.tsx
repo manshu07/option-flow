@@ -697,7 +697,40 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
             })}
           </div>
       )}
-      {view === 'table' && pageData && pageData.total > 0 && <ObservationTable cards={pageData.items} optionTicks={optionTicks} />}
+      {view === 'table' && pageData && pageData.total > 0 && (clubMode === 'flat'
+        ? <ObservationTable cards={pageData.items} optionTicks={optionTicks} />
+        : <div className="observations__list">
+          {clubs.map(group => {
+            const newest = group.cards[0];
+            const optionKey = `${newest.symbol}|${newest.strike}|${newest.side}|${newest.expiry}`;
+            const zone = zoneFor(newest, optionTicks[optionKey]?.ltp, newest.id);
+            const expanded = clubSections[group.symbol] ?? true;
+            const sectionId = `observations-club-table-${encodeURIComponent(group.symbol)}`;
+            return (
+              <section className="observations__club" key={group.symbol} data-testid="observations-club-section">
+                <button
+                  type="button"
+                  className="obs-card__head"
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid var(--mf-line, #c9c9cf)', borderRadius: 9, background: 'var(--mf-panel, #fff)', textAlign: 'left', cursor: 'pointer' }}
+                  aria-expanded={expanded}
+                  aria-controls={sectionId}
+                  onClick={() => setClubSections(current => ({ ...current, [group.symbol]: !expanded }))}
+                >
+                  <span className="obs-card__symbol">{group.symbol}</span>
+                  <span
+                    className={`obs-card__bias ${newest.bias === 'bullish' ? 'is-up' : 'is-down'}${zone ? ` obs-card--zone-${zone}` : ''}`}
+                    data-testid="observations-club-count"
+                  >({group.cards.length})</span>
+                  <span>— {clubOutcomeSummary(group.cards)}</span>
+                  <span aria-hidden="true" style={{ marginLeft: 'auto' }}>{expanded ? '▾' : '▸'}</span>
+                </button>
+                {expanded && <div id={sectionId} className="observations__club-table">
+                  <ObservationTable cards={group.cards} optionTicks={optionTicks} />
+                </div>}
+              </section>
+            );
+          })}
+        </div>)}
       {pageData && pageData.total > 0 && (
         <nav className="observations__pagination" aria-label="Observation pagination">
           <button type="button" onClick={() => setPage(Math.max(1, pageData.page - 1))} disabled={pageData.page <= 1}>‹ Prev</button>
