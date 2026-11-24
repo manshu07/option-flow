@@ -653,6 +653,82 @@ describe('MCX evening watchlist', () => {
     expect(log.mock.calls.filter(([message]) => String(message).includes('levels file missing'))).toHaveLength(1);
     expect(JSON.parse(readFileSync(statePath, 'utf8')).warnings.levelsMissing).toBe(true);
   });
+
+  it('skips expired-token, empty-success, and 429 responses and rate-limits each log', async () => {
+    const log = vi.fn();
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ status: 'success', data: {} }) })
+      .mockResolvedValueOnce({ ok: false, status: 429 })
+      .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce({ ok: false, status: 429 });
+    const options = { fetchImpl, log, accessToken: 'test-token', clientId: 'test-client', securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410' };
+
+    await expect(mcxWatchPoll(pollAt, options)).resolves.toMatchObject({ skipped: 'token rejected' });
+    await expect(mcxWatchPoll(pollAt + 60_000, options)).resolves.toMatchObject({ skipped: 'empty response' });
+    await expect(mcxWatchPoll(pollAt + 120_000, options)).resolves.toMatchObject({ skipped: 'rate limited' });
+    await expect(mcxWatchPoll(pollAt + 180_000, options)).resolves.toMatchObject({ skipped: 'token rejected' });
+    await expect(mcxWatchPoll(pollAt + 240_000, options)).resolves.toMatchObject({ skipped: 'rate limited' });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect(log.mock.calls.filter(([message]) => String(message).includes('token expired/rejected'))).toHaveLength(1);
+    expect(log.mock.calls.filter(([message]) => String(message).includes('quote response empty'))).toHaveLength(1);
+    expect(log.mock.calls.filter(([message]) => String(message).includes('rate-limited'))).toHaveLength(1);
+  });
+
+  it('resets persisted fired latches at the next trading date', async () => {
+    const dir = tempDir();
+    const levelsPath = join(dir, 'mcx-levels.json');
+    const statePath = join(dir, 'mcx-brief-state.json');
+    writeFileSync(levelsPath, JSON.stringify([{ symbol: 'GOLD', label: 'breakout', price: 127000, dir: 'up' }]));
+    writeFileSync(statePath, JSON.stringify({ dayKey: '2026-11-24', sentBrief: true, fired: { 'GOLD|breakout': true } }));
+    const sendLevels = vi.fn(async () => ({ sent: true }));
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'success', data: { MCX_COMM: { '495213': { last_price: 127000 } } } }),
+    }));
+
+    const result = await mcxWatchPoll(Date.parse('2026-11-25T10:00:00+05:30'), {
+      fetchImpl, sendLevels, levelsPath, statePath, accessToken: 'test-token', clientId: 'test-client',
+      log: vi.fn(), securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410',
+    });
+
+    expect(result.fired.map(item => `${item.symbol}|${item.label}`)).toEqual(['GOLD|breakout']);
+    expect(sendLevels).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ dayKey: '2026-11-25', sentBrief: false, fired: { 'GOLD|breakout': true } });
+  });
+
+  it('logs malformed levels once and continues sending later crossings after one send fails', async () => {
+    const dir = tempDir();
+    const levelsPath = join(dir, 'mcx-levels.json');
+    const statePath = join(dir, 'mcx-brief-state.json');
+    writeFileSync(levelsPath, JSON.stringify([
+      { symbol: 'NIFTY', label: 'not-MCX', price: 100, dir: 'up' },
+      { symbol: 'GOLD', label: 'breakout', price: 127000, dir: 'up' },
+      { symbol: 'SILVER', label: 'support', price: 150000, dir: 'down' },
+    ]));
+    const log = vi.fn();
+    const sendLevels = vi.fn().mockRejectedValueOnce(new Error('chat unavailable')).mockResolvedValue({ sent: true });
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'success', data: { MCX_COMM: {
+        '495213': { last_price: 127000 }, '495214': { last_price: 150000 },
+      } } }),
+    }));
+    const options = {
+      fetchImpl, sendLevels, levelsPath, statePath, log, accessToken: 'test-token', clientId: 'test-client',
+      securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410',
+    };
+
+    await mcxWatchPoll(pollAt, options);
+    await mcxWatchPoll(pollAt + 60_000, options);
+    expect(sendLevels).toHaveBeenCalledTimes(2);
+    expect(log.mock.calls.filter(([message]) => String(message).includes('malformed or duplicate level'))).toHaveLength(1);
+    expect(log.mock.calls.filter(([message]) => String(message).includes('level alert GOLD/breakout failed'))).toHaveLength(1);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).fired).toEqual({ 'GOLD|breakout': true, 'SILVER|support': true });
+  });
 });
 
 describe('resolveSwingDay', () => {
