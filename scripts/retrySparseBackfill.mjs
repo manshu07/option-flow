@@ -66,8 +66,8 @@ for (const sym of symbols) {
       cur.high = Math.max(cur.high, c.high); cur.low = Math.min(cur.low, c.low);
       if (Number.isFinite(c.open)) cur.open ??= c.open;
     }
-    const merged = [...byAt.values()].sort((a, b) => a.at - b.at);
     const before = store.length;
+    persisted.months[0].candles = [...byAt.values()].sort((a, b) => a.at - b.at);
     fs.writeFileSync(file, JSON.stringify(persisted));
     console.log(`${sym}: disk ${before} → ${byAt.size} candles (REST ${candles.length})`);
     updated++;
