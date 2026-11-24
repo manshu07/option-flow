@@ -90,6 +90,9 @@ const SEG_NAME = Object.fromEntries(Object.entries(SEG_BYTE).map(([k, v]) => [v,
 /** Fixed binary packet sizes by feed response code (docs: Live Market Feed). */
 const PACKET_SIZE = { 2: 16, 3: 112, 4: 50, 5: 12, 6: 16, 7: 8, 8: 162, 50: 10 };
 const DROP_REASON = { 805: 'connection limit exceeded', 806: 'Data APIs subscription required', 807: 'access token expired', 808: 'invalid client id', 809: 'authentication failed' };
+// Last code-50 drop reason seen on any feed socket — scheduleReconnect reads it to apply a
+// connection-limit penalty (owner rule 2026-11-24: limit drops get a 5-min backoff, not 3s hammering).
+let lastFeedDropReason = null;
 /** Packet codes we have logged as unhandled, so the warning fires once per code. */
 const unhandledCodes = new Set();
 
@@ -611,6 +614,7 @@ export function createDhanProvider(universe) {
       if (off + size > buf.length) break;
       if (code === 50) {
         const reason = DROP_REASON[buf.readUInt16LE(off + 8)] ?? `code ${buf.readUInt16LE(off + 8)}`;
+        lastFeedDropReason = reason;
         console.warn(`dhan: feed dropped us: ${reason}`);
         break;
       }
@@ -800,10 +804,15 @@ export function createDhanProvider(universe) {
     // throttling rapid reconnect loops would hurt the next market session.
     // Outside a session a 5-minute retry is plenty — the feed is quiet and
     // rapid loops only invite Dhan throttling. In-session, exponential to 60s.
+    const attempt = (conn.reconnectAttempts ?? 0) + 1;
+    const penalized = lastFeedDropReason === 'connection limit exceeded';
+    // Connection-limit drops need a real cooldown — retrying at 3s keeps the account at
+    // its cap and the live server locked out (2026-11-24 incident). 5-minute floor.
     const delay = isMarketSessionTime(Date.now())
-      ? Math.min(3_000 * 2 ** (conn.reconnectAttempts ?? 0), 60_000)
+      ? penalized ? 300_000 : Math.min(3_000 * 2 ** attempt, 60_000)
       : 300_000;
-    conn.reconnectAttempts = (conn.reconnectAttempts ?? 0) + 1;
+    console.log(`dhan: feed recovery attempt ${attempt} in ${Math.round(delay / 1000)}s${penalized ? ' (connection-limit penalty)' : ''}`);
+    conn.reconnectAttempts = attempt;
     conn.reconnectTimer = setTimeout(async () => {
       conn.reconnectTimer = null;
       try {

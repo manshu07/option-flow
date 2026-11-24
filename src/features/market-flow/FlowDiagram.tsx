@@ -1,4 +1,5 @@
 import { memo, useEffect, useId, useMemo, useRef, type ReactNode } from 'react';
+import { marketParts } from '../../lib/marketSession';
 import { useReducedMotion } from 'motion/react';
 import { fmtPrice } from '@/utils/formatters';
 import { candlesFromCloses, compressedScale, compressedTicks, drawnValues, gateRows, sCurve, sCurveOn } from './diagramModel';
@@ -841,6 +842,12 @@ export function CandleChart({ stock, width, height, levels = true, tf = 'auto' }
   const desired = tf === 'auto' ? (full.length > 120 ? 5 : full.length > 30 ? 2 : 1) : tf;
   const span = Math.max(1, Math.min(desired, Math.floor(full.length / 30) || 1));
   const candles = candlesFromCloses(full, span);
+  // Session-boundary (owner report 2026-11-24): candles from an earlier session render
+  // dimmed and are counted separately, so a pre-open/merged view never reads yesterday's
+  // tail as today's move.
+  const lastDay = marketParts(candles[candles.length - 1].at).dateKey;
+  let prevDayCount = 0;
+  for (const c of candles) if (marketParts(c.at).dateKey !== lastDay) prevDayCount++;
   const right = levels ? 46 : 4;
   const pad = { top: 6, bottom: 6, left: 2 };
   let low = Math.min(...candles.map(c => c.low));
@@ -885,8 +892,9 @@ export function CandleChart({ stock, width, height, levels = true, tf = 'auto' }
         {candles.map(c => {
           const cx = xt(c.at + (span * MINUTE) / 2);
           const upC = c.close >= c.open;
+          const isPrevDay = marketParts(c.at).dateKey !== lastDay;
           return (
-            <g key={c.at} className={upC ? 'is-up' : 'is-down'}>
+            <g key={c.at} className={upC ? 'is-up' : 'is-down'} style={isPrevDay ? { opacity: 0.35 } : undefined}>
               <line className="mf-candles__wick" x1={cx} x2={cx} y1={y(c.high)} y2={y(c.low)} />
               <rect className="mf-candles__body" x={cx - cw / 2} width={cw} y={y(Math.max(c.open, c.close))} height={Math.max(1, Math.abs(y(c.open) - y(c.close)))} />
             </g>
@@ -894,7 +902,7 @@ export function CandleChart({ stock, width, height, levels = true, tf = 'auto' }
         })}
         <circle className="mf-candles__last" cx={xt(candles[candles.length - 1].at + (span * MINUTE) / 2)} cy={y(candles[candles.length - 1].close)} r="2.5" />
       </svg>
-      <span className="mf-candles__gap-note" style={{ display: 'block', padding: '1px 4px 2px', color: 'var(--text-muted)', fontSize: 9, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{gapLabel}</span>
+      <span className="mf-candles__gap-note" style={{ display: 'block', padding: '1px 4px 2px', color: 'var(--text-muted)', fontSize: 9, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{gapLabel}{prevDayCount > 0 ? ` · prev session: ${prevDayCount} candles` : ''}</span>
     </span>
   );
 }
