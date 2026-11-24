@@ -549,6 +549,7 @@ describe('MCX evening watchlist', () => {
   const ids = { GOLD: 495213, SILVER: 495214, NATURALGAS: 574319, GOLDM: 575011, SILVERM: 483080, NATURALGASM: 574320 };
 
   it('polls all six contracts once inside the MCX weekday window and normalizes quotes', async () => {
+    const dir = tempDir();
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
       expect(JSON.parse(String(init.body))).toEqual({ MCX_COMM: Object.values(ids) });
       return {
@@ -561,6 +562,7 @@ describe('MCX evening watchlist', () => {
     });
     const result = await mcxWatchPoll(pollAt, {
       fetchImpl, accessToken: 'test-token', clientId: 'test-client', log: vi.fn(), securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410',
+      levelsPath: join(dir, 'mcx-levels.json'), statePath: join(dir, 'mcx-brief-state.json'),
     });
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -596,6 +598,60 @@ describe('MCX evening watchlist', () => {
     expect(sendOwner).toHaveBeenCalledTimes(1);
     expect(sendOwner.mock.calls[0][0]).toContain('OI —');
     expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ dayKey: '2026-11-23', sentBrief: true, fired: {} });
+  });
+
+  it('fires up/down crossings at equality once per key, with no more than one per symbol per poll', async () => {
+    const dir = tempDir();
+    const levelsPath = join(dir, 'mcx-levels.json');
+    const statePath = join(dir, 'mcx-brief-state.json');
+    writeFileSync(levelsPath, JSON.stringify([
+      { symbol: 'GOLD', label: 'breakout', price: 127000, dir: 'up' },
+      { symbol: 'GOLD', label: 'secondary', price: 126000, dir: 'up' },
+      { symbol: 'SILVER', label: 'support', price: 150000, dir: 'down' },
+    ]));
+    const sendLevels = vi.fn(async (_message: string) => ({ sent: true }));
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: 'success', data: { MCX_COMM: {
+        '495213': { last_price: 127000, oi: 999999 },
+        '495214': { last_price: 150000, oi: 888888 },
+      } } }),
+    }));
+    const options = {
+      fetchImpl, sendLevels, levelsPath, statePath, accessToken: 'test-token', clientId: 'test-client',
+      log: vi.fn(), securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410',
+    };
+
+    const first = await mcxWatchPoll(pollAt, options);
+    expect(first.fired.map(item => `${item.symbol}|${item.label}`)).toEqual(['GOLD|breakout', 'SILVER|support']);
+    expect(sendLevels).toHaveBeenCalledTimes(2);
+    for (const [message] of sendLevels.mock.calls) {
+      expect(message).toContain('crossed');
+      expect(message).not.toMatch(/\bOI\b|999999|888888/);
+    }
+
+    const second = await mcxWatchPoll(pollAt + 60_000, options);
+    expect(second.fired.map(item => `${item.symbol}|${item.label}`)).toEqual(['GOLD|secondary']);
+    const third = await mcxWatchPoll(pollAt + 120_000, options);
+    expect(third.fired).toEqual([]);
+    expect(sendLevels).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).fired).toEqual({
+      'GOLD|breakout': true, 'GOLD|secondary': true, 'SILVER|support': true,
+    });
+  });
+
+  it('treats a missing levels file as a persisted once-per-day no-op', async () => {
+    const dir = tempDir();
+    const levelsPath = join(dir, 'mcx-levels.json');
+    const statePath = join(dir, 'mcx-brief-state.json');
+    const log = vi.fn();
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ status: 'success', data: { MCX_COMM: { '495213': { last_price: 127000 } } } }) }));
+    const options = { fetchImpl, levelsPath, statePath, log, accessToken: 'test-token', clientId: 'test-client', securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410' };
+    await mcxWatchPoll(pollAt, options);
+    await mcxWatchPoll(pollAt + 60_000, options);
+    expect(log.mock.calls.filter(([message]) => String(message).includes('levels file missing'))).toHaveLength(1);
+    expect(JSON.parse(readFileSync(statePath, 'utf8')).warnings.levelsMissing).toBe(true);
   });
 });
 

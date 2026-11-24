@@ -140,6 +140,80 @@ function displayNumber(value, digits = 2) {
   return Number.isFinite(value) ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: digits }).format(value) : '—';
 }
 
+function loadLevels(levelsPath, state, statePath, log, now) {
+  let parsed;
+  try { parsed = JSON.parse(readFileSync(levelsPath, 'utf8')); }
+  catch (error) {
+    if (error?.code === 'ENOENT') {
+      if (!state.warnings.levelsMissing) {
+        state.warnings.levelsMissing = true;
+        if (saveState(statePath, state, log, now)) log(`mcx: levels file missing; M2 idle for ${state.dayKey}`);
+      }
+      return [];
+    }
+    logOncePerHour('levels-file', `mcx: levels file unreadable; M2 skipped (${error?.message || error})`, now, log);
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    logOncePerHour('levels-shape', 'mcx: levels file must be a JSON array; M2 skipped', now, log);
+    return [];
+  }
+  const valid = [];
+  const seen = new Set();
+  let stateChanged = false;
+  const newWarnings = [];
+  for (const [index, item] of parsed.entries()) {
+    const rawLabel = typeof item?.label === 'string' ? item.label : '';
+    const label = rawLabel.trim();
+    const key = `${item?.symbol}|${label}`;
+    const malformed = !MCX_SYMBOLS.includes(item?.symbol) || !label || label.length > 80
+      || /[\u0000-\u001f\u007f]/.test(rawLabel) || !Number.isFinite(item?.price)
+      || item.price <= 0 || !['up', 'down'].includes(item?.dir) || seen.has(key);
+    if (malformed) {
+      const warningKey = `level:${index}:${key}`;
+      if (!state.warnings[warningKey]) {
+        state.warnings[warningKey] = true;
+        stateChanged = true;
+        newWarnings.push(`mcx: malformed or duplicate level entry skipped at index ${index}`);
+      }
+      continue;
+    }
+    seen.add(key);
+    valid.push({ symbol: item.symbol, label, price: item.price, dir: item.dir, key });
+  }
+  if (stateChanged && saveState(statePath, state, log, now)) {
+    for (const warning of newWarnings) log(warning);
+  }
+  return valid;
+}
+
+async function fireCrossedLevels(quotes, now, { levelsPath, statePath, sendLevels, log }) {
+  const state = loadState(statePath, dayKeyAt(now), log, now);
+  const levels = loadLevels(levelsPath, state, statePath, log, now);
+  const firedSymbols = new Set();
+  const fired = [];
+  for (const level of levels) {
+    if (firedSymbols.has(level.symbol) || state.fired[level.key]) continue;
+    const quote = quotes[level.symbol];
+    if (!quote) continue;
+    const crossed = level.dir === 'up' ? quote.lastPrice >= level.price : quote.lastPrice <= level.price;
+    if (!crossed) continue;
+    state.fired[level.key] = true;
+    if (!saveState(statePath, state, log, now)) continue;
+    firedSymbols.add(level.symbol);
+    const message = `📊 MCX ${level.symbol} ${level.label} — price ${displayNumber(quote.lastPrice)} crossed ${displayNumber(level.price)} (${level.dir}) · ${clockAt(now)} IST`;
+    fired.push({ symbol: level.symbol, label: level.label, message });
+    if (typeof sendLevels !== 'function') continue;
+    try {
+      const result = await sendLevels(message);
+      if (result?.sent === false) log(`mcx: level alert ${level.symbol}/${level.label} not sent (${result.reason ?? 'unknown'})`);
+    } catch (error) {
+      log(`mcx: level alert ${level.symbol}/${level.label} failed (${error?.message || error})`);
+    }
+  }
+  return fired;
+}
+
 export async function mcxEveningBrief(now = Date.now(), {
   dataDir,
   statePath = dataPath(dataDir, 'mcx-brief-state.json'),
@@ -184,12 +258,15 @@ export async function mcxEveningBrief(now = Date.now(), {
 
 export async function mcxWatchPoll(now = Date.now(), {
   dataDir,
+  levelsPath = dataPath(dataDir, 'mcx-levels.json'),
+  statePath = dataPath(dataDir, 'mcx-brief-state.json'),
   fetchImpl = globalThis.fetch,
   accessToken = process.env.DHAN_ACCESS_TOKEN,
   clientId = process.env.DHAN_CLIENT_ID,
   log = () => {},
   securityIdsEnv = process.env.MCX_SECURITY_IDS,
   closeMinuteEnv = process.env.MCX_CLOSE_MINUTE,
+  sendLevels,
 } = {}) {
   const at = nowMs(now);
   if (!mcxSessionOpen(at, { log, closeMinuteEnv })) return { skipped: 'outside MCX session', quotes: {} };
@@ -246,5 +323,6 @@ export async function mcxWatchPoll(now = Date.now(), {
     logOncePerHour('empty', 'mcx: Dhan quote response empty; poll skipped', at, log);
     return { skipped: 'empty response', quotes: {} };
   }
-  return { polled: true, quotes };
+  const fired = await fireCrossedLevels(quotes, at, { levelsPath, statePath, sendLevels, log });
+  return { polled: true, quotes, fired };
 }

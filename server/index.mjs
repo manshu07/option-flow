@@ -1491,7 +1491,11 @@ server.listen(PORT, HOST, async () => {
     let mcxTaskErrorLogged = false;
     const runMcxWatch = async () => {
       const pollAt = Date.now();
-      const poll = await mcxWatchPoll(pollAt, { dataDir: DATA_DIR, log });
+      const poll = await mcxWatchPoll(pollAt, {
+        dataDir: DATA_DIR,
+        sendLevels: sendOwnerAndSubscribers,
+        log,
+      });
       await mcxEveningBrief(pollAt, {
         dataDir: DATA_DIR,
         quotes: poll?.quotes ?? {},
