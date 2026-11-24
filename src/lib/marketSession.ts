@@ -1,5 +1,6 @@
 const MARKET_TIME_ZONE = 'Asia/Kolkata';
 export const MARKET_OPEN_MINUTE = 9 * 60 + 15;
+export const MCX_OPEN_MINUTE = 9 * 60;
 /**
  * The exchanges' Closing Auction Session (CAS) took effect on 3 August 2026.
  * Cash price discovery runs from 15:15 to 15:35 and equity derivatives keep
@@ -116,6 +117,11 @@ const NSE_HOLIDAYS = new Set([
   '2027-12-25', // Christmas
 ]);
 
+// TODO: confirm MCX 2027 list from an official public circular before adding dates.
+export const MCX_HOLIDAYS: readonly string[] = [];
+const MCX_HOLIDAY_SET = new Set(MCX_HOLIDAYS);
+let mcxCloseOverrideWarned = false;
+
 /**
  * Check if a given dateKey (YYYY-MM-DD in IST) is an NSE holiday.
  */
@@ -156,12 +162,34 @@ export function getPreviousTradingDay(daysBack: number, fromDate: Date = new Dat
   return new Date(currentMs);
 }
 
-export function isMarketSessionTime(time: number | Date): boolean {
+export type MarketExchange = 'NSE' | 'MCX';
+
+function mcxCloseMinuteFor(time: number | Date): number {
+  const processEnv = (globalThis as typeof globalThis & { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  const raw = processEnv?.MCX_CLOSE_MINUTE;
+  if (raw != null && raw.trim() !== '') {
+    const override = Number(raw);
+    if (Number.isInteger(override) && override > MCX_OPEN_MINUTE && override <= 23 * 60 + 59) return override;
+    if (!mcxCloseOverrideWarned) {
+      mcxCloseOverrideWarned = true;
+      console.warn('marketSession.ts: invalid MCX_CLOSE_MINUTE; using the date-based MCX close.');
+    }
+  }
+  const monthDay = marketParts(time).dateKey.slice(5);
+  return monthDay >= '11-01' || monthDay <= '03-31' ? 23 * 60 + 30 : 23 * 60 + 55;
+}
+
+export function sessionFor(exchange: MarketExchange, time: number | Date = Date.now()): { openMinute: number; closeMinute: number; dateKey: string } {
   const parts = marketParts(time);
-  const isWeekend = parts.weekday === 0 || parts.weekday === 6;
-  const isHoliday = NSE_HOLIDAYS.has(parts.dateKey);
-  const closeMinute = marketCloseMinuteFor(time);
-  return !isWeekend && !isHoliday && parts.minuteOfDay >= MARKET_OPEN_MINUTE && parts.minuteOfDay <= closeMinute;
+  return exchange === 'MCX'
+    ? { openMinute: MCX_OPEN_MINUTE, closeMinute: mcxCloseMinuteFor(time), dateKey: parts.dateKey }
+    : { openMinute: MARKET_OPEN_MINUTE, closeMinute: marketCloseMinuteFor(time), dateKey: parts.dateKey };
+}
+
+export function isMarketSessionTime(time: number | Date, exchange: MarketExchange = 'NSE'): boolean {
+  const parts = marketParts(time);
+  const session = sessionFor(exchange, time);
+  return isTradingDay(time, exchange) && parts.minuteOfDay >= session.openMinute && parts.minuteOfDay <= session.closeMinute;
 }
 
 /** The historically correct option-market close for the supplied IST date. */
@@ -245,10 +273,11 @@ export function getMarketPhase(time: number | Date): MarketPhase {
  * ignoring the time of day. Holiday-aware via NSE_HOLIDAYS (see caveat in
  * isMarketHoliday for post-2027 dates).
  */
-export function isTradingDay(time: number | Date): boolean {
+export function isTradingDay(time: number | Date, exchange: MarketExchange = 'NSE'): boolean {
   const parts = marketParts(time);
   const isWeekend = parts.weekday === 0 || parts.weekday === 6;
-  return !isWeekend && !NSE_HOLIDAYS.has(parts.dateKey);
+  const isHoliday = exchange === 'MCX' ? MCX_HOLIDAY_SET.has(parts.dateKey) : NSE_HOLIDAYS.has(parts.dateKey);
+  return !isWeekend && !isHoliday;
 }
 
 const SESSION_DAY_FORMAT = new Intl.DateTimeFormat('en-CA', { timeZone: MARKET_TIME_ZONE });

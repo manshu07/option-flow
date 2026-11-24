@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { resolveCard, runJournal, trackCardFollowThrough, withJournalStoreLock } from './journal.mjs';
 import { mcxEveningBrief, mcxSessionOpen, mcxWatchPoll } from './mcx.mjs';
+import { MCX_HOLIDAYS, MCX_OPEN_MINUTE, isMarketSessionTime, isTradingDay, sessionFor } from '../src/lib/marketSession.ts';
 import { retainObservations } from './strikeAdvisor.mjs';
 import { backfillJournalFollowThrough } from '../scripts/backfillJournalArchive.mjs';
 
@@ -561,7 +562,7 @@ describe('MCX evening watchlist', () => {
       };
     });
     const result = await mcxWatchPoll(pollAt, {
-      fetchImpl, accessToken: 'test-token', clientId: 'test-client', log: vi.fn(), securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410',
+      fetchImpl, accessToken: 'test-token', clientId: 'test-client', log: vi.fn(), securityIdsEnv: JSON.stringify(ids),
       levelsPath: join(dir, 'mcx-levels.json'), statePath: join(dir, 'mcx-brief-state.json'),
     });
 
@@ -573,12 +574,10 @@ describe('MCX evening watchlist', () => {
 
   it('skips weekends, NSE holidays, and times outside the configured session without fetching', async () => {
     const fetchImpl = vi.fn();
-    expect(mcxSessionOpen(pollAt, { closeMinuteEnv: '1410' })).toBe(true);
-    expect(mcxSessionOpen(Date.parse('2026-11-22T10:00:00+05:30'), { closeMinuteEnv: '1410' })).toBe(false);
-    expect(mcxSessionOpen(Date.parse('2026-11-24T10:00:00+05:30'), { closeMinuteEnv: '1410' })).toBe(false);
-    expect(mcxSessionOpen(Date.parse('2026-11-23T08:59:00+05:30'), { closeMinuteEnv: '1410' })).toBe(false);
-    expect(mcxSessionOpen(Date.parse('2026-11-23T23:31:00+05:30'), { closeMinuteEnv: '1410' })).toBe(false);
-    await expect(mcxWatchPoll(Date.parse('2026-11-23T23:31:00+05:30'), { fetchImpl, closeMinuteEnv: '1410' }))
+    expect(mcxSessionOpen(pollAt)).toBe(true);
+    expect(mcxSessionOpen(Date.parse('2026-11-22T10:00:00+05:30'))).toBe(false);
+    expect(mcxSessionOpen(Date.parse('2026-11-23T08:59:00+05:30'))).toBe(false);
+    await expect(mcxWatchPoll(Date.parse('2026-11-23T08:59:00+05:30'), { fetchImpl }))
       .resolves.toMatchObject({ skipped: 'outside MCX session' });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -591,9 +590,9 @@ describe('MCX evening watchlist', () => {
     };
     const at = Date.parse('2026-11-23T21:00:20+05:30');
 
-    await expect(mcxEveningBrief(at, { statePath, quotes, sendOwner, log: vi.fn(), closeMinuteEnv: '1410' }))
+    await expect(mcxEveningBrief(at, { statePath, quotes, sendOwner, log: vi.fn() }))
       .resolves.toMatchObject({ sent: true });
-    await expect(mcxEveningBrief(at + 20_000, { statePath, quotes, sendOwner, log: vi.fn(), closeMinuteEnv: '1410' }))
+    await expect(mcxEveningBrief(at + 20_000, { statePath, quotes, sendOwner, log: vi.fn() }))
       .resolves.toMatchObject({ sent: false, skipped: 'already sent' });
     expect(sendOwner).toHaveBeenCalledTimes(1);
     expect(sendOwner.mock.calls[0][0]).toContain('OI —');
@@ -620,7 +619,7 @@ describe('MCX evening watchlist', () => {
     }));
     const options = {
       fetchImpl, sendLevels, levelsPath, statePath, accessToken: 'test-token', clientId: 'test-client',
-      log: vi.fn(), securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410',
+      log: vi.fn(), securityIdsEnv: JSON.stringify(ids),
     };
 
     const first = await mcxWatchPoll(pollAt, options);
@@ -647,7 +646,7 @@ describe('MCX evening watchlist', () => {
     const statePath = join(dir, 'mcx-brief-state.json');
     const log = vi.fn();
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ status: 'success', data: { MCX_COMM: { '495213': { last_price: 127000 } } } }) }));
-    const options = { fetchImpl, levelsPath, statePath, log, accessToken: 'test-token', clientId: 'test-client', securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410' };
+    const options = { fetchImpl, levelsPath, statePath, log, accessToken: 'test-token', clientId: 'test-client', securityIdsEnv: JSON.stringify(ids) };
     await mcxWatchPoll(pollAt, options);
     await mcxWatchPoll(pollAt + 60_000, options);
     expect(log.mock.calls.filter(([message]) => String(message).includes('levels file missing'))).toHaveLength(1);
@@ -662,7 +661,7 @@ describe('MCX evening watchlist', () => {
       .mockResolvedValueOnce({ ok: false, status: 429 })
       .mockResolvedValueOnce({ ok: false, status: 401 })
       .mockResolvedValueOnce({ ok: false, status: 429 });
-    const options = { fetchImpl, log, accessToken: 'test-token', clientId: 'test-client', securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410' };
+    const options = { fetchImpl, log, accessToken: 'test-token', clientId: 'test-client', securityIdsEnv: JSON.stringify(ids) };
 
     await expect(mcxWatchPoll(pollAt, options)).resolves.toMatchObject({ skipped: 'token rejected' });
     await expect(mcxWatchPoll(pollAt + 60_000, options)).resolves.toMatchObject({ skipped: 'empty response' });
@@ -691,7 +690,7 @@ describe('MCX evening watchlist', () => {
 
     const result = await mcxWatchPoll(Date.parse('2026-11-25T10:00:00+05:30'), {
       fetchImpl, sendLevels, levelsPath, statePath, accessToken: 'test-token', clientId: 'test-client',
-      log: vi.fn(), securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410',
+      log: vi.fn(), securityIdsEnv: JSON.stringify(ids),
     });
 
     expect(result.fired.map(item => `${item.symbol}|${item.label}`)).toEqual(['GOLD|breakout']);
@@ -719,7 +718,7 @@ describe('MCX evening watchlist', () => {
     }));
     const options = {
       fetchImpl, sendLevels, levelsPath, statePath, log, accessToken: 'test-token', clientId: 'test-client',
-      securityIdsEnv: JSON.stringify(ids), closeMinuteEnv: '1410',
+      securityIdsEnv: JSON.stringify(ids),
     };
 
     await mcxWatchPoll(pollAt, options);
@@ -728,6 +727,67 @@ describe('MCX evening watchlist', () => {
     expect(log.mock.calls.filter(([message]) => String(message).includes('malformed or duplicate level'))).toHaveLength(1);
     expect(log.mock.calls.filter(([message]) => String(message).includes('level alert GOLD/breakout failed'))).toHaveLength(1);
     expect(JSON.parse(readFileSync(statePath, 'utf8')).fired).toEqual({ 'GOLD|breakout': true, 'SILVER|support': true });
+  });
+});
+
+describe('per-exchange market sessions', () => {
+  it('keeps the NSE defaults unchanged and separates MCX holidays/session windows', () => {
+    const priorClose = process.env.MCX_CLOSE_MINUTE;
+    delete process.env.MCX_CLOSE_MINUTE;
+    try {
+      const nseOpen = Date.parse('2026-11-23T09:15:00+05:30');
+      const nseHoliday = Date.parse('2026-11-24T12:00:00+05:30');
+      expect(sessionFor('NSE', nseOpen)).toEqual({ openMinute: 555, closeMinute: 940, dateKey: '2026-11-23' });
+      expect(isMarketSessionTime(nseOpen)).toBe(true);
+      expect(isTradingDay(nseHoliday)).toBe(false);
+      expect(isTradingDay(nseHoliday, 'MCX')).toBe(true);
+      expect(isMarketSessionTime(nseHoliday, 'MCX')).toBe(true);
+      expect(MCX_OPEN_MINUTE).toBe(540);
+      expect(MCX_HOLIDAYS).toEqual([]);
+      expect(isTradingDay(Date.parse('2026-11-22T12:00:00+05:30'), 'MCX')).toBe(false);
+    } finally {
+      if (priorClose === undefined) delete process.env.MCX_CLOSE_MINUTE;
+      else process.env.MCX_CLOSE_MINUTE = priorClose;
+    }
+  });
+
+  it('handles MCX open, midday, evening, close and all winter/summer transition dates', () => {
+    const priorClose = process.env.MCX_CLOSE_MINUTE;
+    delete process.env.MCX_CLOSE_MINUTE;
+    try {
+      expect(sessionFor('MCX', Date.parse('2026-11-23T12:00:00+05:30'))).toEqual({ openMinute: 540, closeMinute: 1410, dateKey: '2026-11-23' });
+      expect(isMarketSessionTime(Date.parse('2026-11-23T09:00:00+05:30'), 'MCX')).toBe(true);
+      expect(isMarketSessionTime(Date.parse('2026-11-23T12:00:00+05:30'), 'MCX')).toBe(true);
+      expect(isMarketSessionTime(Date.parse('2026-11-23T22:00:00+05:30'), 'MCX')).toBe(true);
+      expect(isMarketSessionTime(Date.parse('2026-11-23T23:31:00+05:30'), 'MCX')).toBe(false);
+
+      const boundaries: Array<[string, number]> = [
+        ['2026-10-31', 1435],
+        ['2026-11-01', 1410],
+        ['2027-03-31', 1410],
+        ['2027-04-01', 1435],
+      ];
+      for (const [date, closeMinute] of boundaries) {
+        expect(sessionFor('MCX', Date.parse(`${date}T12:00:00+05:30`)).closeMinute).toBe(closeMinute);
+      }
+    } finally {
+      if (priorClose === undefined) delete process.env.MCX_CLOSE_MINUTE;
+      else process.env.MCX_CLOSE_MINUTE = priorClose;
+    }
+  });
+
+  it('honors MCX_CLOSE_MINUTE without changing the NSE close', () => {
+    const priorClose = process.env.MCX_CLOSE_MINUTE;
+    process.env.MCX_CLOSE_MINUTE = '1320';
+    try {
+      const at = Date.parse('2026-11-23T12:00:00+05:30');
+      expect(sessionFor('MCX', at).closeMinute).toBe(1320);
+      expect(sessionFor('NSE', at).closeMinute).toBe(940);
+      expect(isMarketSessionTime(Date.parse('2026-11-23T22:01:00+05:30'), 'MCX')).toBe(false);
+    } finally {
+      if (priorClose === undefined) delete process.env.MCX_CLOSE_MINUTE;
+      else process.env.MCX_CLOSE_MINUTE = priorClose;
+    }
   });
 });
 

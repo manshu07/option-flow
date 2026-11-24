@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isTradingDay, marketParts } from '../src/lib/marketSession.ts';
+import { isMarketSessionTime, marketParts } from '../src/lib/marketSession.ts';
 import { sendTelegram } from './telegram.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -16,7 +16,6 @@ export const DEFAULT_MCX_SECURITY_IDS = Object.freeze({
   NATURALGASM: 574320,
 });
 
-const OPEN_MINUTE = 9 * 60;
 const BRIEF_MINUTE = 21 * 60;
 const warningHours = new Map();
 
@@ -62,21 +61,8 @@ function readIds(now, log, raw = process.env.MCX_SECURITY_IDS) {
   }
 }
 
-function closeMinute(now, log, raw = process.env.MCX_CLOSE_MINUTE) {
-  if (raw == null || raw === '') return 23 * 60 + 30;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value <= OPEN_MINUTE || value > 23 * 60 + 59) {
-    logOncePerHour('close-minute', 'mcx: invalid MCX_CLOSE_MINUTE; poll skipped', now, log);
-    return null;
-  }
-  return value;
-}
-
-export function mcxSessionOpen(now, { log = () => {}, closeMinuteEnv = process.env.MCX_CLOSE_MINUTE } = {}) {
-  const at = nowMs(now);
-  const parts = marketParts(at);
-  const close = closeMinute(at, log, closeMinuteEnv);
-  return close != null && isTradingDay(at) && parts.minuteOfDay >= OPEN_MINUTE && parts.minuteOfDay <= close;
+export function mcxSessionOpen(now = Date.now()) {
+  return isMarketSessionTime(now, 'MCX');
 }
 
 function freshState(dayKey) {
@@ -220,10 +206,9 @@ export async function mcxEveningBrief(now = Date.now(), {
   quotes = {},
   sendOwner = sendTelegram,
   log = () => {},
-  closeMinuteEnv = process.env.MCX_CLOSE_MINUTE,
 } = {}) {
   const at = nowMs(now);
-  if (!mcxSessionOpen(at, { log, closeMinuteEnv })) return { sent: false, skipped: 'outside MCX session' };
+  if (!mcxSessionOpen(at)) return { sent: false, skipped: 'outside MCX session' };
   const parts = marketParts(at);
   const state = loadState(statePath, parts.dateKey, log, at);
   if (state.sentBrief) return { sent: false, skipped: 'already sent' };
@@ -265,11 +250,10 @@ export async function mcxWatchPoll(now = Date.now(), {
   clientId = process.env.DHAN_CLIENT_ID,
   log = () => {},
   securityIdsEnv = process.env.MCX_SECURITY_IDS,
-  closeMinuteEnv = process.env.MCX_CLOSE_MINUTE,
   sendLevels,
 } = {}) {
   const at = nowMs(now);
-  if (!mcxSessionOpen(at, { log, closeMinuteEnv })) return { skipped: 'outside MCX session', quotes: {} };
+  if (!mcxSessionOpen(at)) return { skipped: 'outside MCX session', quotes: {} };
   const ids = readIds(at, log, securityIdsEnv);
   if (!ids) return { skipped: 'invalid security ID config', quotes: {} };
   if (!accessToken || !clientId) {
