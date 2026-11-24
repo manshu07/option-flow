@@ -6,6 +6,7 @@ import { gzipSync } from 'node:zlib';
 import { resolveCard, runJournal, trackCardFollowThrough, withJournalStoreLock } from './journal.mjs';
 import { mcxEveningBrief, mcxSessionOpen, mcxWatchPoll } from './mcx.mjs';
 import { MCX_HOLIDAYS, MCX_OPEN_MINUTE, isMarketSessionTime, isTradingDay, sessionFor } from '../src/lib/marketSession.ts';
+import { collectTickJournalBatch, createDhanProvider, createFuturesFlushWatchdog } from './providers/dhan.mjs';
 import { retainObservations } from './strikeAdvisor.mjs';
 import { backfillJournalFollowThrough } from '../scripts/backfillJournalArchive.mjs';
 
@@ -542,6 +543,90 @@ describe('day rollover and history', () => {
       { id: 'oldest', symbol: 'OLDEST', date: DATE, outcome: { status: 'open' } },
     ], 2);
     expect(resolvedOnly.map(item => item.symbol)).toEqual(['NEWEST', 'OLDEST']);
+  });
+});
+
+describe('Dhan futures flush health counters', () => {
+  it('counts each flush attempt, keeps the last error, and logs once per failure streak', () => {
+    let now = Date.parse('2026-11-23T13:30:00+05:30');
+    const timers: Array<{ callback: () => void; unref: () => void }> = [];
+    const flush = vi.fn().mockReturnValueOnce(true).mockImplementationOnce(() => { throw new Error('disk busy'); });
+    const supervisor = createFuturesFlushWatchdog({
+      flush,
+      now: () => now,
+      setInterval: (callback: () => void) => {
+        const timer = { callback, unref: () => {} };
+        timers.push(timer);
+        return timer;
+      },
+      clearInterval: () => {},
+      logger: vi.fn(),
+    });
+    supervisor.start();
+    expect(supervisor.health()).toEqual({ flushCount: 1, lastFlushAt: now, lastError: null, lastErrorAt: null });
+
+    now += 60_000;
+    expect(supervisor.flushNow()).toBe(false);
+    expect(supervisor.health()).toEqual({ flushCount: 2, lastFlushAt: now - 60_000, lastError: 'disk busy', lastErrorAt: now });
+    expect(flush).toHaveBeenCalledTimes(2);
+    supervisor.stop();
+  });
+
+  it('collects feed candles from their Map timestamp and skips invalid timestamps safely', () => {
+    const at = Date.parse('2026-11-23T08:09:00Z');
+    const ticks = new Map([[42, new Map([
+      [at, { open: 100, high: 110, low: 90, close: 105, oi: 7 }],
+      [NaN, { open: 1, high: 1, low: 1, close: 1, oi: 0 }],
+      [9_000_000_000_000_000, { open: 1, high: 1, low: 1, close: 1, oi: 0 }],
+    ])]]);
+
+    const result = collectTickJournalBatch([{ id: 42, symbol: 'TITAN', expiry: '2026-11-26' }], ticks, '2026-11-23');
+    expect(result.records).toEqual([{ at, sym: 'TITAN', expiry: '2026-11-26', o: 100, h: 110, l: 90, c: 105, oi: 7, v: 0 }]);
+    expect(result.invalidTimestamps).toBe(2);
+  });
+
+  it('keeps the flush callback contained and rate-limits errors per failure streak', () => {
+    let now = 1_000;
+    const timers: Array<{ callback: () => void; unref: () => void }> = [];
+    const logger = vi.fn();
+    const flush = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockImplementationOnce(() => { throw new Error('batch collection: Invalid time value'); })
+      .mockImplementationOnce(() => { throw new Error('batch collection: Invalid time value'); })
+      .mockReturnValueOnce(true)
+      .mockImplementationOnce(() => { throw new Error('next streak'); });
+    const supervisor = createFuturesFlushWatchdog({
+      flush,
+      now: () => now,
+      logger,
+      setInterval: (callback: () => void) => {
+        const timer = { callback, unref: () => {} };
+        timers.push(timer);
+        return timer;
+      },
+      clearInterval: () => {},
+    });
+
+    supervisor.start();
+    now += 60_000;
+    expect(supervisor.flushNow()).toBe(false);
+    now += 60_000;
+    expect(supervisor.flushNow()).toBe(false);
+    expect(logger).toHaveBeenCalledTimes(1);
+    expect(supervisor.health()).toMatchObject({ flushCount: 3, lastFlushAt: 1_000, lastError: 'batch collection: Invalid time value', lastErrorAt: now });
+
+    now += 60_000;
+    expect(supervisor.flushNow()).toBe(true);
+    now += 60_000;
+    expect(supervisor.flushNow()).toBe(false);
+    expect(logger).toHaveBeenCalledTimes(2);
+    expect(supervisor.health()).toMatchObject({ flushCount: 5, lastFlushAt: 181_000, lastError: 'next streak', lastErrorAt: 241_000 });
+    supervisor.stop();
+  });
+
+  it('provides initialized flush health on Dhan', () => {
+    const provider = createDhanProvider([]);
+    expect(provider.health().futuresFlush).toEqual({ flushCount: 0, lastFlushAt: null, lastError: null, lastErrorAt: null });
   });
 });
 

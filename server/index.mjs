@@ -602,7 +602,7 @@ export function storedSessionSnapshot(dir, session) {
  * surface (demo, recorded) reports no rejection and no known feed problem.
  */
 export function healthPayload(provider, state, capture, now = Date.now(), bootedAt = BOOTED_AT) {
-  let feed = { healthy: true, packets: null, lastPacketAt: null, connections: null };
+  let feed = { healthy: true, packets: null, lastPacketAt: null, connections: null, futuresFlush: null };
   let tokenState = 'ok';
   let tokenExpiresAt = null;
   try {
@@ -613,6 +613,12 @@ export function healthPayload(provider, state, capture, now = Date.now(), booted
         packets: Number.isFinite(health.packets) ? health.packets : null,
         lastPacketAt: Number.isFinite(health.lastPacketAt) ? health.lastPacketAt : null,
         connections: health.connections ?? null,
+        futuresFlush: health.futuresFlush && typeof health.futuresFlush === 'object' ? {
+          flushCount: Number.isSafeInteger(health.futuresFlush.flushCount) ? Math.max(0, health.futuresFlush.flushCount) : 0,
+          lastFlushAt: Number.isFinite(health.futuresFlush.lastFlushAt) ? health.futuresFlush.lastFlushAt : null,
+          lastError: typeof health.futuresFlush.lastError === 'string' ? health.futuresFlush.lastError : null,
+          lastErrorAt: Number.isFinite(health.futuresFlush.lastErrorAt) ? health.futuresFlush.lastErrorAt : null,
+        } : null,
       };
       if (health.flowing !== undefined) feed.flowing = Boolean(health.flowing);
       tokenState = health.tokenState === 'rejected' ? 'rejected' : 'ok';

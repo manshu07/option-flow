@@ -191,14 +191,22 @@ export function replayTickJournalText(text, session, contractIdFor, futTicks, jo
 export function collectTickJournalBatch(contracts, futTicks, session, journaled = new Map()) {
   const records = [];
   const signatures = [];
+  let invalidTimestamps = 0;
   for (const { id, symbol, expiry } of Array.isArray(contracts) ? contracts : []) {
     const candles = futTicks.get(id);
     if (!candles) continue;
-    for (const candle of candles.values()) {
-      if (ymdIst(candle.at) !== session || !Number.isFinite(candle.close) || candle.close <= 0
+    for (const [minuteKey, candle] of candles.entries()) {
+      // Feed candles are keyed by minute in futTicks; unlike REST/replayed
+      // candles, noteTick does not need to duplicate that timestamp on the body.
+      if (!candle || typeof candle !== 'object') { invalidTimestamps++; continue; }
+      const at = Number.isSafeInteger(minuteKey) ? minuteKey : candle?.at;
+      if (!Number.isSafeInteger(at)) { invalidTimestamps++; continue; }
+      let candleSession;
+      try { candleSession = ymdIst(at); } catch { invalidTimestamps++; continue; }
+      if (candleSession !== session || !Number.isFinite(candle.close) || candle.close <= 0
         || !Number.isFinite(candle.oi) || candle.oi < 0) continue;
       const record = {
-        at: candle.at,
+        at,
         sym: symbol,
         expiry,
         o: Number.isFinite(candle.open) ? candle.open : candle.close,
@@ -208,14 +216,14 @@ export function collectTickJournalBatch(contracts, futTicks, session, journaled 
         oi: candle.oi,
         v: Number.isFinite(candle.volume) && candle.volume >= 0 ? candle.volume : 0,
       };
-      const key = `${session}:${id}:${record.at}`;
+      const key = `${session}:${id}:${at}`;
       const signature = tickSignature({ open: record.o, high: record.h, low: record.l, close: record.c, oi: record.oi, volume: record.v });
       if (journaled.get(key) === signature) continue;
       records.push(record);
       signatures.push([key, signature]);
     }
   }
-  return { records, signatures };
+  return { records, signatures, invalidTimestamps };
 }
 
 /** A serialized crawl queue, active only for the first ten minutes of an in-session boot. */
@@ -249,18 +257,26 @@ export function createFuturesFlushWatchdog({
 } = {}) {
   let flushTimer = null;
   let watchdogTimer = null;
-  let lastFlushAt = now();
+  let lastFlushAt = null;
+  let livenessSince = now();
+  let flushCount = 0;
+  let lastError = null;
+  let lastErrorAt = null;
   let failureLogged = false;
 
   const runFlush = () => {
+    flushCount++;
     try {
       if (flush() === false) return false;
       lastFlushAt = now();
+      livenessSince = lastFlushAt;
       failureLogged = false;
       return true;
     } catch (error) {
+      lastError = String(error?.message || error).slice(0, 240);
+      lastErrorAt = now();
       if (!failureLogged) {
-        logger(`dhan: futures tick flush failed: ${error?.message || error}`);
+        logger(`dhan: futures tick flush failed: ${lastError}`);
         failureLogged = true;
       }
       return false;
@@ -275,7 +291,7 @@ export function createFuturesFlushWatchdog({
   const checkLiveness = () => {
     const at = now();
     if (!inSession(at) || !feedFlowing()) return;
-    const stalledMs = at - lastFlushAt;
+    const stalledMs = at - (lastFlushAt ?? livenessSince);
     if (stalledMs <= stallMs) return;
     if (flushTimer !== null) clearIntervalFn(flushTimer);
     newFlushTimer();
@@ -286,6 +302,7 @@ export function createFuturesFlushWatchdog({
   return {
     start() {
       if (flushTimer !== null) return;
+      livenessSince = now();
       newFlushTimer();
       watchdogTimer = setIntervalFn(checkLiveness, watchdogEveryMs);
       watchdogTimer?.unref?.();
@@ -300,6 +317,7 @@ export function createFuturesFlushWatchdog({
     flushNow: runFlush,
     checkLiveness,
     get lastFlushAt() { return lastFlushAt; },
+    health() { return { flushCount, lastFlushAt, lastError, lastErrorAt }; },
   };
 }
 
@@ -336,6 +354,7 @@ export function createDhanProvider(universe) {
   const futRest = new Map();
   const journaledTicks = new Map();
   let tickJournalFlush = null;
+  let invalidTickTimestampLogged = false;
   let bootCrawlPace = async () => {};
   /** After a charts 429, hold off backfill retries for a while: the page's
    *  2-minute futures cycle re-asks every contract, and un-paced retries keep
@@ -386,22 +405,29 @@ export function createDhanProvider(universe) {
   }
 
   function flushFuturesTickJournal(session = ymdIst(Date.now())) {
-    const contracts = [...map.values()].flatMap(held => held.fut
-      .filter(future => future.expiry >= session)
-      .slice(0, FUTURES_MONTHS)
-      .map(future => ({ id: future.id, symbol: held.symbol, expiry: future.expiry })));
-    let batch;
+    let step = 'contract enumeration';
     try {
-      batch = collectTickJournalBatch(contracts, futTicks, session, journaledTicks);
+      const contracts = [...map.values()].flatMap(held => held.fut
+        .filter(future => future.expiry >= session)
+        .slice(0, FUTURES_MONTHS)
+        .map(future => ({ id: future.id, symbol: held.symbol, expiry: future.expiry })));
+      step = 'batch collection';
+      const batch = collectTickJournalBatch(contracts, futTicks, session, journaledTicks);
+      if (batch.invalidTimestamps) {
+        if (!invalidTickTimestampLogged) {
+          console.warn(`dhan: skipped ${batch.invalidTimestamps} invalid futures tick timestamp(s) in this flush streak`);
+          invalidTickTimestampLogged = true;
+        }
+      } else invalidTickTimestampLogged = false;
+      if (!batch.records.length) return true;
+      step = 'journal append';
+      const written = appendTickJournalBatch(tickJournalPath(session), batch.records);
+      step = 'signature advance';
+      for (const [key, signature] of batch.signatures) journaledTicks.set(key, signature);
+      return written >= 0;
     } catch (error) {
-      throw new Error(`batch collection: ${error?.message || error}`, { cause: error });
+      throw new Error(`${step}: ${error?.message || error}`, { cause: error });
     }
-    if (!batch.records.length) return true;
-    let written;
-    try { written = appendTickJournalBatch(tickJournalPath(session), batch.records); }
-    catch (error) { throw new Error(`journal append: ${error?.message || error}`, { cause: error }); }
-    for (const [key, signature] of batch.signatures) journaledTicks.set(key, signature);
-    return written >= 0;
   }
 
   function startTickJournal(session) {
@@ -1913,6 +1939,7 @@ export function createDhanProvider(universe) {
         flowing: feedHealthy(),
         packets,
         lastPacketAt,
+        futuresFlush: tickJournalFlush?.health() ?? { flushCount: 0, lastFlushAt: null, lastError: null, lastErrorAt: null },
         tokenState: Date.now() < authFailUntil ? 'rejected' : 'ok',
         // The token's own expiry (JWT exp) — /api/health turns it into hours left.
         tokenExpiresAt: tokenExpiryAt(process.env.DHAN_ACCESS_TOKEN),
