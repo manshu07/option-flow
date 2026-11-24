@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { CapsuleSegmented, type CapsuleOption } from '@/components/common/CapsuleSegmented';
 import { PageBar } from '@/components/chrome/PageBar';
 import { ThemeToggle } from '@/components/chrome/ThemeToggle';
@@ -417,12 +417,44 @@ function CardLive({ card, spots, futuresTick, optionTick, closes, zone }: {
   );
 }
 
-function Card({ card, spots, futuresTicks, optionTicks }: {
+type CardLiveTick = { ltp: number; oi?: number };
+type CardProps = {
   card: ObservationCard;
   spots: SpotMap;
-  futuresTicks: Record<string, { ltp: number }>;
-  optionTicks: Record<string, { ltp: number }>;
-}) {
+  futuresTicks: Record<string, CardLiveTick>;
+  optionTicks: Record<string, CardLiveTick>;
+};
+
+const sameTick = (a?: CardLiveTick, b?: CardLiveTick) => a?.ltp === b?.ltp && a?.oi === b?.oi;
+const sameOutcome = (a: ObservationCard['outcome'], b: ObservationCard['outcome']) => JSON.stringify(a) === JSON.stringify(b);
+
+function effectiveSpot(props: CardProps) {
+  const live = props.spots.get(props.card.symbol);
+  return {
+    sp: live?.sp ?? props.card.spot ?? null,
+    changePct: live?.changePct ?? props.card.spotChangePct ?? null,
+  };
+}
+
+function sameCardProps(previous: CardProps, next: CardProps): boolean {
+  const a = previous.card;
+  const b = next.card;
+  if (a.id !== b.id || a.symbol !== b.symbol || a.strike !== b.strike || a.side !== b.side || a.expiry !== b.expiry) return false;
+  if (!sameOutcome(a.outcome, b.outcome)) return false;
+  const previousSpot = effectiveSpot(previous);
+  const nextSpot = effectiveSpot(next);
+  if (previousSpot.sp !== nextSpot.sp || previousSpot.changePct !== nextSpot.changePct) return false;
+  const optionKey = `${a.symbol}|${a.strike}|${a.side}|${a.expiry}`;
+  return sameTick(previous.futuresTicks[a.symbol], next.futuresTicks[b.symbol])
+    && sameTick(previous.optionTicks[optionKey], next.optionTicks[optionKey])
+    && a.oiChangePct === b.oiChangePct
+    && a.support?.oi === b.support?.oi
+    && a.support?.changePct === b.support?.changePct
+    && a.resistance?.oi === b.resistance?.oi
+    && a.resistance?.changePct === b.resistance?.changePct;
+}
+
+export const Card = memo(function Card({ card, spots, futuresTicks, optionTicks }: CardProps) {
   const up = card.bias === 'bullish';
   const closes = useFutures(card.symbol);
   const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
@@ -464,7 +496,7 @@ function Card({ card, spots, futuresTicks, optionTicks }: {
       <footer className="obs-card__foot">{card.disclaimer}</footer>
     </article>
   );
-}
+}, sameCardProps);
 
 function ObservationTable({ cards, optionTicks }: {
   cards: ObservationCard[];

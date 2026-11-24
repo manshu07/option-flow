@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ObservationsPage } from './ObservationsPage';
+import { Card, ObservationsPage } from './ObservationsPage';
 import type { ObservationFollowThrough } from './observationModel';
 
 const card = {
@@ -370,6 +371,78 @@ describe('ObservationsPage cards and table', () => {
     const restoredNifty = screen.getAllByTestId('observations-club-section')[0];
     expect(within(restoredNifty).getByTestId('observations-club-count')).toHaveTextContent('(2)');
     expect(within(restoredNifty).queryAllByRole('article')).toHaveLength(0);
+  });
+
+  it('memoizes each Card across an unchanged poll and rerenders only the card with changed live inputs', async () => {
+    type CardProps = ComponentProps<typeof Card>;
+    const cardA = { ...card, id: 'nifty-live', symbol: 'NIFTY', outcome: { status: 'open' as const, followThrough: evidence() } };
+    const cardB = { ...card, id: 'bank-live', symbol: 'BANKNIFTY', outcome: { status: 'open' as const, followThrough: evidence() } };
+    const optionKey = (item: typeof cardA) => `${item.symbol}|${item.strike}|${item.side}|${item.expiry}`;
+    const propsA: CardProps = {
+      card: cardA,
+      spots: new Map([['NIFTY', { sp: 25_100, pc: 25_000, changePct: 0.4 }]]),
+      futuresTicks: { NIFTY: { ltp: 25_110, oi: 100 } },
+      optionTicks: { [optionKey(cardA)]: { ltp: 1_003, oi: 10_000 } },
+    };
+    const propsB: CardProps = {
+      card: cardB,
+      spots: new Map([['BANKNIFTY', { sp: 55_100, pc: 55_000, changePct: 0.18 }]]),
+      futuresTicks: { BANKNIFTY: { ltp: 55_110, oi: 200 } },
+      optionTicks: { [optionKey(cardB)]: { ltp: 2_003, oi: 20_000 } },
+    };
+    const cardRender = vi.spyOn(Card as unknown as { type: (props: CardProps) => unknown }, 'type');
+    const tree = (a: CardProps, b: CardProps) => <><Card {...a} /><Card {...b} /></>;
+    const cloneProps = (props: CardProps): CardProps => ({
+      ...props,
+      card: { ...props.card, outcome: JSON.parse(JSON.stringify(props.card.outcome)) },
+      spots: new Map([...props.spots].map(([symbol, value]) => [symbol, { ...value }])),
+      futuresTicks: Object.fromEntries(Object.entries(props.futuresTicks).map(([symbol, value]) => [symbol, { ...value }])),
+      optionTicks: Object.fromEntries(Object.entries(props.optionTicks).map(([key, value]) => [key, { ...value }])),
+    });
+
+    const { rerender } = render(tree(propsA, propsB));
+    expect(cardRender.mock.calls.map(([props]) => props.card.id)).toEqual([cardA.id, cardB.id]);
+    expect(await screen.findAllByRole('article')).toHaveLength(2);
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('/api/futures/NIFTY', expect.objectContaining({ cache: 'no-store' }));
+      expect(fetch).toHaveBeenCalledWith('/api/futures/BANKNIFTY', expect.objectContaining({ cache: 'no-store' }));
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    cardRender.mockClear();
+
+    let currentA = cloneProps(propsA);
+    let currentB = cloneProps(propsB);
+    rerender(tree(currentA, currentB));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(cardRender).not.toHaveBeenCalled();
+
+    currentA = cloneProps(currentA);
+    currentA.optionTicks[optionKey(cardA)] = { ltp: 1_004, oi: 10_000 };
+    cardRender.mockClear();
+    rerender(tree(currentA, currentB));
+    await waitFor(() => expect(cardRender).toHaveBeenCalledTimes(1));
+    expect(cardRender.mock.calls[0][0].card.id).toBe(cardA.id);
+
+    currentB = cloneProps(currentB);
+    currentB.card = { ...currentB.card, outcome: { status: 'sl', followThrough: evidence({ sequence: 'sl-first' }) } };
+    cardRender.mockClear();
+    rerender(tree(currentA, currentB));
+    await waitFor(() => expect(cardRender).toHaveBeenCalledTimes(1));
+    expect(cardRender.mock.calls[0][0].card.id).toBe(cardB.id);
+
+    currentA = cloneProps(currentA);
+    currentA.spots = new Map([['NIFTY', { sp: 25_101, pc: 25_000, changePct: 0.404 }]]);
+    cardRender.mockClear();
+    rerender(tree(currentA, currentB));
+    await waitFor(() => expect(cardRender).toHaveBeenCalledTimes(1));
+    expect(cardRender.mock.calls[0][0].card.id).toBe(cardA.id);
+
+    currentB = cloneProps(currentB);
+    currentB.optionTicks[optionKey(cardB)] = { ltp: 2_003, oi: 20_001 };
+    cardRender.mockClear();
+    rerender(tree(currentA, currentB));
+    await waitFor(() => expect(cardRender).toHaveBeenCalledTimes(1));
+    expect(cardRender.mock.calls[0][0].card.id).toBe(cardB.id);
   });
 
   it('exposes the same verification in the existing Status table cell', async () => {
