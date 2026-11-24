@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// ws-allow: this script's purpose is recording live sessions - the feed connection IS the feature.
 /**
  * Record real sessions from a provider, so the "recorded" provider can replay them.
  *

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseTodayIntraday } from '../server/providers/dhan.mjs';
+import { loadDhanEnv, dhanChartsIntraday, nearMonthFuturesId } from '../server/dhanRest.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -44,8 +45,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let updated = 0, failed = 0, noId = 0;
 const failedList = [];
 for (const sym of symbols) {
-  const fut = futId.get(sym);
-  if (!fut || fut.exp < session) { console.log(`${sym}: no near-month futures id (exp ${fut?.exp ?? '—'})`); noId++; failedList.push(sym); continue; }
+  const fut = nearMonthFuturesId(env, sym, session);
+  if (!fut) { console.log(`${sym}: no near-month futures id in master`); noId++; failedList.push(sym); continue; }
   try {
     const res = await fetch('https://api.dhan.co/v2/charts/intraday', {
       method: 'POST', headers: HEADERS,
