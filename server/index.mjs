@@ -66,6 +66,7 @@ import { runTriage } from './typesafe.mjs';
 import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
+import { perfMark, startPerfProbe } from './perfProbe.mjs';
 import { filterLiveExpiries, getLatestTradingSessionDate, getPreviousTradingDay, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -1202,6 +1203,8 @@ function replayManifest(date) {
 }
 
 const server = http.createServer((req, res) => {
+  // PERF PROBE: route timing for the Rust-porting evidence (never breaks serving).
+  perfMark(req, res);
   // A bad request never takes the server down: anything thrown is answered, and logged here.
   handle(req, res).catch(error => {
     log('request failed:', req.method, String(req.url).slice(0, 200), error?.message || error);
@@ -1209,6 +1212,8 @@ const server = http.createServer((req, res) => {
     else res.destroy();
   });
 });
+// PERF PROBE: 60s JSONL report (event-loop lag + top routes by time) → server/data/perf-probe.jsonl
+startPerfProbe({});
 // Slow or idle clients are cut off rather than held open.
 server.headersTimeout = 15_000;
 server.requestTimeout = 30_000;

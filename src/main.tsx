@@ -6,6 +6,7 @@ import { UiIconProvider } from '@/assets/svg';
 import { installUiTooltips } from '@/lib/uiTooltips';
 import { loadUnderlyings } from './lib/underlyings';
 import { dismissBootSplash, settleWithin } from './lib/bootstrap';
+import './perfClient';
 import '@/styles/oi-design-tokens.css';
 import '@/styles/index.css';
 import '@/styles/strike-filter.css';

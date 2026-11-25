@@ -7,6 +7,7 @@ import { isTradingDay, marketParts } from '../src/lib/marketSession.ts';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACTS_PATH = path.join(ROOT, 'docs', 'mcx-spike-contracts.json');
 const OUTPUT_PATH = '/tmp/mcx-ticks.json';
+const SANDBOX_OUTPUT_PATH = '/var/folders/y_/w5p27p3s5cv60vc74dw4xqs40000gn/T/kilo/mcx-ticks.json';
 const SEGMENT = 'MCX_COMM';
 const SEGMENT_BYTE = 5;
 const SUBSCRIBE_FULL = 21;
@@ -21,6 +22,18 @@ function redact(value) {
     if (secret) text = text.split(secret).join('[redacted]');
   }
   return text;
+}
+
+function writeEvidence(evidence) {
+  const serialized = `${JSON.stringify(evidence, null, 2)}\n`;
+  try {
+    fs.writeFileSync(OUTPUT_PATH, serialized);
+    return OUTPUT_PATH;
+  } catch (error) {
+    if (error?.code !== 'EPERM' && error?.code !== 'EACCES') throw error;
+    fs.writeFileSync(SANDBOX_OUTPUT_PATH, serialized);
+    return SANDBOX_OUTPUT_PATH;
+  }
 }
 
 function sessionMinute(now) { return marketParts(now).minuteOfDay; }
@@ -173,15 +186,21 @@ async function run() {
     symbols,
     rawTicks,
   };
-  fs.writeFileSync(OUTPUT_PATH, `${JSON.stringify(evidence, null, 2)}\n`);
-  console.log(JSON.stringify({ ...evidence, rawTicks: `omitted from console; ${rawTicks.length} packets saved to ${OUTPUT_PATH}` }, null, 2));
+  const evidencePath = writeEvidence(evidence);
+  console.log(JSON.stringify({ ...evidence, rawTicks: `omitted from console; ${rawTicks.length} packets saved to ${evidencePath}` }, null, 2));
+  if (evidencePath !== OUTPUT_PATH) console.log(`Sandbox denied ${OUTPUT_PATH}; raw evidence saved to ${evidencePath}`);
   if (captureError) process.exitCode = 1;
   if (!evidence.allSymbolsHaveOi) process.exitCode = 2;
 }
 
 run().catch(error => {
   const evidence = { status: 'failed', atIST: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', dateStyle: 'short', timeStyle: 'medium' }).format(new Date()), error: redact(error?.message || error) };
-  fs.writeFileSync(OUTPUT_PATH, `${JSON.stringify(evidence, null, 2)}\n`);
   console.error(JSON.stringify(evidence));
+  try {
+    const evidencePath = writeEvidence(evidence);
+    if (evidencePath !== OUTPUT_PATH) console.error(`Sandbox denied ${OUTPUT_PATH}; failure evidence saved to ${evidencePath}`);
+  } catch (writeError) {
+    console.error(`Unable to save C0 failure evidence: ${redact(writeError?.message || writeError)}`);
+  }
   process.exitCode = 1;
 });
