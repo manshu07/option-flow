@@ -223,7 +223,32 @@ function startHistoryRefreshChain(at) {
   return true;
 }
 
+// Duplicate-content guard (2026-11-25 owner report: same SL/TGT and EOD-watchlist
+// messages repeating across restarts and days). One Set of content hashes per day:
+// an identical body sent again the same day is dropped, whichever path produced it.
+// Persisted so an evening restart cannot replay the day's messages either.
+const sentMessageHashPath = path.join(DATA_DIR, 'telegram-sent-hashes.json');
+const dayKeyFor = at => new Date(at).toISOString().slice(0, 10);
+let sentHashes = (() => {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(sentMessageHashPath, 'utf8'));
+    if (parsed?.dayKey === dayKeyFor(Date.now()) && Array.isArray(parsed.hashes)) return new Set(parsed.hashes);
+  } catch { /* fresh day or first boot */ }
+  return new Set();
+})();
+function contentSeen(text) {
+  const hash = crypto.createHash('sha1').update(text).digest('hex').slice(0, 16);
+  if (sentHashes.has(hash)) return true;
+  sentHashes.add(hash);
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(sentMessageHashPath, JSON.stringify({ dayKey: dayKeyFor(Date.now()), hashes: [...sentHashes].slice(-500) }));
+  } catch { /* guard must never break sending */ }
+  return false;
+}
+
 async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
+  if (contentSeen(text)) { log('telegram duplicate suppressed:', text.slice(0, 60).replace(/\n/g, ' ')); return { sent: false, duplicate: true }; }
   let sent = false;
   const ownerOptions = parseMode ? { parseMode } : undefined;
   try { sent = (await sendTelegram(`${text}\n\n${OWNER_DISCLAIMER}`, ownerOptions)).sent === true; }
