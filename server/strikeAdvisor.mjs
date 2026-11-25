@@ -1034,7 +1034,20 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     const regimeFor = (symbol, at) => {
       const series = seriesFor(symbol);
       const moveStats = loadMoveStats(MOVE_STATS_DIR, symbol);
-      const closes = (Array.isArray(moveStats?.recentCloses) ? moveStats.recentCloses : [])
+      // FALLBACK (2026-11-25 owner report: zero index cards while the regime gate
+      // classified every symbol "range (thin history)"): 209/210 move-stats files
+      // predate the recentCloses field, so the classifier saw 1 close and always
+      // returned range. Merge the official bhavcopy fut-stats recentCloses when
+      // the primary store is missing them — the fut-stats store is the sanctioned
+      // 467-session history (server/data/fut-stats/<SYM>.json).
+      let statsCloses = moveStats?.recentCloses;
+      if (!Array.isArray(statsCloses) || !statsCloses.length) {
+        try {
+          const futStats = JSON.parse(readFileSync(join(process.cwd(), 'server', 'data', 'fut-stats', `${symbol}.json`), 'utf8'));
+          if (Array.isArray(futStats?.recentCloses) && futStats.recentCloses.length) statsCloses = futStats.recentCloses;
+        } catch { /* no fut-stats file — behave as before */ }
+      }
+      const closes = (Array.isArray(statsCloses) ? statsCloses : [])
         .map(item => Number(item?.close ?? item))
         .filter(value => Number.isFinite(value) && value > 0);
       const livePrice = Number.isFinite(series?.sp) && series.sp > 0 ? series.sp : null;
@@ -1044,7 +1057,7 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       }
       // Match adaptiveLevels exactly: use its liveRegime classifier and this
       // market build's spot, without changing historical regime semantics.
-      return liveRegime(moveStats?.recentCloses, livePrice);
+      return liveRegime(statsCloses, livePrice);
     };
     // Model candidates are already built; validate them before they occupy a
     // sector slot or influence the cap available to code-computed early cards.
