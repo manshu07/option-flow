@@ -1,13 +1,16 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { encodeSeries, marketFile } from './marketFile.mjs';
+import { persistFutures, readFutures } from './replayStorage.mjs';
+import { parseTodayIntraday, shouldRunTodayBackfill } from './providers/dhan.mjs';
 
 vi.mock('node:http', () => ({
   default: { createServer: () => ({ listen: vi.fn() }) },
 }));
 
-const { archiveRequestWithLiveGuard, loadFuturesWithArchiveLock, storedSessionSnapshot, healthPayload, strikeFlowFromFiles, truncateStrikeFlow } = await import('./index.mjs');
+const { archiveRequestWithLiveGuard, encodeMcxFutureSeries, loadFuturesWithArchiveLock, storedSessionSnapshot, healthPayload, strikeFlowFromFiles, truncateStrikeFlow } = await import('./index.mjs');
 
 describe('live-session archive guard', () => {
   it('rejects the current live session before invoking archive payload construction', async () => {
@@ -45,6 +48,35 @@ describe('sealed archive futures persistence', () => {
     ]);
     expect(result).toEqual({ symbol: 'ALPHA', session: '2026-11-13', months: [] });
     expect(writes).toBe(0);
+  });
+
+  it('merges MCX REST backfill field-by-field while retaining feed close and OI', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcx-futures-merge-'));
+    const date = '2026-11-25';
+    const expiry = '2026-12-04';
+    const firstAt = Date.parse('2026-11-25T04:00:00Z');
+    try {
+      persistFutures(dir, date, 'GOLD', {
+        symbol: 'GOLD', session: date, months: [{ date: expiry, prevClose: 125_000, prevOi: 90, candles: [
+          { at: firstAt, open: 125_010, high: 125_020, low: 125_000, close: 125_015, oi: 100, volume: 10 },
+        ] }],
+      });
+      persistFutures(dir, date, 'GOLD', {
+        symbol: 'GOLD', session: date, months: [{ date: expiry, prevClose: 124_900, prevOi: 80, candles: [
+          { at: firstAt, high: 125_030, low: 124_990, close: 125_001, oi: 95, volume: 12 },
+          { at: firstAt + 60_000, open: 125_015, high: 125_025, low: 125_010, close: 125_020, oi: 105, volume: 4 },
+        ] }],
+      }, { preferIncomingCloseOi: false });
+
+      const saved = readFutures(dir, date, 'GOLD');
+      expect(saved.months[0]).toMatchObject({ prevClose: 125_000, prevOi: 90 });
+      expect(saved.months[0].candles).toEqual([
+        { at: firstAt, open: 125_010, high: 125_030, low: 124_990, close: 125_015, oi: 100, volume: 12 },
+        { at: firstAt + 60_000, open: 125_015, high: 125_025, low: 125_010, close: 125_020, oi: 105, volume: 4 },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('reports and absorbs a futures disk-write failure without losing the provider result', async () => {
@@ -140,6 +172,53 @@ describe('strike flow extraction', () => {
     const flow = strikeFlowFromFiles(noisy, ['NIFTY']);
     expect(flow.strikes['NIFTY|24500|CE'].series).toHaveLength(3);
     expect(flow.strikes['SONACOMS|920|CE']).toBeUndefined();
+  });
+});
+
+describe('MCX market-file capture', () => {
+  it('writes an MCX-tagged FUTCOM series without changing existing NSE/BSE series', () => {
+    const at = Date.parse('2026-11-25T10:00:00+05:30');
+    const nse = encodeSeries({ symbol: 'NIFTY', kind: 'index', lot: 65 }, {
+      spot: 25_100, prevClose: 25_000, expiry: '2026-11-26', strikes: [],
+    }, at);
+    const bse = encodeSeries({ symbol: 'SENSEX', kind: 'index', lot: 20 }, {
+      spot: 84_100, prevClose: 84_000, expiry: '2026-11-27', strikes: [],
+    }, at);
+    const originalNse = JSON.stringify(nse);
+    const originalBse = JSON.stringify(bse);
+    const future = {
+      symbol: 'GOLD', session: '2026-11-25', months: [
+        { date: '2026-11-24', securityId: 494000, instrument: 'FUTCOM', candles: [{ at: at - 60_000, close: 125_000 }] },
+        { date: '2026-12-04', securityId: 495213, instrument: 'FUTCOM', prevClose: 125_900, candles: [
+          { at: at - 60_000, open: 126_000, high: 126_020, low: 125_980, close: 126_015, oi: 1_000, volume: 50 },
+        ] },
+      ],
+    };
+    const mcx = encodeMcxFutureSeries(
+      { symbol: 'GOLD', kind: 'stock', exch: 'MCX', exchange: 'MCX', segment: 'MCX_COMM', securityId: 495213, lot: 1, tick: 100 },
+      future,
+      { ltp: 126_025, at, oi: 1_005, volume: 53 },
+      at,
+      '2026-11-25',
+    );
+    const file = marketFile({ at, date: '2026-11-25', series: [nse, bse, mcx], minutes: [], ladders: {} });
+
+    expect(mcx).toMatchObject({ s: 'GOLD', e: '2026-12-04', exchange: 'MCX', segment: 'MCX_COMM', instrument: 'FUTCOM', sp: 126025, r: [] });
+    expect(JSON.stringify(file.series.find(row => row.s === 'NIFTY'))).toBe(originalNse);
+    expect(JSON.stringify(file.series.find(row => row.s === 'SENSEX'))).toBe(originalBse);
+    expect(file.series).toHaveLength(3);
+  });
+
+  it('uses the MCX calendar for FUTCOM intraday backfill, independent of NSE holidays', () => {
+    const at = Date.parse('2026-11-24T10:00:00+05:30');
+    expect(shouldRunTodayBackfill(at, '2026-11-24', { exchange: 'MCX' })).toBe(true);
+    expect(shouldRunTodayBackfill(at, '2026-11-24')).toBe(false);
+    expect(parseTodayIntraday({
+      timestamp: [Date.parse('2026-11-24T04:00:00Z')],
+      open: [126_000], high: [126_100], low: [125_950], close: [126_025], open_interest: [1005], volume: [53],
+    }, '2026-11-24')).toEqual([{
+      at: Date.parse('2026-11-24T04:00:00Z'), open: 126_000, high: 126_100, low: 125_950, close: 126_025, oi: 1005, volume: 53,
+    }]);
   });
 });
 

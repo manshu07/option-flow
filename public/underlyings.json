@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-08-13T18:52:27.390Z",
-  "count": 217,
+  "count": 223,
   "themes": {
     "sectors": {
       "banks-private": {
@@ -2411,6 +2411,84 @@
       "kind": "stock",
       "exch": "NSE",
       "sector": "pharma-healthcare"
+    },
+    {
+      "symbol": "GOLD",
+      "name": "Gold Futures",
+      "apiKey": "MCX:GOLD",
+      "lot": 1,
+      "kind": "stock",
+      "exch": "MCX",
+      "exchange": "MCX",
+      "segment": "MCX_COMM",
+      "securityId": 495213,
+      "tick": 100,
+      "expiryCalendarNote": "Near-month FUTCOM resolves from the current Dhan scrip master at provider startup."
+    },
+    {
+      "symbol": "SILVER",
+      "name": "Silver Futures",
+      "apiKey": "MCX:SILVER",
+      "lot": 1,
+      "kind": "stock",
+      "exch": "MCX",
+      "exchange": "MCX",
+      "segment": "MCX_COMM",
+      "securityId": 495214,
+      "tick": 100,
+      "expiryCalendarNote": "Near-month FUTCOM resolves from the current Dhan scrip master at provider startup."
+    },
+    {
+      "symbol": "NATURALGAS",
+      "name": "Natural Gas Futures",
+      "apiKey": "MCX:NATURALGAS",
+      "lot": 1,
+      "kind": "stock",
+      "exch": "MCX",
+      "exchange": "MCX",
+      "segment": "MCX_COMM",
+      "securityId": 578249,
+      "tick": 10,
+      "expiryCalendarNote": "Master root NATURALGAS; resolve active FUTCOM expiry from the current Dhan scrip master."
+    },
+    {
+      "symbol": "GOLDM",
+      "name": "Gold Mini Futures",
+      "apiKey": "MCX:GOLDM",
+      "lot": 1,
+      "kind": "stock",
+      "exch": "MCX",
+      "exchange": "MCX",
+      "segment": "MCX_COMM",
+      "securityId": 575011,
+      "tick": 100,
+      "expiryCalendarNote": "Near-month FUTCOM resolves from the current Dhan scrip master at provider startup."
+    },
+    {
+      "symbol": "SILVERM",
+      "name": "Silver Mini Futures",
+      "apiKey": "MCX:SILVERM",
+      "lot": 1,
+      "kind": "stock",
+      "exch": "MCX",
+      "exchange": "MCX",
+      "segment": "MCX_COMM",
+      "securityId": 483080,
+      "tick": 100,
+      "expiryCalendarNote": "Near-month FUTCOM resolves from the current Dhan scrip master at provider startup."
+    },
+    {
+      "symbol": "NATURALGASM",
+      "name": "Natural Gas Mini Futures",
+      "apiKey": "MCX:NATURALGASM",
+      "lot": 1,
+      "kind": "stock",
+      "exch": "MCX",
+      "exchange": "MCX",
+      "segment": "MCX_COMM",
+      "securityId": 578250,
+      "tick": 10,
+      "expiryCalendarNote": "Master symbol NATGASMINI/custom symbol NATURALGASM; resolve active FUTCOM expiry from the current Dhan scrip master."
     }
   ],
   "note": "F&O underlyings: symbol, name, exchange key (EXCHANGE:SYMBOL), lot size, kind, sector. Providers map these symbols to their own instrument ids."

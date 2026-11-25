@@ -58,7 +58,7 @@ import fs from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isMarketSessionTime } from '../../src/lib/marketSession.ts';
+import { isMarketSessionTime, isTradingDay, marketParts, sessionFor } from '../../src/lib/marketSession.ts';
 import { createFullOptionChainSnapshot, normalizeDhanOptionChain } from '../optionChainSnapshots.mjs';
 import { feedReinitDue } from '../feedRecovery.mjs';
 import { readFutures } from '../replayStorage.mjs';
@@ -69,6 +69,7 @@ const DATA_DIR = path.resolve(ROOT, process.env.MF_DATA_DIR || 'server/data');
 const MASTER_CACHE = path.join(ROOT, 'data', '.dhan-master.csv');
 const MAX_PER_SECOND = Math.max(1, Number(process.env.DHAN_MAX_RPS) || 5);
 const FUTURES_MONTHS = Math.max(1, Math.min(3, Number(process.env.DHAN_FUTURES_MONTHS) || 2));
+const futuresMonthLimit = held => held.exchSeg === 'MCX_COMM' ? 1 : FUTURES_MONTHS;
 const CHAIN_PER_8S = 10; // documented hard cap; do not raise
 const STRIKES_EACH_SIDE = 15;
 // Next-expiry capture (December spec): a narrower second window on the expiry
@@ -121,10 +122,10 @@ export function mergeDhanFuturesCandle(restCandle, feedCandle) {
   return merged;
 }
 
-export function shouldBackfillToday(candles, now, session, { minBars = 30, staleMs = 120_000 } = {}) {
-  if (!Number.isFinite(now) || ymdIst(now) !== session || !isMarketSessionTime(now)) return false;
-  const minuteOfDay = Math.floor((now + 330 * 60_000) / 60_000) % 1440;
-  const elapsed = Math.max(1, minuteOfDay - 9 * 60 - 15 + 1);
+export function shouldBackfillToday(candles, now, session, { minBars = 30, staleMs = 120_000, exchange = 'NSE' } = {}) {
+  if (!Number.isFinite(now) || ymdIst(now) !== session || !isTradingDay(now, exchange) || !isMarketSessionTime(now, exchange)) return false;
+  const minuteOfDay = marketParts(now).minuteOfDay;
+  const elapsed = Math.max(1, minuteOfDay - sessionFor(exchange, now).openMinute + 1);
   const required = Math.min(minBars, elapsed);
   const today = (Array.isArray(candles) ? candles : []).filter(candle => Number.isFinite(candle?.at)
     && ymdIst(candle.at) === session && Number.isFinite(candle.close) && candle.close > 0);
@@ -132,9 +133,9 @@ export function shouldBackfillToday(candles, now, session, { minBars = 30, stale
   return today.length < required && (!lastAt || now - lastAt > staleMs);
 }
 
-export function shouldRunTodayBackfill(now, session, { postClose = false } = {}) {
-  if (!Number.isFinite(now) || ymdIst(now) !== session) return false;
-  return postClose ? !isMarketSessionTime(now) : isMarketSessionTime(now);
+export function shouldRunTodayBackfill(now, session, { postClose = false, exchange = 'NSE' } = {}) {
+  if (!Number.isFinite(now) || ymdIst(now) !== session || !isTradingDay(now, exchange)) return false;
+  return postClose ? !isMarketSessionTime(now, exchange) : isMarketSessionTime(now, exchange);
 }
 
 export function parseTodayIntraday(body, session) {
@@ -412,7 +413,7 @@ export function createDhanProvider(universe) {
     try {
       const contracts = [...map.values()].flatMap(held => held.fut
         .filter(future => future.expiry >= session)
-        .slice(0, FUTURES_MONTHS)
+        .slice(0, futuresMonthLimit(held))
         .map(future => ({ id: future.id, symbol: held.symbol, expiry: future.expiry })));
       step = 'batch collection';
       const batch = collectTickJournalBatch(contracts, futTicks, session, journaledTicks);
@@ -1245,8 +1246,8 @@ export function createDhanProvider(universe) {
     const today = ymdIst(Date.now());
     const optionKeys = [], coreKeys = [];
     for (const held of map.values()) {
-      coreKeys.push(`${SEG_BYTE[held.underSeg]}:${held.underlyingId}`);
-      for (const f of held.fut.filter(f => f.expiry >= session).slice(0, FUTURES_MONTHS)) {
+      if (held.exchSeg !== 'MCX_COMM') coreKeys.push(`${SEG_BYTE[held.underSeg]}:${held.underlyingId}`);
+      for (const f of held.fut.filter(f => f.expiry >= session).slice(0, futuresMonthLimit(held))) {
         coreKeys.push(`${SEG_BYTE[held.exchSeg]}:${f.id}`);
         if (!futTicks.has(f.id)) futTicks.set(f.id, new Map());
       }
@@ -1407,14 +1408,32 @@ export function createDhanProvider(universe) {
       const rows = csvRows(text);
       const header = rows.next().value ?? [];
       const col = name => header.indexOf(name);
-      const C = { exch: col('SEM_EXM_EXCH_ID'), seg: col('SEM_SEGMENT'), id: col('SEM_SMST_SECURITY_ID'), instr: col('SEM_INSTRUMENT_NAME'), code: col('SEM_EXPIRY_CODE'), sym: col('SEM_TRADING_SYMBOL'), exp: col('SEM_EXPIRY_DATE'), strike: col('SEM_STRIKE_PRICE'), opt: col('SEM_OPTION_TYPE') };
+      const C = {
+        exch: col('SEM_EXM_EXCH_ID'), seg: col('SEM_SEGMENT'), id: col('SEM_SMST_SECURITY_ID'), instr: col('SEM_INSTRUMENT_NAME'),
+        code: col('SEM_EXPIRY_CODE'), sym: col('SEM_TRADING_SYMBOL'), exp: col('SEM_EXPIRY_DATE'), strike: col('SEM_STRIKE_PRICE'),
+        opt: col('SEM_OPTION_TYPE'), custom: col('SEM_CUSTOM_SYMBOL'), masterSymbol: col('SM_SYMBOL_NAME'),
+      };
 
       const indices = new Map(), equities = new Map(), fno = new Map();
+      const mcxSymbols = universe
+        .filter(underlying => (underlying.exchange ?? underlying.exch) === 'MCX')
+        .map(underlying => String(underlying.symbol).toUpperCase());
       for (const row of rows) {
         const exch = row[C.exch], seg = row[C.seg], instr = row[C.instr];
         const id = Number(row[C.id]);
         const symbol = (row[C.sym] ?? '').toUpperCase();
         if (!symbol || !Number.isFinite(id)) continue;
+        if (exch === 'MCX' && seg === 'M' && instr === 'FUTCOM') {
+          const custom = (row[C.custom] ?? '').trim().toUpperCase();
+          const masterSymbol = (row[C.masterSymbol] ?? '').trim().toUpperCase();
+          const root = mcxSymbols.find(requested => masterSymbol === requested || custom.startsWith(`${requested} `));
+          if (!root) continue;
+          const key = `MCX|${root}`;
+          const held = fno.get(key) ?? { fut: [], expiries: new Set(), exchSeg: 'MCX_COMM', strikes: new Map(), strikeList: new Map() };
+          held.fut.push({ id, expiry: ymd(row[C.exp]), expiryCode: Number(row[C.code]) || 0, instrument: 'FUTCOM' });
+          fno.set(key, held);
+          continue;
+        }
         if (seg === 'I' && instr === 'INDEX') indices.set(symbol, { id, exch });
         else if (seg === 'E' && instr === 'EQUITY' && exch === 'NSE') equities.set(symbol, id);
         else if (seg === 'D' && symbol.endsWith('-FUT')) {
@@ -1446,6 +1465,26 @@ export function createDhanProvider(universe) {
       }
 
       for (const u of universe) {
+        if ((u.exchange ?? u.exch) === 'MCX') {
+          const grp = fno.get(`MCX|${String(u.symbol).toUpperCase()}`);
+          const fut = (grp?.fut ?? []).sort((a, b) => a.expiry.localeCompare(b.expiry));
+          const activeSession = ymdIst(Date.now());
+          const near = fut.find(contract => contract.expiry >= activeSession);
+          if (!near) continue;
+          map.set(u.symbol, {
+            symbol: u.symbol,
+            kind: u.kind,
+            underlyingId: near.id,
+            underSeg: 'MCX_COMM',
+            exchSeg: 'MCX_COMM',
+            fut,
+            expiries: [],
+            strikeMap: new Map(),
+            strikeList: new Map(),
+            optionStrikes: null,
+          });
+          continue;
+        }
         const indexRow = indices.get(INDEX_ALIAS[u.symbol] ?? u.symbol);
         const equityId = u.kind === 'stock' ? equities.get(EQUITY_ALIAS[u.symbol] ?? u.symbol) : undefined;
         const dhanName = INDEX_ALIAS[u.symbol] ?? EQUITY_ALIAS[u.symbol] ?? u.symbol;
@@ -1472,7 +1511,7 @@ export function createDhanProvider(universe) {
 
       const session = ymdIst(Date.now());
       for (const held of map.values()) {
-        for (const future of held.fut.filter(item => item.expiry >= session).slice(0, FUTURES_MONTHS)) {
+        for (const future of held.fut.filter(item => item.expiry >= session).slice(0, futuresMonthLimit(held))) {
           if (!futTicks.has(future.id)) futTicks.set(future.id, new Map());
         }
       }
@@ -1507,6 +1546,13 @@ export function createDhanProvider(universe) {
         } else {
           console.warn(`dhan: December window trimmed to ±${nextEachSide} to fit the per-connection cap of 5,000`);
         }
+      }
+      const mcxPrefix = `${SEG_BYTE.MCX_COMM}:`;
+      const mcxCoreKeys = coreKeys.filter(key => key.startsWith(mcxPrefix));
+      if (mcxCoreKeys.length && (coreKeys.length > 5_000 || coreKeys.length + optionKeys.length > FEED_INSTRUMENT_CAP || optionKeys.length > optionCap)) {
+        const mcxKeys = new Set(mcxCoreKeys);
+        coreKeys = coreKeys.filter(key => !mcxKeys.has(key));
+        console.warn(`dhan: MCX futures skipped by the subscription cap guard (${mcxCoreKeys.length} near contracts); NSE/BSE core retained`);
       }
       let nextLegCount = 0;
       for (const held of map.values()) if (held.nextWindow?.window?.length) nextLegCount += held.nextWindow.window.length * 2;
@@ -1665,9 +1711,10 @@ export function createDhanProvider(universe) {
 
     async futures(u, session) {
       const held = entry(u.symbol);
-      const months = held.fut.filter(f => f.expiry >= session).slice(0, FUTURES_MONTHS);
+      const months = held.fut.filter(f => f.expiry >= session).slice(0, futuresMonthLimit(held));
       const today = ymdIst(Date.now());
       return Promise.all(months.map(async ({ id, expiry, expiryCode, instrument }, month) => {
+        const contractMeta = held.exchSeg === 'MCX_COMM' ? { securityId: id, instrument: 'FUTCOM' } : {};
         const key = `${SEG_BYTE[held.exchSeg]}:${id}`;
         const feed = live.get(key) ?? {};
         const restKey = `${session}:${id}`;
@@ -1681,9 +1728,9 @@ export function createDhanProvider(universe) {
           if (!rest) futRest.delete(restKey);
           if (session === today && rest) {
             mergeRestCandlesIntoFeed(id, rest.candles);
-            return { date: expiry, prevClose: rest.prevClose, prevOi: rest.prevOi, prevHigh: rest.prevHigh, prevLow: rest.prevLow, candles: candlesFromFeed(id) };
+            return { ...contractMeta, date: expiry, prevClose: rest.prevClose, prevOi: rest.prevOi, prevHigh: rest.prevHigh, prevLow: rest.prevLow, candles: candlesFromFeed(id) };
           }
-          return { date: expiry, prevClose: rest?.prevClose ?? null, prevOi: rest?.prevOi ?? null, prevHigh: rest?.prevHigh ?? null, prevLow: rest?.prevLow ?? null, candles: rest?.candles ?? [] };
+          return { ...contractMeta, date: expiry, prevClose: rest?.prevClose ?? null, prevOi: rest?.prevOi ?? null, prevHigh: rest?.prevHigh ?? null, prevLow: rest?.prevLow ?? null, candles: rest?.candles ?? [] };
         }
         // One REST backfill per contract per session: yesterday's close and OI,
         // plus the minutes before the feed was subscribed, which its ticks then
@@ -1767,25 +1814,27 @@ export function createDhanProvider(universe) {
           const pd = prevDayFutures(u.symbol, session);
           if (pd) { prevClose = prevClose ?? pd.close; prevOi = prevOi ?? pd.oi; }
         }
-        return { date: expiry, prevClose, prevOi, prevHigh, prevLow, candles: finalCandles };
+        return { ...contractMeta, date: expiry, prevClose, prevOi, prevHigh, prevLow, candles: finalCandles };
       }));
     },
 
-    async backfillTodayFutures(session = ymdIst(Date.now()), { symbols = null, force = false, postClose = false } = {}) {
+    async backfillTodayFutures(session = ymdIst(Date.now()), { symbols = null, force = false, postClose = false, exchange = 'NSE' } = {}) {
       const now = Date.now();
-      if (!shouldRunTodayBackfill(now, session, { postClose })) return { updates: [], attempted: 0, failed: [], skipped: 'session-guard' };
+      if (!shouldRunTodayBackfill(now, session, { postClose, exchange })) return { updates: [], attempted: 0, failed: [], skipped: 'session-guard' };
       const selected = symbols == null ? null : new Set(symbols);
       const targets = [];
       for (const held of map.values()) {
         if (selected && !selected.has(held.symbol)) continue;
-        const [near] = held.fut.filter(contract => contract.expiry >= session).slice(0, FUTURES_MONTHS);
+        const heldExchange = held.exchSeg === 'MCX_COMM' ? 'MCX' : 'NSE';
+        if (heldExchange !== exchange) continue;
+        const [near] = held.fut.filter(contract => contract.expiry >= session).slice(0, futuresMonthLimit(held));
         if (!near) continue;
         const restKey = `${session}:${near.id}`;
         const cachedPromise = futRest.get(restKey);
         const cachedRest = cachedPromise ? await cachedPromise.catch(() => null) : null;
         if (cachedRest) mergeRestCandlesIntoFeed(near.id, cachedRest.candles);
         const candles = candlesFromFeed(near.id);
-        if (!force && !shouldBackfillToday(candles, now, session)) continue;
+        if (!force && !shouldBackfillToday(candles, now, session, { exchange })) continue;
         targets.push({ held, near, restKey, cachedRest });
       }
 
@@ -1883,7 +1932,9 @@ export function createDhanProvider(universe) {
       const out = { futures: {}, options: {} };
       for (const symbol of Array.isArray(symbols) ? symbols : []) {
         const held = map.get(symbol);
-        const fut = held?.fut?.[0];
+        const fut = held?.exchSeg === 'MCX_COMM'
+          ? held.fut.find(contract => contract.expiry >= ymdIst(Date.now()))
+          : held?.fut?.[0];
         if (!fut) continue;
         const reading = live.get(`${SEG_BYTE[held.exchSeg]}:${fut.id}`);
         if (Number.isFinite(reading?.ltp) && reading.ltp > 0) out.futures[symbol] = { ltp: reading.ltp, at: reading.t ?? null };

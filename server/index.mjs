@@ -67,7 +67,7 @@ import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
 import { perfMark, startPerfProbe } from './perfProbe.mjs';
-import { filterLiveExpiries, getLatestTradingSessionDate, getPreviousTradingDay, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds } from '../src/lib/marketSession.ts';
+import { filterLiveExpiries, getLatestTradingSessionDate, getPreviousTradingDay, isMarketSessionTime, isTradingDay, marketCloseMinuteFor, marketParts, marketSessionBounds, sessionFor } from '../src/lib/marketSession.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT) || 8787;
@@ -82,12 +82,21 @@ const OWNER_DISCLAIMER = '🎓 educational captured market data only · not inve
 const WORKERS = 8;
 /** A futures read is kept this long: the page asks again every two minutes. */
 const FUTURES_KEEP_MS = 60_000;
+const DEFAULT_MCX_SYMBOLS = ['GOLD', 'SILVER', 'NATURALGAS', 'GOLDM', 'SILVERM', 'NATURALGASM'];
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 
+const requestedMcx = process.env.MCX_SYMBOLS == null
+  ? new Set(DEFAULT_MCX_SYMBOLS)
+  : new Set(process.env.MCX_SYMBOLS.split(',').map(symbol => symbol.trim().toUpperCase()).filter(Boolean));
+const unknownMcx = [...requestedMcx].filter(symbol => !DEFAULT_MCX_SYMBOLS.includes(symbol));
+if (unknownMcx.length) log(`mcx: ignoring unknown MCX_SYMBOLS: ${unknownMcx.join(',')}`);
+for (const symbol of unknownMcx) requestedMcx.delete(symbol);
 const universe = JSON.parse(fs.readFileSync(path.join(ROOT, 'public/underlyings.json'), 'utf8')).underlyings
-  .filter(u => u && typeof u.symbol === 'string' && u.lot > 0);
+  .filter(u => u && typeof u.symbol === 'string' && u.lot > 0)
+  .filter(u => (u.exchange ?? u.exch) !== 'MCX' || requestedMcx.has(u.symbol.toUpperCase()));
 const bySymbol = new Map(universe.map(u => [u.symbol, u]));
+const isMcxUnderlying = underlying => (underlying?.exchange ?? underlying?.exch) === 'MCX';
 // `--recorded` (npm run dev:recorded / start:recorded) and `--archive` (npm run dev:archive) are shortcuts for MF_PROVIDER.
 const flagged = ['recorded', 'archive'].find(id => process.argv.includes(`--${id}`));
 const provider = createProvider(universe, flagged);
@@ -347,19 +356,57 @@ async function previousSessionOiBaseline(sessionDate) {
   return previousOiBaseline;
 }
 
+export function encodeMcxFutureSeries(underlying, futures, liveTick, at, session) {
+  const near = (Array.isArray(futures?.months) ? futures.months : [])
+    .filter(month => typeof month?.date === 'string' && month.date >= session)
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  if (!near) return null;
+  const candles = (Array.isArray(near.candles) ? near.candles : [])
+    .filter(candle => Number.isSafeInteger(candle?.at) && Number.isFinite(candle?.close) && candle.close > 0)
+    .sort((a, b) => a.at - b.at);
+  const last = candles.at(-1);
+  const liveLtp = Number(liveTick?.ltp);
+  const spot = Number.isFinite(liveLtp) && liveLtp > 0 ? liveLtp : last?.close;
+  if (!Number.isFinite(spot) || spot <= 0) return null;
+  const previousClose = Number(near.prevClose ?? last?.prevClose);
+  const quoteAt = Number.isSafeInteger(liveTick?.at) ? liveTick.at : last?.at;
+  const encoded = encodeSeries(underlying, {
+    spot,
+    prevClose: Number.isFinite(previousClose) && previousClose > 0 ? previousClose : null,
+    expiry: near.date,
+    at: quoteAt,
+    strikes: [],
+  }, at);
+  return encoded ? {
+    ...encoded,
+    exchange: 'MCX',
+    segment: 'MCX_COMM',
+    securityId: near.securityId ?? underlying.securityId ?? null,
+    instrument: near.instrument ?? 'FUTCOM',
+  } : null;
+}
+
 async function build() {
   if (state.building) return;
   state.building = true;
   const started = Date.now();
   const clock = now();
-  const session = getLatestTradingSessionDate(new Date(clock));
+  const nseOpen = provider.alwaysLive || isMarketSessionTime(clock, 'NSE');
+  const mcxOpen = provider.id === 'dhan' && isMarketSessionTime(clock, 'MCX');
+  const mcxSessionInfo = sessionFor('MCX', clock);
+  const mcxSessionDate = mcxSessionInfo.dateKey;
+  const mcxAfterClose = provider.id === 'dhan'
+    && isTradingDay(clock, 'MCX')
+    && marketParts(clock).minuteOfDay > mcxSessionInfo.closeMinute;
+  const nseSessionDate = getLatestTradingSessionDate(new Date(clock));
+  const session = !nseOpen && (mcxOpen || mcxAfterClose) ? mcxSessionDate : nseSessionDate;
   pcrHistory.resetForSession(session);
   levelHitsFired.clear();
   // Post-close fast path: the market is shut and nothing is moving — serve the
   // session's last built snapshot (the real closing state, written by every
   // successful build) instead of crawling 215 chains through the paced REST
   // fallback. A fresh session day starts empty and builds live.
-  if (!provider.alwaysLive && !isMarketSessionTime(clock)) {
+  if (!provider.alwaysLive && !nseOpen && !mcxOpen) {
     const stored = storedSessionSnapshot(SCAN_DIR, session);
     if (stored) {
       state.latest = stored.file;
@@ -376,6 +423,7 @@ async function build() {
         log,
         send: process.env.TELEGRAM_BOT_TOKEN ? sendOwnerAndSubscribers : undefined,
       }).catch(error => log('journal failed:', String(error?.message || error)));
+      if (mcxAfterClose) queueClosedSessionArchives(session, clock);
       state.building = false;
       // The post-close fast path returns before the in-build history-refresh block,
       // so the chain is triggered here too — this is what runs tonight-backfill.
@@ -384,6 +432,14 @@ async function build() {
     }
   }
   if (ladderCache.session !== session) { ladderCache.session = session; ladderCache.bySymbol.clear(); }
+  const activeUniverse = universe.filter(underlying => {
+    if (isMcxUnderlying(underlying)) return mcxOpen;
+    return nseOpen;
+  });
+  const buildUniverse = activeUniverse.length ? activeUniverse : universe.filter(underlying => !isMcxUnderlying(underlying));
+  const carriedMarket = mcxOpen && !nseOpen ? lastStoredMinuteFile(session)?.file : null;
+  const carriedSeries = (carriedMarket?.series ?? []).filter(row => !isMcxUnderlying(bySymbol.get(row.s)));
+  const carriedLadders = carriedMarket?.ladders ?? {};
   const series = [];
   const ladders = {};
   const failed = [];
@@ -391,9 +447,17 @@ async function build() {
   let nextChainFailures = 0;
   let cursor = 0;
   const worker = async () => {
-    while (cursor < universe.length) {
-      const u = universe[cursor++];
+    while (cursor < buildUniverse.length) {
+      const u = buildUniverse[cursor++];
       try {
+        if (isMcxUnderlying(u)) {
+          const futures = await futuresFor(u.symbol, session);
+          const liveTick = provider.ticksFor?.({ symbols: [u.symbol] })?.futures?.[u.symbol] ?? null;
+          const encoded = encodeMcxFutureSeries(u, futures, liveTick, now(), session);
+          ladders[u.symbol] = (futures?.months ?? []).filter(month => month.date >= session).slice(0, 1).map(month => month.date);
+          if (encoded) series.push(encoded); else failed.push(u.symbol);
+          continue;
+        }
         let ladder = ladderCache.bySymbol.get(u.symbol);
         if (!ladder) {
           ladder = await provider.expiries(u);
@@ -429,32 +493,36 @@ async function build() {
     await Promise.all(Array.from({ length: WORKERS }, worker));
     const fullChainsWritten = persistProviderFullChains();
     if (fullChainsWritten) log(`full-chain snapshots: ${fullChainsWritten} persisted, ${provider.fullChainSnapshotCount?.() ?? '?'} retained in RAM`);
-    if (!series.length) throw new Error(firstError ? `No underlying answered: ${firstError}` : 'No underlying answered.');
+    const capturedSeries = mcxOpen && !nseOpen ? [...carriedSeries, ...series] : series;
+    const capturedLadders = mcxOpen && !nseOpen ? { ...carriedLadders, ...ladders } : ladders;
+    if (!capturedSeries.length) throw new Error(firstError ? `No underlying answered: ${firstError}` : 'No underlying answered.');
     if (nextChainFailures) log(`next-expiry chains unavailable for ${nextChainFailures} symbol(s) this build — near-only series kept`);
     const at = now();
-    const sorted = series.sort((a, b) => a.s.localeCompare(b.s));
-    const rawFile = marketFile({ at, date: session, series: sorted, minutes: [], ladders });
+    const sorted = capturedSeries.sort((a, b) => a.s.localeCompare(b.s));
+    const rawFile = marketFile({ at, date: session, series: sorted, minutes: [], ladders: capturedLadders });
     let previousOi = new Map();
-    try { previousOi = await previousSessionOiBaseline(session); }
-    catch (error) { log(`previous OI baseline unavailable for ${session}: ${String(error?.message || error)}`); }
-    const enriched = fillMissingPrevOi(rawFile, previousOi);
+    if (nseOpen) {
+      try { previousOi = await previousSessionOiBaseline(session); }
+      catch (error) { log(`previous OI baseline unavailable for ${session}: ${String(error?.message || error)}`); }
+    }
+    const enriched = nseOpen ? fillMissingPrevOi(rawFile, previousOi) : { market: rawFile, filled: 0 };
     if (enriched.filled) log(`OI baseline: restored ${enriched.filled} captured contract row(s) from the previous session`);
-    pcrHistory.record(enriched.market.series, at);
+    if (nseOpen) pcrHistory.record(enriched.market.series, at);
     // Only a reading taken in session is a minute the windows can measure from.
-    const minutes = isMarketSessionTime(at)
+    const minutes = isMarketSessionTime(at, 'NSE') || (provider.id === 'dhan' && isMarketSessionTime(at, 'MCX'))
       ? storeMinute(session, at, JSON.stringify(enriched.market))
       : readMinutes(session);
     const file = { ...enriched.market, minutes };
     state.latest = file;
-    checkLevelHits(session, at)?.catch?.(() => {});
+    if (nseOpen) checkLevelHits(session, at)?.catch?.(() => {});
     state.latestJson = JSON.stringify(file);
     fs.mkdirSync(SCAN_DIR, { recursive: true });
     fs.writeFileSync(path.join(SCAN_DIR, 'latest.json'), state.latestJson);
-    queueClosedSessionArchives(session, at);
-    state.lastBuild = { at, ms: Date.now() - started, series: series.length, failed: failed.length, failedSymbols: failed.slice(0, 20), firstError };
+    if (!mcxOpen) queueClosedSessionArchives(session, at);
+    state.lastBuild = { at, ms: Date.now() - started, series: capturedSeries.length, failed: failed.length, failedSymbols: failed.slice(0, 20), firstError };
     state.lastError = null;
-    log(`market file: ${series.length} series, ${failed.length} failed, ${Date.now() - started} ms${firstError ? ` (first error: ${firstError})` : ''}`);
-    if (process.env.TELEGRAM_BOT_TOKEN && isTradingDay(at)) {
+    log(`market file: ${capturedSeries.length} series, ${failed.length} failed, ${Date.now() - started} ms${firstError ? ` (first error: ${firstError})` : ''}`);
+    if (nseOpen && process.env.TELEGRAM_BOT_TOKEN && isTradingDay(at)) {
       const gapDate = gapOpenDue(at, alertDigestState.gapOpenDay ?? null);
       if (gapDate) {
         alertDigestState.gapOpenDay = gapDate;
@@ -462,25 +530,27 @@ async function build() {
         if (gapMessage) void sendOwnerAndSubscribers(gapMessage, { parseMode: 'HTML' }).catch(error => log('gap-open message failed:', String(error?.message || error)));
       }
     }
-    try {
-      const subscriberState = process.env.TELEGRAM_BOT_TOKEN ? loadSubscribers(SUBSCRIBERS_PATH) : { subscribers: [], offset: 0 };
-      const broadcastChatIds = activeChatIds(subscriberState);
-      const fired = await runAlerts(file, {
-        rulesPath: path.join(DATA_DIR, 'alerts.json'),
-        state: alertState,
-        digestState: alertDigestState,
-        now: at,
-        log,
-        broadcastChatIds,
-        subscriberEntries: subscriberState.subscribers,
-      });
-      if (fired.length) log(`alerts fired: ${fired.length}`);
-    } catch (error) {
-      log('alerts failed:', String(error?.message || error));
+    if (nseOpen) {
+      try {
+        const subscriberState = process.env.TELEGRAM_BOT_TOKEN ? loadSubscribers(SUBSCRIBERS_PATH) : { subscribers: [], offset: 0 };
+        const broadcastChatIds = activeChatIds(subscriberState);
+        const fired = await runAlerts(file, {
+          rulesPath: path.join(DATA_DIR, 'alerts.json'),
+          state: alertState,
+          digestState: alertDigestState,
+          now: at,
+          log,
+          broadcastChatIds,
+          subscriberEntries: subscriberState.subscribers,
+        });
+        if (fired.length) log(`alerts fired: ${fired.length}`);
+      } catch (error) {
+        log('alerts failed:', String(error?.message || error));
+      }
     }
     // ORB pushes: one at 09:35 and one at 10:05 IST, day-keyed. Evaluation rides
     // this build loop — no extra timer, no extra subscriptions.
-    if (process.env.TELEGRAM_BOT_TOKEN && file?.series?.length) {
+    if (nseOpen && process.env.TELEGRAM_BOT_TOKEN && file?.series?.length) {
       if (orbState.session !== session) { orbState.session = session; orbState.sent = new Set(); }
       const slot = orbSlotDue(at, orbState.sent);
       if (slot) {
@@ -496,7 +566,7 @@ async function build() {
     }
     // Token-expiry reminder: owner-only, once per level per session. The server
     // keeps the token it read at boot, so this is the only warning before 401s.
-    if (process.env.TELEGRAM_BOT_TOKEN && isTradingDay(at)) {
+    if (nseOpen && process.env.TELEGRAM_BOT_TOKEN && isTradingDay(at)) {
       const reminder = tokenReminder({ expiresAt: provider.health?.()?.tokenExpiresAt ?? null, now: at });
       const key = reminder && `${session}|${reminder.level}`;
       if (reminder && tokenWatch.sentFor !== key) {
@@ -514,7 +584,7 @@ async function build() {
     // own child process with its own heap.
     startHistoryRefreshChain(at);
     // Throttled to TYPESAFE_TRIAGE_MIN (default 10); never blocks or fails the build.
-    runTriage(file, { autoPath: path.join(DATA_DIR, 'alerts.auto.json'), now: at, log })
+    if (nseOpen) runTriage(file, { autoPath: path.join(DATA_DIR, 'alerts.auto.json'), now: at, log })
       .then(result => {
         if (result.written != null) log(`triage: ${result.written} watch rule(s)${result.watches.length ? ` (${result.watches.map(w => w.symbol).join(' ')})` : ''}`);
         else if (result.skipped && result.skipped !== 'throttled') log(`triage skipped: ${result.skipped}`);
@@ -550,7 +620,7 @@ async function build() {
         }
       })
       .catch(error => log('triage failed:', String(error?.message || error)));
-    void runJournal({
+    if (nseOpen) void runJournal({
       obsPath: path.join(DATA_DIR, 'observations.json'),
       readMinute: readJournalMinute,
       readFuturesSnapshot: (symbol, date) => readFutures(SCAN_DIR, date, symbol),
@@ -568,23 +638,29 @@ async function build() {
 }
 
 /**
- * Live (in session, or a provider that is always live): every minute, a few
- * seconds past the boundary. Otherwise hourly — but the sleep never crosses
- * the next session open (09:15:03 IST): a server that boots before open
- * still fires its first live build exactly when the market opens, instead of
- * waking at an hourly boundary past it.
+ * Live sessions build once per minute. Idle sleep stops before the next NSE or
+ * MCX open, so an MCX-only evening session keeps using the same Dhan instance.
  */
 function schedule() {
   const now = Date.now();
-  const live = provider.alwaysLive || isMarketSessionTime(now);
+  const nseLive = provider.alwaysLive || isMarketSessionTime(now, 'NSE');
+  const mcxLive = provider.id === 'dhan' && isMarketSessionTime(now, 'MCX');
+  const live = nseLive || mcxLive;
   let wait;
   if (live) {
     wait = 60_000 - (now % 60_000) + 3_000;
   } else {
     const IST = 5.5 * 60 * 60_000;
     const midnightUtc = Math.floor((now + IST) / 86_400_000) * 86_400_000 - IST;
-    let open = midnightUtc + (9 * 60 + 15) * 60_000 + 3_000;
-    if (open <= now) open += 86_400_000;
+    const nextOpen = exchange => {
+      for (let dayOffset = 0; dayOffset < 15; dayOffset++) {
+        const day = midnightUtc + dayOffset * 86_400_000;
+        const open = day + sessionFor(exchange, day + 12 * 60 * 60_000).openMinute * 60_000 + 3_000;
+        if (open > now && isTradingDay(open, exchange)) return open;
+      }
+      return Infinity;
+    };
+    const open = Math.min(nextOpen('NSE'), provider.id === 'dhan' ? nextOpen('MCX') : Infinity);
     wait = Math.min(3_600_000, Math.max(60_000, open - now));
   }
   setTimeout(async () => { await build(); schedule(); }, wait);
@@ -904,7 +980,9 @@ async function strikeFlowFor(symbols, date, cursor = null) {
 async function futuresFor(symbol, session) {
   const key = `${symbol}|${session}`;
   const held = futuresCache.get(key);
-  const live = provider.alwaysLive || isMarketSessionTime(Date.now());
+  const cacheAt = Date.now();
+  const live = provider.alwaysLive || isMarketSessionTime(cacheAt, 'NSE')
+    || (provider.id === 'dhan' && isMarketSessionTime(cacheAt, 'MCX'));
   if (held && (!live || Date.now() - held.at < FUTURES_KEEP_MS)) return held.value;
   // Closed-market fast path: the persisted session file IS the final state —
   // serve it from disk instantly instead of pacing REST calls per symbol.
@@ -950,38 +1028,55 @@ const capture = createCapture({
 // throttle paces the calls; failures retry on demand.
 async function futuresWarmPass() {
   try {
-    const session = getLatestTradingSessionDate(new Date(now()));
+    const at = now();
+    const nseSession = getLatestTradingSessionDate(new Date(at));
+    const mcxSession = sessionFor('MCX', at).dateKey;
     let warmed = 0;
     for (const u of universe) {
+      const mcx = isMcxUnderlying(u);
+      if (mcx && (provider.id !== 'dhan' || !isTradingDay(at, 'MCX'))) continue;
+      const session = mcx ? mcxSession : nseSession;
       try { await futuresFor(u.symbol, session); warmed += 1; }
       catch (error) { log(`warm pass ${u.symbol} failed:`, String(error?.message || error).slice(0, 120)); }
     }
     log(`futures warm pass: ${warmed}/${universe.length} symbols cached`);
-    if (typeof provider.backfillTodayFutures === 'function' && isMarketSessionTime(now())) {
-      const backfill = await provider.backfillTodayFutures(session);
-      let persisted = 0;
-      for (const update of backfill?.updates ?? []) {
-        try {
-          let persistedSnapshot = null;
-          const stored = await loadFuturesWithArchiveLock(
-            archiveLock,
-            () => Promise.resolve(update),
-            result => Promise.resolve().then(() => {
-              // This pass is REST fallback data: preserve any captured feed close/OI
-              // already on disk while still widening H/L and filling missing minutes.
-              persistedSnapshot = persistFutures(SCAN_DIR, session, update.symbol, result, { preferIncomingCloseOi: false });
-              return persistedSnapshot;
-            }),
-            error => log(`boot today backfill ${update.symbol} persistence failed:`, error?.message || error),
-          );
-          if (!stored) continue;
-          futuresCache.set(`${update.symbol}|${session}`, { at: Date.now(), value: Promise.resolve(persistedSnapshot ?? stored) });
-          persisted++;
-        } catch (error) {
-          log(`boot today backfill ${update.symbol} failed:`, String(error?.message || error).slice(0, 120));
+    if (typeof provider.backfillTodayFutures === 'function') {
+      const mcxMinute = marketParts(at).minuteOfDay;
+      const mcxOpen = provider.id === 'dhan' && isMarketSessionTime(at, 'MCX');
+      const mcxPostClose = provider.id === 'dhan' && isTradingDay(at, 'MCX') && mcxMinute > sessionFor('MCX', at).closeMinute;
+      const backfillJobs = [
+        { exchange: 'NSE', session: nseSession, symbols: universe.filter(u => !isMcxUnderlying(u)), run: isMarketSessionTime(at, 'NSE'), postClose: false },
+        { exchange: 'MCX', session: mcxSession, symbols: universe.filter(isMcxUnderlying), run: mcxOpen || mcxPostClose, postClose: !mcxOpen },
+      ];
+      for (const job of backfillJobs) {
+        if (!job.run || !job.symbols.length) continue;
+        const backfill = await provider.backfillTodayFutures(job.session, {
+          symbols: job.symbols.map(u => u.symbol), exchange: job.exchange, postClose: job.postClose,
+        });
+        let persisted = 0;
+        for (const update of backfill?.updates ?? []) {
+          const updateSession = update.session ?? job.session;
+          try {
+            let persistedSnapshot = null;
+            const stored = await loadFuturesWithArchiveLock(
+              archiveLock,
+              () => Promise.resolve(update),
+              result => Promise.resolve().then(() => {
+                // REST fallback fills missing MCX/NSE fields while retaining feed close/OI.
+                persistedSnapshot = persistFutures(SCAN_DIR, updateSession, update.symbol, result, { preferIncomingCloseOi: false });
+                return persistedSnapshot;
+              }),
+              error => log(`boot ${job.exchange} today backfill ${update.symbol} persistence failed:`, error?.message || error),
+            );
+            if (!stored) continue;
+            futuresCache.set(`${update.symbol}|${updateSession}`, { at: Date.now(), value: Promise.resolve(persistedSnapshot ?? stored) });
+            persisted++;
+          } catch (error) {
+            log(`boot ${job.exchange} today backfill ${update.symbol} failed:`, String(error?.message || error).slice(0, 120));
+          }
         }
+        log(`boot ${job.exchange} today futures backfill: ${persisted}/${backfill?.attempted ?? 0} symbols persisted`);
       }
-      log(`boot today futures backfill: ${persisted}/${backfill?.attempted ?? 0} symbols persisted`);
     }
   } catch (error) {
     log('futures warm pass failed:', String(error?.message || error));
@@ -995,7 +1090,7 @@ async function historyRefreshTodayBackfill(at) {
   const expectedMinutes = Math.max(0, marketCloseMinuteFor(at) - (9 * 60 + 15) + 1);
   if (!expectedMinutes) return 0;
   const sparseSymbols = [];
-  for (const underlying of universe) {
+  for (const underlying of universe.filter(item => !isMcxUnderlying(item))) {
     try {
       const stored = readFutures(SCAN_DIR, session, underlying.symbol);
       const nearMonth = stored?.months?.find(month => month.date >= session) ?? stored?.months?.[0];
