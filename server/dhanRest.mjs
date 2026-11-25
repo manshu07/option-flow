@@ -33,8 +33,24 @@ function headers(env) {
   return { 'access-token': env.DHAN_ACCESS_TOKEN, 'client-id': env.DHAN_CLIENT_ID, 'Content-Type': 'application/json', 'Accept': 'application/json' };
 }
 
+// RATE GUARANTEE (2026-11-25 incident): a manual probe firing ~25 back-to-back REST calls
+// tripped Dhan's 805 "Too many requests" on the shared account bucket. The live server never
+// REST-hammers (WS carries the feed; REST quotes are throttled to 1/min), so any 805 during
+// market hours comes from offline scripts. Enforce a minimum gap between calls from THIS
+// module so no script using dhanRest can repeat that — loops simply run slower, never block
+// the live server's quota.
+const MIN_REST_GAP_MS = 1200;
+let lastRestCallAt = 0;
+async function pacedFetch(url, options) {
+  const now = Date.now();
+  const wait = lastRestCallAt + MIN_REST_GAP_MS - now;
+  if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+  lastRestCallAt = Date.now();
+  return fetch(url, options);
+}
+
 export async function dhanQuote(env, segments) {
-  const res = await fetch('https://api.dhan.co/v2/marketfeed/quote', {
+  const res = await pacedFetch('https://api.dhan.co/v2/marketfeed/quote', {
     method: 'POST', headers: headers(env), body: JSON.stringify(segments),
   });
   const raw = await res.json();
@@ -42,7 +58,7 @@ export async function dhanQuote(env, segments) {
 }
 
 export async function dhanChartsIntraday(env, { securityId, exchangeSegment, instrument, interval = 1, fromDate, toDate, oi = true }) {
-  const res = await fetch('https://api.dhan.co/v2/charts/intraday', {
+  const res = await pacedFetch('https://api.dhan.co/v2/charts/intraday', {
     method: 'POST', headers: headers(env),
     body: JSON.stringify({ securityId: String(securityId), exchangeSegment, instrument, interval, oi, fromDate, toDate }),
   });
