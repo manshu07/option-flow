@@ -66,6 +66,17 @@ export async function dhanChartsIntraday(env, { securityId, exchangeSegment, ins
   return 'status' in raw ? raw.data : raw;
 }
 
+// Daily candles over a long range (the intraday endpoint serves only short windows).
+// Same payload-unwrapping rule as the intraday twin.
+export async function dhanChartsHistorical(env, { securityId, exchangeSegment, instrument, expiryCode = 0, fromDate, toDate, oi = true }) {
+  const res = await pacedFetch('https://api.dhan.co/v2/charts/historical', {
+    method: 'POST', headers: headers(env),
+    body: JSON.stringify({ securityId: String(securityId), exchangeSegment, instrument, expiryCode, oi, fromDate, toDate }),
+  });
+  const raw = await res.json();
+  return 'status' in raw ? raw.data : raw;
+}
+
 // Near-month futures securityId for a base symbol (e.g. 'COLPAL') from the cached master CSV.
 // Mirrors server/providers/dhan.mjs base derivation: SEM_TRADING_SYMBOL minus the month+FUT
 // suffix. NSE preferred over BSE. Returns null when the master has no qualifying row.

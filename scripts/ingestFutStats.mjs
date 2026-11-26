@@ -73,7 +73,7 @@ for (const symbol of symbols) {
   }
   writeFileSync(path.join(OUT, `${symbol}.json`), JSON.stringify({
     symbol,
-    instrument: 'FUT',
+    instrument: /MCX/.test(store.source ?? '') ? 'MCX-FUT' : 'FUT',
     source: store.source ?? 'NSE F&O bhavcopy',
     generatedAt: new Date().toISOString(),
     days: rows.length,
