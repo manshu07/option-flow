@@ -573,17 +573,18 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
   const [signal, setSignal] = useRememberedChoice('observations.signal:v1', SIGNAL_FILTERS, 'all');
   const [confidence, setConfidence] = useRememberedChoice('observations.confidence:v1', CONFIDENCE_FILTERS, 'all');
   const [pcrFilter, setPcrFilter] = useRememberedChoice('observations.pcr:v1', PCR_FILTERS, 'all');
+  const [exchangeFilter, setExchangeFilter] = useRememberedChoice('observations.exchange:v1', ['all', 'NSE', 'MCX'], 'all');
   const [search, setSearch] = useRemembered('observations.search:v1', raw => (typeof raw === 'string' ? raw : undefined), '');
   const pageSize = Number(pageSizeChoice) || 10;
   const todayDate = marketParts(Date.now()).dateKey;
   const todayCount = cards?.filter(card => card.date === todayDate).length ?? 0;
   const filtered = useMemo(
-    () => (cards == null ? null : filterObservationCards(cards, { signal, confidence, pcr: pcrFilter, query: search })),
-    [cards, signal, confidence, pcrFilter, search],
+    () => (cards == null ? null : filterObservationCards(cards, { signal, confidence, pcr: pcrFilter, query: search, exchange: exchangeFilter })),
+    [cards, signal, confidence, pcrFilter, search, exchangeFilter],
   );
   const pageData = filtered == null ? null : paginateObservationCards(filtered, page, pageSize);
   const clubs = useMemo(() => pageData ? clubBySymbol(pageData.items) : [], [pageData]);
-  useEffect(() => { setPage(1); }, [cards?.length, view, pageSize, signal, confidence, pcrFilter, search]);
+  useEffect(() => { setPage(1); }, [cards?.length, view, pageSize, signal, confidence, pcrFilter, search, exchangeFilter]);
   // Always track the three indices' futures; add every card symbol + its exact option contract.
   const trackedSymbols = useMemo(
     () => [...new Set([...INDEX_SYMBOLS, ...(cards ?? []).map(card => card.symbol)])],
@@ -636,6 +637,14 @@ export function ObservationsPage({ tabs }: { tabs?: ReactNode }) {
         onChange={next => { setSignal(next); setPage(1); }}
         ariaLabel="Signal source"
         groupId="observations-signal"
+        size="page"
+      />
+      <CapsuleSegmented
+        options={[{ value: 'all', label: 'All' }, { value: 'NSE', label: 'NSE' }, { value: 'MCX', label: 'MCX' }]}
+        value={exchangeFilter}
+        onChange={next => { setExchangeFilter(next); setPage(1); }}
+        ariaLabel="Exchange"
+        groupId="observations-exchange"
         size="page"
       />
       <CapsuleSegmented

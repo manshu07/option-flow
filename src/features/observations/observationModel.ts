@@ -82,7 +82,7 @@ export interface ObservationCard {
   /** Near-chain PCR change over the preceding 15 minutes, in percent. */
   pcrShift?: number | null;
   /** Set on code-computed early cards: build-fast (OI ≥5%) or momentum (OI flat/negative). */
-  early?: 'build-fast' | 'momentum' | null;
+  early?: 'build-fast' | 'momentum' | 'mcx' | null;
   /** Set on re-entry cards: one fresh card after an SL-hit contract recovers to cost. */
   reEntry?: number;
   oiChangePct: number | null;
@@ -262,9 +262,9 @@ export type ObservationPcrFilter = 'all' | 'lt1' | 'gte1';
  * `query` matches symbol, contract (e.g. 128CE) and expiry, case-insensitive;
  * every whitespace-separated token must match.
  */
-export function filterObservationCards<T extends ObservationIdentity & { early?: 'build-fast' | 'momentum' | null; quality?: number | null; pcrAtEntry?: number | null; strike?: number | null; side?: string | null; expiry?: string | null }>(
+export function filterObservationCards<T extends ObservationIdentity & { early?: 'build-fast' | 'momentum' | 'mcx' | null; quality?: number | null; pcrAtEntry?: number | null; strike?: number | null; side?: string | null; expiry?: string | null; exchange?: string | null }>(
   cards: readonly T[],
-  { signal = 'all', confidence = 'all', pcr = 'all', query = '' }: { signal?: ObservationSignal; confidence?: ObservationConfidence; pcr?: ObservationPcrFilter; query?: string } = {},
+  { signal = 'all', confidence = 'all', pcr = 'all', query = '', exchange = 'all' }: { signal?: ObservationSignal; confidence?: ObservationConfidence; pcr?: ObservationPcrFilter; query?: string; exchange?: string } = {},
 ): T[] {
   const floor = confidence === 'all' ? null : Number(confidence) / 100;
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -272,6 +272,7 @@ export function filterObservationCards<T extends ObservationIdentity & { early?:
     const isEarly = Boolean(card.early);
     if (signal === 'early' && !isEarly) return false;
     if (signal === 'jev' && isEarly) return false;
+    if (exchange !== 'all' && ((card.exchange ?? 'NSE') !== exchange)) return false;
     if (pcr === 'lt1' && !(finite(card.pcrAtEntry) && card.pcrAtEntry < 1)) return false;
     if (pcr === 'gte1' && !(finite(card.pcrAtEntry) && card.pcrAtEntry >= 1)) return false;
     if (floor != null) {

@@ -57,6 +57,7 @@ const UNIVERSES: Array<{ value: FlowUniverse; label: string; title: string }> = 
 const EXCHANGES: Array<{ value: FlowExchange; label: string; title: string }> = [
   { value: 'NSE', label: 'NSE', title: 'National Stock Exchange underlyings' },
   { value: 'BSE', label: 'BSE', title: 'BSE underlyings (Sensex family and BSE-only F&O stocks)' },
+  { value: 'MCX', label: 'MCX', title: 'Multi Commodity Exchange futures: GOLD, SILVER, NATURALGAS and the minis' },
 ];
 
 export function MarketFlowPage({ universe, tabs }: MarketFlowPageProps) {
@@ -76,8 +77,9 @@ export function MarketFlowPage({ universe, tabs }: MarketFlowPageProps) {
   useEffect(() => { saveExchange(exchange); }, [exchange]);
 
   // The Nifty 50 / All F&O switch only makes sense inside NSE; BSE carries its
-  // own (small) list and would otherwise look empty.
-  const shown = useMemo(() => universe.filter(item => inExchange(exchange, item) && (exchange === 'BSE' || inUniverse(item.symbol, scope))), [universe, scope, exchange]);
+  // own (small) list and would otherwise look empty. MCX shows exactly its six
+  // futures — no universe switch either.
+  const shown = useMemo(() => universe.filter(item => inExchange(exchange, item) && (exchange === 'NSE' ? inUniverse(item.symbol, scope) : true)), [universe, scope, exchange]);
   const live = useMarketFlow(shown, SETTINGS);
   const replay = useReplayFlow(shown, SETTINGS, { requested: replayRequested, date: replayDate ?? live.market?.date ?? getLatestTradingSessionDate(new Date()) });
   const isReplay = replayRequested;
