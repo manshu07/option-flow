@@ -1,5 +1,5 @@
 import { memo, useEffect, useId, useMemo, useRef, type ReactNode } from 'react';
-import { marketParts } from '../../lib/marketSession';
+import { marketParts, MARKET_OPEN_MINUTE, MARKET_CLOSE_MINUTE } from '../../lib/marketSession';
 import { useReducedMotion } from 'motion/react';
 import { fmtPrice } from '@/utils/formatters';
 import { candlesFromCloses, compressedScale, compressedTicks, drawnValues, gateRows, sCurve, sCurveOn } from './diagramModel';
@@ -836,11 +836,19 @@ export function CandleChart({ stock, width, height, levels = true, tf = 'auto' }
   // Use the whole session (not just the window) so the zone and level lines
   // always fall inside the axis, and cap the bucket so >=30 bars render.
   const raw = stock.candles.length ? stock.candles : windowCandles(stock);
-  // Owner report 2026-11-26: off-session candles (MCX-window ticks, pre-market)
-  // stretched the axis across capture gaps, squeezing today's candles into a
-  // thin strip over the text. The big card charts TODAY only.
+  // Owner report 2026-11-26: off-session candles stretched the axis across
+  // capture gaps and squeezed today's candles into a thin strip over the text.
+  // Two layers of pollution exist: (1) earlier-session candles, (2) Dhan
+  // pre-open prints INSIDE today (06:03/06:32 IST bogus rows the boot backfill
+  // pulled). Keep only candles inside today's derivative session window.
   const todayKey = marketParts(Date.now()).dateKey;
-  const sessionCandles = raw.filter(c => marketParts(c.at).dateKey === todayKey);
+  const inSession = (at: number): boolean => {
+    const parts = marketParts(at);
+    if (parts.dateKey !== todayKey) return false;
+    const minute = parts.hour * 60 + parts.minute;
+    return minute >= MARKET_OPEN_MINUTE && minute <= MARKET_CLOSE_MINUTE;
+  };
+  const sessionCandles = raw.filter(c => inSession(c.at));
   const full = sessionCandles.length >= 3 ? sessionCandles : raw;
   if (full.length < 3) return <span className="mf-candles is-empty">{stock.futures === 'pending' ? 'Loading future…' : stock.futures === 'failed' ? 'Could not load future' : 'No line yet'}</span>;
   const gaps = captureGaps(full);
