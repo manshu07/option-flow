@@ -835,16 +835,19 @@ export function CandleChart({ stock, width, height, levels = true, tf = 'auto' }
   const gapPatternId = `mf-candle-gap-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   // Use the whole session (not just the window) so the zone and level lines
   // always fall inside the axis, and cap the bucket so >=30 bars render.
-  const full = stock.candles.length ? stock.candles : windowCandles(stock);
+  const raw = stock.candles.length ? stock.candles : windowCandles(stock);
+  // Owner report 2026-11-26: off-session candles (MCX-window ticks, pre-market)
+  // stretched the axis across capture gaps, squeezing today's candles into a
+  // thin strip over the text. The big card charts TODAY only.
+  const todayKey = marketParts(Date.now()).dateKey;
+  const sessionCandles = raw.filter(c => marketParts(c.at).dateKey === todayKey);
+  const full = sessionCandles.length >= 3 ? sessionCandles : raw;
   if (full.length < 3) return <span className="mf-candles is-empty">{stock.futures === 'pending' ? 'Loading future…' : stock.futures === 'failed' ? 'Could not load future' : 'No line yet'}</span>;
   const gaps = captureGaps(full);
   const gapLabel = captureGapLabel(gaps);
   const desired = tf === 'auto' ? (full.length > 120 ? 5 : full.length > 30 ? 2 : 1) : tf;
   const span = Math.max(1, Math.min(desired, Math.floor(full.length / 30) || 1));
   const candles = candlesFromCloses(full, span);
-  // Session-boundary (owner report 2026-11-24): candles from an earlier session render
-  // dimmed and are counted separately, so a pre-open/merged view never reads yesterday's
-  // tail as today's move.
   const lastDay = marketParts(candles[candles.length - 1].at).dateKey;
   let prevDayCount = 0;
   for (const c of candles) if (marketParts(c.at).dateKey !== lastDay) prevDayCount++;
