@@ -1165,6 +1165,11 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     skipped.push(...modelSkipped);
     if (cards.length) {
       const freshCards = dedupeObservations(cards);
+      // Cards of one pass shared a single `at`, so the app's tie-break order
+      // drifted from the telegram send order (owner 2026-11-26: "new cards ki
+      // sequence change ho gayi"). Give each card its own +1ms creation stamp:
+      // newest-first sorting now matches creation AND send order exactly.
+      freshCards.forEach((card, index) => { card.at = now + index; });
       const existing = loadObservations(obsPath);
       const existingKeys = new Set(existing.map(observationKey).filter(Boolean));
       // A model card that lands on a key an early signal already holds is a
