@@ -656,7 +656,9 @@ describe('runAdvisor gates', () => {
       expect(second.written).toBe(1);
       expect(cards).toHaveLength(1);
       expect(cards[0].id).toBe('DUPTEST|2026-11-16');
-      expect(cards[0].at).toBe(NOW + 10 * 60_000);
+      // Upgrade keeps the ORIGINAL creation time (owner 2026-11-26: a replaced
+      // card must not change its time on every pass).
+      expect(cards[0].at).toBe(NOW);
       expect(sent).toHaveLength(1);
       expect(sent[0]).toMatchObject({ symbol: 'DUPTEST', date: '2026-11-16', spot: 300.4, spotChangePct: expect.any(Number) });
     } finally {

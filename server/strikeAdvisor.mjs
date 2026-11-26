@@ -1164,13 +1164,20 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     const { skipped: modelSkipped } = decisions;
     skipped.push(...modelSkipped);
     if (cards.length) {
+      const existing = loadObservations(obsPath);
+      const existingByKey = new Map(existing.map(card => [observationKey(card), card]).filter(([key]) => Boolean(key)));
       const freshCards = dedupeObservations(cards);
       // Cards of one pass shared a single `at`, so the app's tie-break order
       // drifted from the telegram send order (owner 2026-11-26: "new cards ki
       // sequence change ho gayi"). Give each card its own +1ms creation stamp:
       // newest-first sorting now matches creation AND send order exactly.
-      freshCards.forEach((card, index) => { card.at = now + index; });
-      const existing = loadObservations(obsPath);
+      freshCards.forEach((card, index) => {
+        // An upgrade (model card replacing an early card on the same key) must
+        // KEEP the original creation time — the owner saw ENRIN's time change
+        // on every pass because the replacement stamped a new `at`.
+        const prior = existingByKey.get(observationKey(card));
+        card.at = prior ? prior.at : now + index;
+      });
       const existingKeys = new Set(existing.map(observationKey).filter(Boolean));
       // A model card that lands on a key an early signal already holds is a
       // genuine upgrade: the same symbol/session, now confirmed by the model.

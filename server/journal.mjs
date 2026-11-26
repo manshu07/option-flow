@@ -123,9 +123,31 @@ export function resolveCard(card, minutes) {
     const low = Math.min(premium, Number.isFinite(row[15]) ? row[15] : premium);
     const stopRangeHit = previousLow != null && previousLow > card.sl && low <= card.sl;
     const targetRangeHit = previousHigh != null && previousHigh < card.tgt1 && high >= card.tgt1;
-    const stopHit = premium <= card.sl || stopRangeHit;
     const targetHit = premium >= card.tgt1 || targetRangeHit;
     const target2Hit = premium >= card.tgt2 || (previousHigh != null && previousHigh < card.tgt2 && high >= card.tgt2);
+
+    // SL_EVAL=close5 (owner policy 2026-11-26): the stop fires only when a
+    // 5-minute candle CLOSES beyond it — intrabar wicks no longer stop out.
+    // The target stays touch-based ("target hit means hit"). The pending
+    // bucket closes the moment the first snapshot of the NEXT bucket arrives.
+    if (process.env.SL_EVAL === 'close5') {
+      if (targetHit) {
+        return outcome('tgt1', { r: tgt1R, mfe, mae, tgt2: target2Hit, hitAt: snapshot.t, minutes: index + 1, computedAt: snapshot.t });
+      }
+      const bucket = Math.floor(snapshot.t / (5 * 60_000));
+      if (pendingBucket && pendingBucket.bucket !== bucket) {
+        const breached = bearish ? pendingBucket.premium >= card.sl : pendingBucket.premium <= card.sl;
+        if (breached) {
+          return outcome('sl', { r: -1, mfe, mae, hitAt: pendingBucket.t, minutes: index + 1, computedAt: snapshot.t, slBasis: '5min-close' });
+        }
+      }
+      pendingBucket = { bucket, premium, t: snapshot.t };
+      previousHigh = high;
+      previousLow = low;
+      continue;
+    }
+
+    const stopHit = premium <= card.sl || stopRangeHit;
 
     if (stopHit && targetHit) {
       return outcome('ambiguous', { r: -1, mfe, mae, tgt2: target2Hit, hitAt: snapshot.t, minutes: index + 1, computedAt: snapshot.t });
@@ -135,6 +157,13 @@ export function resolveCard(card, minutes) {
 
     previousHigh = high;
     previousLow = low;
+  }
+
+  // A pending unclosed bucket at the session's end still counts: its last
+  // print IS that bucket's close.
+  if (process.env.SL_EVAL === 'close5' && pendingBucket) {
+    const breached = bearish ? pendingBucket.premium >= card.sl : pendingBucket.premium <= card.sl;
+    if (breached) return outcome('sl', { r: -1, mfe, mae, hitAt: pendingBucket.t, minutes: snapshots.length, computedAt: pendingBucket.t, slBasis: '5min-close' });
   }
 
   return outcome('open', { mfe, mae, minutes: snapshots.length, computedAt: snapshots.at(-1).t });
