@@ -22,11 +22,11 @@ const completedSessions = new Set();
 const sentSummaries = new Set();
 
 function validCard(card) {
-  return card && typeof card.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(card.date) && typeof card.symbol === 'string'
-    && Number.isFinite(card.at) && Number.isFinite(card.strike)
-    && (card.side === 'CE' || card.side === 'PE')
-    && Number.isFinite(card.entry) && card.entry > 0
-    && Number.isFinite(card.sl) && Number.isFinite(card.tgt1) && Number.isFinite(card.tgt2);
+  if (!card || typeof card.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(card.date) || typeof card.symbol !== 'string'
+    || !Number.isFinite(card.at) || !Number.isFinite(card.entry) || card.entry <= 0
+    || !Number.isFinite(card.sl) || !Number.isFinite(card.tgt1) || !Number.isFinite(card.tgt2)) return false;
+  if (card.exchange === 'MCX') return card.side === 'FUT' && (card.strike == null);
+  return Number.isFinite(card.strike) && (card.side === 'CE' || card.side === 'PE');
 }
 
 function belongsToDate(snapshot, date) {
@@ -138,6 +138,40 @@ export function resolveCard(card, minutes) {
   }
 
   return outcome('open', { mfe, mae, minutes: snapshots.length, computedAt: snapshots.at(-1).t });
+}
+
+/**
+ * MCX futures-direct cards (MCX_FULL_SPEC C4): entry/SL/TGT are ABSOLUTE
+ * futures prices, so the walk runs over the symbol's own futures candles
+ * (t ≥ card.at) instead of option rows. Same first-touch semantics as
+ * resolveCard; a candle that touches both = ambiguous (counts as SL).
+ * Returns null when the day has no candles — never a guess.
+ */
+export function resolveMcxCard(card, candles) {
+  if (!validCard(card) || card.exchange !== 'MCX' || !Array.isArray(candles) || !candles.length) return null;
+  const bearish = card.bias === 'bearish';
+  const denominator = bearish ? card.sl - card.entry : card.entry - card.sl;
+  const tgt1R = denominator > 0 ? round2(Math.abs(card.tgt1 - card.entry) / denominator) : null;
+  let mfe = 0;
+  let mae = 0;
+  const path = candles.filter(candle => Number.isSafeInteger(candle?.at) && candle.at >= card.at
+    && Number.isFinite(candle?.high) && Number.isFinite(candle?.low)).sort((a, b) => a.at - b.at);
+  if (!path.length) return null;
+  for (let index = 0; index < path.length; index++) {
+    const candle = path[index];
+    const favorable = bearish ? card.entry - candle.low : candle.high - card.entry;
+    const adverse = bearish ? candle.high - card.entry : card.entry - candle.low;
+    mfe = Math.max(mfe, favorable);
+    mae = Math.max(mae, adverse);
+    const stopHit = bearish ? candle.high >= card.sl : candle.low <= card.sl;
+    const targetHit = bearish ? candle.low <= card.tgt1 : candle.high >= card.tgt1;
+    if (stopHit && targetHit) return outcome('ambiguous', { r: -1, mfe, mae, hitAt: candle.at, minutes: index + 1, computedAt: candle.at });
+    if (stopHit) return outcome('sl', { r: -1, mfe, mae, hitAt: candle.at, minutes: index + 1, computedAt: candle.at });
+    if (targetHit) return outcome('tgt1', { r: tgt1R, mfe, mae, tgt2: bearish ? candle.low <= card.tgt2 : candle.high >= card.tgt2, hitAt: candle.at, minutes: index + 1, computedAt: candle.at });
+  }
+  const lastClose = Number(path.at(-1).close);
+  const closeR = denominator !== 0 && Number.isFinite(lastClose) ? round2((bearish ? card.entry - lastClose : lastClose - card.entry) / denominator) : null;
+  return outcome('open', { mfe, mae, minutes: path.length, computedAt: path.at(-1).at, closePremium: Number.isFinite(lastClose) ? lastClose : null, closeR });
 }
 
 /**
@@ -492,6 +526,23 @@ export async function runJournal({ obsPath, readMinute, readFuturesSnapshot = ()
       const marks = [...(card.marks ?? []), { date: sessionDate, status: swing.status, closePremium: swing.closePremium ?? null, closeR: swing.closeR ?? null }].slice(-20);
       updates.set(journalCardKey(card), swing);
       return { ...card, outcome: swing, marks };
+    }
+    if (card.exchange === 'MCX') {
+      // MCX cards resolve against their own futures candles — market-file
+      // minute snapshots are irrelevant to them (no option rows exist).
+      if (card.outcome?.status && card.outcome.status !== 'open') return card;
+      const candles = futuresByCard.get(`${card.symbol}|${card.date}`);
+      if (!candles?.length) return card;
+      const mcxResult = card.outcome ?? resolveMcxCard(card, candles) ?? null;
+      if (!mcxResult) return card;
+      written++;
+      if (!card.outcome && mcxResult.status !== 'open') {
+        const dateCards = resolvedByDate.get(card.date) ?? [];
+        dateCards.push({ ...card, outcome: mcxResult });
+        resolvedByDate.set(card.date, dateCards);
+      }
+      updates.set(journalCardKey(card), mcxResult);
+      return { ...card, outcome: mcxResult };
     }
     if (!validCard(card) || (card.outcome?.followThrough?.version === 1 && card.outcome.followThrough.coverage !== 'missing') || card.date > sessionDate) return card;
     const snapshots = snapshotsByDate.get(card.date);

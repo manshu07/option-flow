@@ -251,11 +251,23 @@ export async function mcxWatchPoll(now = Date.now(), {
   log = () => {},
   securityIdsEnv = process.env.MCX_SECURITY_IDS,
   sendLevels,
+  quoteSource = null,
 } = {}) {
   const at = nowMs(now);
   if (!mcxSessionOpen(at)) return { skipped: 'outside MCX session', quotes: {} };
   const ids = readIds(at, log, securityIdsEnv);
   if (!ids) return { skipped: 'invalid security ID config', quotes: {} };
+  // LIVE-TICK SOURCE FIRST (MCX_FULL_SPEC C4): the provider already subscribes
+  // the 6 MCX futures on the WS feed — reading the built session series costs
+  // zero REST quota. The paced REST quote poll is only the fallback.
+  if (typeof quoteSource === 'function') {
+    try {
+      const live = quoteSource();
+      if (live && Object.keys(live).length) return await evaluateQuotes(live, { at, dataDir, levelsPath, statePath, sendLevels, log });
+    } catch (error) {
+      log(`mcx: live quote source failed, falling back to REST (${error?.message || error})`);
+    }
+  }
   if (!accessToken || !clientId) {
     logOncePerHour('credentials', 'mcx: quote poll skipped; Dhan credentials are unavailable', at, log);
     return { skipped: 'missing credentials', quotes: {} };
@@ -298,13 +310,18 @@ export async function mcxWatchPoll(now = Date.now(), {
     return { skipped: expired ? 'token rejected' : 'API failure', quotes: {} };
   }
   const rawById = parseQuotePayload(body);
+  return await evaluateQuotes(rawById, { at, ids, dataDir, levelsPath, statePath, sendLevels, log });
+}
+
+/** Shared tail: normalize raw quotes (REST body or live-tick map), then fire crossed levels. */
+async function evaluateQuotes(rawById, { at, ids, levelsPath, statePath, sendLevels, log }) {
   const quotes = {};
   for (const symbol of MCX_SYMBOLS) {
     const quote = normalizeQuote(rawById[String(ids[symbol])]);
     if (quote) quotes[symbol] = quote;
   }
   if (!Object.keys(quotes).length) {
-    logOncePerHour('empty', 'mcx: Dhan quote response empty; poll skipped', at, log);
+    logOncePerHour('empty', 'mcx: quote response empty; poll skipped', at, log);
     return { skipped: 'empty response', quotes: {} };
   }
   const fired = await fireCrossedLevels(quotes, at, { levelsPath, statePath, sendLevels, log });

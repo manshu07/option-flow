@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { sendTelegram, sendTelegramObservationCard } from './telegram.mjs';
 import { observationSubscriberCaption } from './observationCardSvg.mjs';
 import { askTypeSafe, typesafeConfigured } from './typesafe.mjs';
-import { inFireWindow, marketMovers } from './alerts.mjs';
+import { BROADCAST_FOOTER, inFireWindow, marketMovers } from './alerts.mjs';
 import { gammaProfile, gammaRiskFreeRate, parseGammaSymbols } from '../src/features/market-flow/gammaModel.ts';
 import { atrSummary } from '../src/features/market-flow/atrModel.ts';
 import { openingRange, sessionVwap } from './orbModel.mjs';
@@ -1223,6 +1223,128 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     return { written: cards.length, cards };
   } catch (error) {
     log(`advisor failed (observations unchanged): ${String(error?.message || error)}`);
+    return { skipped: 'failed', error: String(error?.message || error) };
+  }
+}
+
+// ─── MCX futures-direct cards (MCX_FULL_SPEC C4) ────────────────────────────
+// MCX futures carry no option chains, so the card trades the FUTURE itself:
+// entry = futures LTP, levels = MCX-FUT percentile bands (favourable p30/p70,
+// adverse p85 — reach-rate semantics), bias from price + OI momentum. The
+// direction gate for MCX is the symbol's own fut-stats regime (down blocks a
+// bullish card; capitulation exemptions are a later story).
+
+const MCX_STATS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data', 'fut-stats');
+const mcxStatsCache = new Map();
+function mcxStatsFor(symbol) {
+  if (mcxStatsCache.has(symbol)) return mcxStatsCache.get(symbol);
+  let stats = null;
+  try {
+    const parsed = JSON.parse(readFileSync(join(MCX_STATS_DIR, `${symbol}.json`), 'utf8'));
+    if (parsed?.instrument === 'MCX-FUT') stats = parsed;
+  } catch { /* missing store = no card, never guessed levels */ }
+  mcxStatsCache.set(symbol, stats);
+  return stats;
+}
+
+export function mcxCards(market, date, now, existing = [], { readFuturesSnapshot = null, log = () => {} } = {}) {
+  if (!market || typeof date !== 'string') return [];
+  const seen = new Set((Array.isArray(existing) ? existing : []).map(card => observationKey(card)).filter(Boolean));
+  const out = [];
+  const minMove = Number(process.env.MCX_MOVE_GATE ?? 0.7);
+  const minOi = Number(process.env.MCX_OI_GATE ?? 2);
+  for (const series of Array.isArray(market?.series) ? market.series : []) {
+    if (series?.exchange !== 'MCX' || !series?.s) continue;
+    const symbol = series.s;
+    const key = `${symbol}|${date}`;
+    if (seen.has(key)) continue;
+    const sp = Number(series.sp);
+    const pc = Number(series.pc);
+    if (!(sp > 0) || !(pc > 0)) continue;
+    const changePct = (sp / pc - 1) * 100;
+    if (Math.abs(changePct) < minMove) continue;
+    const stats = mcxStatsFor(symbol);
+    if (!stats) { log(`advisor mcx: ${symbol} no MCX-FUT stats — skipped`); continue; }
+    const bias = changePct > 0 ? 'bullish' : 'bearish';
+    // Regime agreement: a down-regime commodity rejects bullish builds (and
+    // vice versa). NATURALGAS sits in range — range passes both sides.
+    const regime = stats.lastRegime;
+    if ((regime === 'down' && bias === 'bullish') || (regime === 'up' && bias === 'bearish')) {
+      log(`advisor mcx regime gate: ${symbol} ${bias} regime=${regime} — skipped`);
+      continue;
+    }
+    const snapshot = readFuturesSnapshot ? readFuturesSnapshot(symbol, date) : null;
+    const month = (Array.isArray(snapshot?.months) ? snapshot.months : []).find(m => typeof m?.date === 'string' && m.date >= date) ?? snapshot?.months?.[0] ?? null;
+    const lastOi = Number(month?.candles?.at(-1)?.oi);
+    const prevOi = Number(month?.prevOi);
+    const oiPct = Number.isFinite(lastOi) && Number.isFinite(prevOi) && prevOi > 0 ? (lastOi / prevOi - 1) * 100 : null;
+    const buildConfirmed = oiPct != null && oiPct >= minOi;
+    const momentumStrong = Math.abs(changePct) >= 1.2;
+    if (!buildConfirmed && !momentumStrong) {
+      log(`advisor mcx: ${symbol} ${bias} move ${changePct.toFixed(2)}% oi ${oiPct == null ? 'n/a' : oiPct.toFixed(1) + '%'} — no confirmation, skipped`);
+      continue;
+    }
+    // Percentile levels on the FUTURE price (spot=fut for a futures-direct card).
+    const day = stats.daily?.['1'];
+    const favourable = bias === 'bullish' ? day?.all?.up : day?.all?.down;
+    const adverse = bias === 'bullish' ? day?.all?.down : day?.all?.up;
+    if (!favourable?.p30 || !adverse?.p85) { log(`advisor mcx: ${symbol} stats incomplete — skipped`); continue; }
+    const dir = bias === 'bullish' ? 1 : -1;
+    const tgt1 = Number((sp * (1 + dir * favourable.p30 / 100)).toFixed(2));
+    const tgt2 = Number((sp * (1 + dir * favourable.p70 / 100)).toFixed(2));
+    const sl = Number((sp * (1 - dir * adverse.p85 / 100)).toFixed(2));
+    const card = {
+      id: key,
+      at: now,
+      date,
+      exchange: 'MCX',
+      symbol,
+      spot: sp,
+      spotChangePct: round2(changePct),
+      bias,
+      side: 'FUT',
+      strike: null,
+      expiry: series.e ?? null,
+      entry: sp,
+      sl,
+      tgt1,
+      tgt2,
+      levelsBasis: 'mcx-fut-history',
+      oiChangePct: oiPct,
+      quality: null,
+      strikePickProbability: null,
+      early: 'mcx',
+      atr: null,
+      disclaimer: DISCLAIMER,
+    };
+    seen.add(key);
+    out.push(card);
+  }
+  return out;
+}
+
+/** MCX advisor pass: compute, merge into the store, notify owner (stripped copy to subscribers). */
+export async function runMcxCards(market, { obsPath, date, now, readFuturesSnapshot = null, subscriberChatIds = [], send = null, log = () => {} } = {}) {
+  try {
+    const existing = loadObservations(obsPath);
+    const cards = mcxCards(market, date, now, existing, { readFuturesSnapshot, log });
+    if (!cards.length) return { written: 0, cards: [] };
+    const merged = saveObservations(obsPath, [...existing, ...cards]);
+    for (const card of cards) {
+      try {
+        if (typeof send === 'function') {
+          await send(`MCX ${card.bias.toUpperCase()} · ${card.symbol} FUT\nEntry ${card.entry} · SL ${card.sl} · TGT1 ${card.tgt1} · TGT2 ${card.tgt2}\nMove ${card.spotChangePct}% · OI ${card.oiChangePct == null ? 'n/a' : card.oiChangePct.toFixed(1) + '%'} · ${card.expiry ?? ''}\n${DISCLAIMER}`);
+          for (const chat of subscriberChatIds) {
+            try {
+              await sendTelegram(chat, `MCX ${card.bias.toUpperCase()} · ${card.symbol} FUT\nEntry ${card.entry} · SL ${card.sl} · TGT1 ${card.tgt1} · TGT2 ${card.tgt2}\nMove ${card.spotChangePct}% · ${card.expiry ?? ''}\n${BROADCAST_FOOTER}`);
+            } catch (e) { log(`telegram mcx card ${card.symbol} subscriber not sent: ${String(e?.message || e)}`); }
+          }
+        }
+      } catch (e) { log(`telegram mcx card ${card.symbol} owner not sent: ${String(e?.message || e)}`); }
+    }
+    return { written: cards.length, cards };
+  } catch (error) {
+    log(`mcx advisor failed (observations unchanged): ${String(error?.message || error)}`);
     return { skipped: 'failed', error: String(error?.message || error) };
   }
 }

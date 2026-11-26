@@ -63,7 +63,7 @@ import { capturePreviousOiBaseline, fillMissingPrevOi } from './oiBaseline.mjs';
 import { isFullOptionChainSnapshot, persistFullOptionChainSnapshots } from './optionChainSnapshots.mjs';
 import { createPcrHistory, pcrSnapshot } from './pcrHistory.mjs';
 import { runTriage } from './typesafe.mjs';
-import { loadObservations, runAdvisor } from './strikeAdvisor.mjs';
+import { loadObservations, runAdvisor, runMcxCards } from './strikeAdvisor.mjs';
 import { runJournal } from './journal.mjs';
 import { archiveRequestAsync, createArchiveService, listReplayDays, readArchiveFuturesFallback, readArchiveMinuteFallback } from './archive.mjs';
 import { perfMark, startPerfProbe } from './perfProbe.mjs';
@@ -620,7 +620,17 @@ async function build() {
         }
       })
       .catch(error => log('triage failed:', String(error?.message || error)));
-    if (nseOpen) void runJournal({
+    if (mcxOpen) void runMcxCards(file, {
+      obsPath: path.join(DATA_DIR, 'observations.json'),
+      date: session,
+      now: at,
+      readFuturesSnapshot: (symbol, date) => readFutures(SCAN_DIR, date, symbol),
+      subscriberChatIds: activeChatIds(loadSubscribers(SUBSCRIBERS_PATH)),
+      send: process.env.TELEGRAM_BOT_TOKEN ? sendOwnerAndSubscribers : undefined,
+      log,
+    }).then(result => { if (result.written) log(`mcx advisor: ${result.written} MCX card(s) (${result.cards.map(c => c.symbol).join(' ')})`); })
+      .catch(error => log('mcx advisor failed:', String(error?.message || error)));
+    if (nseOpen || mcxOpen) void runJournal({
       obsPath: path.join(DATA_DIR, 'observations.json'),
       readMinute: readJournalMinute,
       readFuturesSnapshot: (symbol, date) => readFutures(SCAN_DIR, date, symbol),
@@ -1626,6 +1636,25 @@ server.listen(PORT, HOST, async () => {
         dataDir: DATA_DIR,
         sendLevels: sendOwnerAndSubscribers,
         log,
+        // LIVE TICKS FIRST (C4): the 6 MCX futures ride the provider WS —
+        // read the built session series instead of burning REST quote quota.
+        quoteSource: () => {
+          const series = state.latestJson?.series ?? [];
+          const live = {};
+          for (const item of series) {
+            if (item?.exchange !== 'MCX' || !item?.s) continue;
+            const rows = Array.isArray(item.r) ? item.r : [];
+            const last = rows.at(-1);
+            live[String(item.securityId ?? '')] = {
+              lastPrice: Number(item.sp),
+              previousClose: Number(item.pc),
+              oi: Number.isFinite(last?.[4]) ? last[4] : undefined,
+              high: undefined,
+              low: undefined,
+            };
+          }
+          return live;
+        },
       });
       await mcxEveningBrief(pollAt, {
         dataDir: DATA_DIR,
