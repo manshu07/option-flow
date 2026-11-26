@@ -1193,7 +1193,9 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
         const key = observationKey(card);
         if (key) notified.add(key);
       }
-      for (const card of fresh) {
+      // Telegram must read newest-first too (owner: cards must match the
+      // app's order) — the app sorts newest-first, so send the same direction.
+      for (const card of [...fresh].reverse()) {
         let live = null;
         try { live = getLive(card); } catch { /* quiet live feeds do not block the captured-data card */ }
         const result = await send({ ...card, sentAt: now, live });
