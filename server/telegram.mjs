@@ -7,6 +7,9 @@
 
 import { observationCaption } from './observationCardSvg.mjs';
 
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
 const TELEGRAM_API = 'https://api.telegram.org';
 
 export function telegramConfigured() {
@@ -16,6 +19,17 @@ export function telegramConfigured() {
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** Send one protected text message; optional subscriber routing/HTML is additive. */
+// MESSAGE LOG BOOK (owner 2026-11-27): every outgoing message is appended here —
+// one JSON line per send with chat, first 200 chars of text, parse mode and the
+// Telegram result. This is the single choke point; all paths route through it.
+const TG_LOG = path.join(process.env.MF_DATA_DIR ?? path.join(process.cwd(), 'server', 'data'), 'telegram-log.jsonl');
+function logMessage(recipient, text, parseMode, result) {
+  try {
+    mkdirSync(path.dirname(TG_LOG), { recursive: true });
+    writeFileSync(TG_LOG, JSON.stringify({ at: new Date().toISOString(), chat: String(recipient), parseMode: parseMode ?? null, ok: Boolean(result?.sent ?? result?.ok), desc: result?.description ?? null, text: String(text).slice(0, 200) }) + '\n', { flag: 'a' });
+  } catch { /* logging must never break sending */ }
+}
+
 export async function sendTelegram(text, { chatId, parseMode, retry = true } = {}) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const recipient = chatId ?? process.env.TELEGRAM_CHAT_ID;
@@ -42,16 +56,23 @@ export async function sendTelegram(text, { chatId, parseMode, retry = true } = {
         await delay(waitMs);
         continue;
       }
-      if (!response.ok) return { sent: false, status: response.status };
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        logMessage(recipient, text, parseMode, { sent: false, description: body?.description ?? ('http ' + response.status) });
+        return { sent: false, status: response.status };
+      }
+      logMessage(recipient, text, parseMode, { sent: true });
       return { sent: true };
     } catch (error) {
       if (attempt + 1 < attempts) {
         await delay(1000);
         continue;
       }
+      logMessage(recipient, text, parseMode, { sent: false, description: error?.message || 'error' });
       return { sent: false, reason: error?.message || 'error' };
     }
   }
+  logMessage(recipient, text, parseMode, { sent: false, description: 'exhausted' });
   return { sent: false, reason: 'error' };
 }
 
