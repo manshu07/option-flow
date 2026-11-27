@@ -1277,13 +1277,6 @@ export function mcxCards(market, date, now, existing = [], { readFuturesSnapshot
     if (!(sp > 0) || !(pc > 0)) continue;
     const changePct = (sp / pc - 1) * 100;
     if (Math.abs(changePct) < minMove) continue;
-    // Edge case #6: once an option chain is live for the symbol (series rows
-    // present), the futures-direct card would duplicate the option card.
-    const chainRows = Array.isArray(series.r) ? series.r.length : 0;
-    if (chainRows >= 6 && ['GOLD', 'SILVER'].includes(symbol)) {
-      log(`advisor mcx: ${symbol} option chain live (${chainRows} rows) — futures-direct card skipped`);
-      continue;
-    }
     const stats = mcxStatsFor(symbol);
     if (!stats) { log(`advisor mcx: ${symbol} no MCX-FUT stats — skipped`); continue; }
     const bias = changePct > 0 ? 'bullish' : 'bearish';
@@ -1303,6 +1296,58 @@ export function mcxCards(market, date, now, existing = [], { readFuturesSnapshot
     const momentumStrong = Math.abs(changePct) >= 1.2;
     if (!buildConfirmed && !momentumStrong) {
       log(`advisor mcx: ${symbol} ${bias} move ${changePct.toFixed(2)}% oi ${oiPct == null ? 'n/a' : oiPct.toFixed(1) + '%'} — no confirmation, skipped`);
+      continue;
+    }
+    const chainRows = Array.isArray(series.r) ? series.r.length : 0;
+    const liquidOptions = ['GOLD', 'SILVER'].includes(symbol) && chainRows >= 6;
+    if (liquidOptions) {
+      const bull = changePct > 0;
+      const wantSide = bull ? 0 : 1; // 0 = CE, 1 = PE in series rows
+      const futPrice = sp;
+      const candidates = series.r
+        .map(r => ({ strike: Number(r[0]), sideCode: Number(r[1]), ltp: Number(r[2]), oi: Number(r[3]) }))
+        .filter(r => Number.isFinite(r.ltp) && r.ltp > 0.5 && r.sideCode === wantSide && Number.isFinite(r.oi) && r.oi >= 500
+          && (bull ? r.strike >= Math.round(futPrice / 100) * 100 : r.strike <= Math.round(futPrice / 100) * 100));
+      if (candidates.length) {
+        // Strike pick: heaviest OI among near-the-money candidates (chain logic,
+        // not target-chasing — standing rule).
+        const strike = candidates.sort((a, b) => b.oi - a.oi)[0];
+        const entry = strike.ltp;
+        // Premium levels from the MCX-FUT percentile moves with delta ≈ 0.5
+        // (documented approximation — decay-aware BS repricing needs an IV the
+        // MCX chain does not reliably provide yet).
+        const favourable = bull ? stats.daily?.[1]?.all?.up : stats.daily?.[1]?.all?.down;
+        const adverse = bull ? stats.daily?.[1]?.all?.down : stats.daily?.[1]?.all?.up;
+        if (favourable?.p30 && adverse?.p85) {
+          const delta = 0.5;
+          const tgt1 = Math.round(entry * (1 + delta * favourable.p30 / 100) * 20) / 20;
+          const tgt2 = Math.round(entry * (1 + delta * favourable.p70 / 100) * 20) / 20;
+          const sl = Math.round(entry * (1 - delta * adverse.p85 / 100) * 20) / 20;
+          const rr = Math.abs(tgt1 - entry) / Math.max(entry - sl, 0.05);
+          if (rr >= 2) {
+            const key = `${symbol}|${date}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              out.push({
+                id: key, at: now, date, exchange: 'MCX', symbol,
+                spot: sp, spotChangePct: round2(changePct),
+                bias: bull ? 'bullish' : 'bearish',
+                side: bull ? 'CE' : 'PE', strike: strike.strike,
+                expiry: series.e ?? null,
+                entry, sl, tgt1, tgt2,
+                levelsBasis: 'mcx-option-history (delta 0.5 approx)',
+                oiChangePct: oiPct, quality: null, strikePickProbability: null,
+                early: 'mcx', atr: null, disclaimer: DISCLAIMER,
+              });
+              continue;
+            }
+          } else {
+            log(`advisor mcx options: ${symbol} ${strike.strike}${bull ? 'CE' : 'PE'} RR ${rr.toFixed(2)} < 2 — no card`);
+            continue;
+          }
+        }
+      }
+      log(`advisor mcx options: ${symbol} chain live (${chainRows} rows) but no qualifying option — futures-direct skipped`);
       continue;
     }
     // Percentile levels on the FUTURE price (spot=fut for a futures-direct card).
