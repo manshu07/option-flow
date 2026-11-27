@@ -277,9 +277,25 @@ async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
 }
 
 // Level-hit alerts: each OPEN card's live premium is checked on every market rebuild;
-// SL / TGT1 / TGT2 crossings fire exactly once per card+level per session. The message
-// carries no OI/build-up content — subscribers get the same stripped hit text as the owner.
-const levelHitsFired = new Set();
+// SL / TGT1 / TGT2 crossings fire exactly once per card+level per session. The fired
+// set is PERSISTED (owner 2026-11-27: "dont send in loop") — the day had 5+ restarts
+// and every restart wiped the in-memory set, re-firing the same hits with a slightly
+// different premium (which also slipped past the content-hash dedupe).
+const levelHitsFiredPath = path.join(DATA_DIR, 'level-hits-fired.json');
+const levelHitsFired = (() => {
+  try {
+    const saved = JSON.parse(fs.readFileSync(levelHitsFiredPath, 'utf8'));
+    if (saved?.dayKey === dayKeyFor(Date.now()) && Array.isArray(saved.keys)) return new Set(saved.keys);
+  } catch { /* new day or first boot */ }
+  return new Set();
+})();
+function persistLevelHit(fireKey) {
+  levelHitsFired.add(fireKey);
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(levelHitsFiredPath, JSON.stringify({ dayKey: dayKeyFor(Date.now()), keys: [...levelHitsFired].slice(-800) }));
+  } catch { /* persistence must never break sending */ }
+}
 async function checkLevelHits(session, at) {
   // Alerts are a market-hours feature: after close the LTP freezes and a restart
   // clears the fired-set — without this guard every refixed level re-fires at night.
@@ -300,7 +316,7 @@ async function checkLevelHits(session, at) {
         if (levelHitsFired.has(fireKey)) continue;
         const hit = key === 'sl' ? ltp <= card.sl : ltp >= card[key];
         if (!Number.isFinite(card[key]) || !hit) continue;
-        levelHitsFired.add(fireKey);
+        persistLevelHit(fireKey);
         await sendOwnerAndSubscribers(
           `${icon} <b>${label}</b> — ${card.symbol} ${card.strike}${card.side}\nPremium ₹${ltp.toFixed(2)} · level ₹${Number(card[key]).toFixed(2)} · entry ₹${Number(card.entry).toFixed(2)} · ${ist} IST`,
           { parseMode: 'HTML' }
