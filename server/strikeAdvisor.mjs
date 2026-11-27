@@ -1277,6 +1277,13 @@ export function mcxCards(market, date, now, existing = [], { readFuturesSnapshot
     if (!(sp > 0) || !(pc > 0)) continue;
     const changePct = (sp / pc - 1) * 100;
     if (Math.abs(changePct) < minMove) continue;
+    // Edge case #6: once an option chain is live for the symbol (series rows
+    // present), the futures-direct card would duplicate the option card.
+    const chainRows = Array.isArray(series.r) ? series.r.length : 0;
+    if (chainRows >= 6 && ['GOLD', 'SILVER'].includes(symbol)) {
+      log(`advisor mcx: ${symbol} option chain live (${chainRows} rows) — futures-direct card skipped`);
+      continue;
+    }
     const stats = mcxStatsFor(symbol);
     if (!stats) { log(`advisor mcx: ${symbol} no MCX-FUT stats — skipped`); continue; }
     const bias = changePct > 0 ? 'bullish' : 'bearish';

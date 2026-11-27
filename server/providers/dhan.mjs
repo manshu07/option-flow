@@ -1251,7 +1251,13 @@ export function createDhanProvider(universe) {
         coreKeys.push(`${SEG_BYTE[held.exchSeg]}:${f.id}`);
         if (!futTicks.has(f.id)) futTicks.set(f.id, new Map());
       }
-      const near = held.expiries.find(e => e >= today);
+      // MCX options roll rule (owner edge case #2): skip an expiry with < 3
+      // days left — GOLD-27Nov died the same evening it was captured. Monthly
+      // contracts (>= 3 DTE) are the tradeable near block.
+      const minDte = held.exchSeg === 'MCX_COMM' ? 3 : 0;
+      const minDate = new Date(Date.parse(`${today}T00:00:00+05:30`) + minDte * 86_400_000)
+        .toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }).replaceAll('-', '-');
+      const near = held.expiries.find(e => e >= minDate);
       if (!near) continue;
       const strikes = held.optionStrikes?.ids;
       held.optionStrikes = { expiry: near, window: [], ids: strikes ?? new Map() };

@@ -300,14 +300,19 @@ function persistLevelHit(fireKey) {
 async function checkLevelHits(session, at) {
   // Alerts are a market-hours feature: after close the LTP freezes and a restart
   // clears the fired-set — without this guard every refixed level re-fires at night.
-  // NSE-only guard (owner 2026-11-27): MCX-evening hours kept this check
-  // alive and it fired SL hits off FROZEN NSE premiums at 21:10 IST.
-  if (!isMarketSessionTime(at, 'NSE')) return;
+  // Session guard is PER-CARD (owner 2026-11-27 edge case #1): NSE cards
+  // alert only in the NSE session (the 21:10 frozen-premium bug), MCX cards
+  // only during the MCX session (09:00-23:30) — otherwise MCX option cards
+  // could never alert at all.
+  const nseSessionOpen = isMarketSessionTime(at, 'NSE');
+  const mcxSessionOpen = isMarketSessionTime(at, 'MCX');
   try {
     const store = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'observations.json'), 'utf8'));
     const cards = (store.cards ?? []).filter(c => c.date === session && (!c.outcome || c.outcome.status === 'open'));
     const ist = new Date(at + 330 * 60_000).toTimeString().slice(0, 5);
     for (const card of cards) {
+      const cardSessionOpen = card.exchange === 'MCX' ? mcxSessionOpen : nseSessionOpen;
+      if (!cardSessionOpen) continue;
       if (typeof card.expiry !== 'string' || !Number.isFinite(card.entry)) continue;
       const optionKey = `${card.symbol}|${card.strike}|${card.side}|${card.expiry}`;
       const ltp = provider.ticksFor?.({ symbols: [], options: [{ symbol: card.symbol, strike: card.strike, side: card.side, expiry: card.expiry }] })?.options?.[optionKey]?.ltp;
