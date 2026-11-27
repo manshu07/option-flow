@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMarketSessionTime, marketParts } from '../src/lib/marketSession.ts';
@@ -128,7 +128,20 @@ function displayNumber(value, digits = 2) {
 
 function loadLevels(levelsPath, state, statePath, log, now) {
   let parsed;
-  try { parsed = JSON.parse(readFileSync(levelsPath, 'utf8')); }
+  try {
+    // STALENESS GUARD (owner 2026-11-27): levels generated from an old session's
+    // prices fired instant false crossings at today's open (SILVERM base was two
+    // days stale). A levels file older than 24h is treated as missing.
+    const ageMs = Date.now() - statSync(levelsPath).mtimeMs;
+    if (ageMs > 24 * 60 * 60 * 1000) {
+      if (!state.warnings.levelsMissing) {
+        state.warnings.levelsMissing = true;
+        if (saveState(statePath, state, log, now)) log(`mcx: levels file stale (${Math.round(ageMs / 3600000)}h old); M2 idle until fresh levels`);
+      }
+      return [];
+    }
+    parsed = JSON.parse(readFileSync(levelsPath, 'utf8'));
+  }
   catch (error) {
     if (error?.code === 'ENOENT') {
       if (!state.warnings.levelsMissing) {

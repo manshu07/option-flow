@@ -283,7 +283,9 @@ const levelHitsFired = new Set();
 async function checkLevelHits(session, at) {
   // Alerts are a market-hours feature: after close the LTP freezes and a restart
   // clears the fired-set — without this guard every refixed level re-fires at night.
-  if (!isMarketSessionTime(at)) return;
+  // NSE-only guard (owner 2026-11-27): MCX-evening hours kept this check
+  // alive and it fired SL hits off FROZEN NSE premiums at 21:10 IST.
+  if (!isMarketSessionTime(at, 'NSE')) return;
   try {
     const store = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'observations.json'), 'utf8'));
     const cards = (store.cards ?? []).filter(c => c.date === session && (!c.outcome || c.outcome.status === 'open'));
@@ -300,7 +302,8 @@ async function checkLevelHits(session, at) {
         if (!Number.isFinite(card[key]) || !hit) continue;
         levelHitsFired.add(fireKey);
         await sendOwnerAndSubscribers(
-          `${icon} <b>${label}</b> — ${card.symbol} ${card.strike}${card.side}\nPremium ₹${ltp.toFixed(2)} · level ₹${Number(card[key]).toFixed(2)} · entry ₹${Number(card.entry).toFixed(2)} · ${ist} IST`
+          `${icon} <b>${label}</b> — ${card.symbol} ${card.strike}${card.side}\nPremium ₹${ltp.toFixed(2)} · level ₹${Number(card[key]).toFixed(2)} · entry ₹${Number(card.entry).toFixed(2)} · ${ist} IST`,
+          { parseMode: 'HTML' }
         );
       }
     }
