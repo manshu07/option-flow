@@ -282,6 +282,7 @@ async function sendOwnerAndSubscribers(text, { parseMode } = {}) {
 // and every restart wiped the in-memory set, re-firing the same hits with a slightly
 // different premium (which also slipped past the content-hash dedupe).
 const levelHitsFiredPath = path.join(DATA_DIR, 'level-hits-fired.json');
+let levelHitsDayKey = dayKeyFor(Date.now());
 const levelHitsFired = (() => {
   try {
     const saved = JSON.parse(fs.readFileSync(levelHitsFiredPath, 'utf8'));
@@ -420,7 +421,15 @@ async function build() {
   const nseSessionDate = getLatestTradingSessionDate(new Date(clock));
   const session = !nseOpen && (mcxOpen || mcxAfterClose) ? mcxSessionDate : nseSessionDate;
   pcrHistory.resetForSession(session);
-  levelHitsFired.clear();
+  // Fired-set clears ONLY on a calendar-day change (owner 2026-11-27 loop fix):
+  // the old unconditional clear() ran on EVERY build pass and wiped the
+  // persisted set seconds after boot — SL/TGT alerts re-fired forever.
+  const firedToday = dayKeyFor(clock);
+  if (levelHitsDayKey !== firedToday) {
+    levelHitsDayKey = firedToday;
+    levelHitsFired.clear();
+    try { fs.writeFileSync(levelHitsFiredPath, JSON.stringify({ dayKey: firedToday, keys: [] })); } catch { /* best-effort */ }
+  }
   // Post-close fast path: the market is shut and nothing is moving — serve the
   // session's last built snapshot (the real closing state, written by every
   // successful build) instead of crawling 215 chains through the paced REST
