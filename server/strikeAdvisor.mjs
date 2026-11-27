@@ -1059,11 +1059,29 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
       // market build's spot, without changing historical regime semantics.
       return liveRegime(statsCloses, livePrice);
     };
+    // DIRECTION GATE v1 (spec DIRECTION_GATE_EARLY_WATCHER_SPEC, owner-approved):
+    // NIFTY futures tape blocks counter-trend cards. A falling index may not
+    // spawn bullish CE cards (2026-11-27: 20/20 bullish CE on a -0.78% fade
+    // = 12 SL). Flat tape passes both sides; sector layer lands with the
+    // Early Move Watcher.
+    const niftySeries = (Array.isArray(market?.series) ? market.series : []).find(x => x.s === 'NIFTY');
+    const niftyChg = niftySeries && Number(niftySeries.sp) > 0 && Number(niftySeries.pc) > 0
+      ? (Number(niftySeries.sp) / Number(niftySeries.pc) - 1) * 100 : 0;
+    const indexGate = Number(process.env.ADVISOR_INDEX_GATE ?? 0.3);
+    const indexTrend = niftyChg <= -indexGate ? 'down' : niftyChg >= indexGate ? 'up' : 'flat';
+    const directionAllows = bias => indexTrend === 'flat' ? true : (indexTrend === 'down' ? bias !== 'bullish' : bias !== 'bearish');
+    if (indexTrend !== 'flat') log(`advisor direction gate: NIFTY ${niftyChg.toFixed(2)}% -> ${indexTrend} tape; counter-trend cards blocked`);
+
     // Model candidates are already built; validate them before they occupy a
     // sector slot or influence the cap available to code-computed early cards.
     const pricedModelCards = await enrichWithFuturesAtr(modelCards, { readFuturesSnapshot, sessionDate, now, log });
     const acceptedModelCards = [];
     for (const card of pricedModelCards) {
+      if (!directionAllows(card.bias)) {
+        skipped.push({ symbol: card.symbol, reason: `direction gate: index ${indexTrend}` });
+        log(`advisor direction gate: ${card.symbol} ${card.bias} blocked (index ${indexTrend})`);
+        continue;
+      }
       const check = acceptCheck(card, minExpectancy);
       if (!check.ok) {
         skipped.push({ symbol: card.symbol, reason: check.reason });
@@ -1147,6 +1165,12 @@ export async function runAdvisor(market, { obsPath, watches, now = Date.now(), l
     const cardsToFinish = await enrichWithFuturesAtr([...early, ...reCards], { readFuturesSnapshot, sessionDate, now, log });
     const kept = [];
     for (const card of cardsToFinish) {
+      if (!directionAllows(card.bias)) {
+        sectorBudget.release(card);
+        skipped.push({ symbol: card.symbol, reason: `direction gate: index ${indexTrend}` });
+        log(`advisor direction gate: ${card.symbol} ${card.bias} blocked (index ${indexTrend})`);
+        continue;
+      }
       const check = acceptCheck(card, minExpectancy);
       if (!check.ok) {
         sectorBudget.release(card);
