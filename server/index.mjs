@@ -1009,6 +1009,20 @@ async function futuresFor(symbol, session) {
       }
     } catch { /* corrupt or missing → fall through to the provider */ }
   }
+  // MCX disk-first (owner 2026-11-27: /api/futures/GOLD hung 40s behind a Dhan
+  // 429 rest while 8 good candles sat on disk). The capture pass persists the
+  // MCX futures file every minute, so serving it instantly costs at most one
+  // minute of staleness — never a hang. NSE/BSE keep the live crawl.
+  if (bySymbol.get(symbol)?.exch === 'MCX') {
+    try {
+      const stored = readFutures(SCAN_DIR, session, symbol);
+      if (stored && Array.isArray(stored.months) && stored.months.length && (stored.months[0]?.candles ?? []).length) {
+        const result = { symbol: stored.symbol, session: stored.session, months: stored.months };
+        futuresCache.set(key, { at: Date.now(), value: Promise.resolve(result) });
+        return result;
+      }
+    } catch { /* no file yet → normal provider path */ }
+  }
   futuresActive += 1;
   const value = (async () => {
     try {
