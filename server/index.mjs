@@ -480,9 +480,33 @@ async function build() {
       try {
         if (isMcxUnderlying(u)) {
           const futures = await futuresFor(u.symbol, session);
-          const liveTick = provider.ticksFor?.({ symbols: [u.symbol] })?.futures?.[u.symbol] ?? null;
-          const encoded = encodeMcxFutureSeries(u, futures, liveTick, now(), session);
-          ladders[u.symbol] = (futures?.months ?? []).filter(month => month.date >= session).slice(0, 1).map(month => month.date);
+          // C6 (owner-approved): liquid MCX options (GOLD/SILVER) capture an
+          // option chain like NSE — the S1 master parse fills the held
+          // expiries/strikeMap, so provider.optionChain just works. Symbols
+          // with no liquid chain fall back to the futures-direct series.
+          const mcxOptionSymbols = (process.env.MCX_OPTION_SYMBOLS ?? 'GOLD,SILVER').split(',').map(x => x.trim());
+          let encoded = null;
+          if (mcxOptionSymbols.includes(u.symbol)) {
+            try {
+              const ladder = ladderCache.bySymbol.get(u.symbol) ?? await provider.expiries(u);
+              if (ladder.length) ladderCache.bySymbol.set(u.symbol, ladder);
+              const expiry = ladder.find(e => e >= session);
+              if (expiry) {
+                const chain = await provider.optionChain(u, expiry);
+                if (chain?.spot > 0 && Array.isArray(chain.strikes) && chain.strikes.length >= 6) {
+                  encoded = encodeSeries(u, { ...chain, expiry: chain.expiry || expiry }, now(), null);
+                  if (encoded) encoded.exchange = 'MCX';
+                }
+              }
+            } catch (error) {
+              log(`mcx option chain ${u.symbol}: ${String(error?.message || error)}`);
+            }
+          }
+          if (!encoded) {
+            const liveTick = provider.ticksFor?.({ symbols: [u.symbol] })?.futures?.[u.symbol] ?? null;
+            encoded = encodeMcxFutureSeries(u, futures, liveTick, now(), session);
+            ladders[u.symbol] = (futures?.months ?? []).filter(month => month.date >= session).slice(0, 1).map(month => month.date);
+          }
           if (encoded) series.push(encoded); else failed.push(u.symbol);
           continue;
         }

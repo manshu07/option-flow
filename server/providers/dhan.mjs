@@ -1434,6 +1434,34 @@ export function createDhanProvider(universe) {
           fno.set(key, held);
           continue;
         }
+        if (exch === 'MCX' && seg === 'M' && instr === 'OPTFUT') {
+          // MCX options are options on futures: GOLD-27Nov2026-166000-CE →
+          // base GOLD, strike 166000. Same group as the futures so buildWindows'
+          // generic option path subscribes them (legSeg = SEG_BYTE.MCX_COMM).
+          const custom = (row[C.custom] ?? '').trim().toUpperCase();
+          const masterSymbol = (row[C.masterSymbol] ?? '').trim().toUpperCase();
+          const root = mcxSymbols.find(requested => masterSymbol === requested || custom.startsWith(`${requested} `));
+          if (!root) continue;
+          const hyphen = symbol.lastIndexOf('-');
+          const strikeHyphen = symbol.lastIndexOf('-', hyphen - 1);
+          const strike = Number(symbol.slice(strikeHyphen + 1, hyphen));
+          const side = symbol.slice(hyphen + 1);
+          const expiry = ymd(row[C.exp]);
+          if (!Number.isFinite(strike) || strike <= 0 || (side !== 'CE' && side !== 'PE')) continue;
+          const key = `MCX|${root}`;
+          const held = fno.get(key) ?? { fut: [], expiries: new Set(), exchSeg: 'MCX_COMM', strikes: new Map(), strikeList: new Map() };
+          held.expiries.add(expiry);
+          const perExpiry = held.strikes.get(expiry) ?? new Map();
+          const legs = perExpiry.get(strike) ?? {};
+          legs[side] = id;
+          perExpiry.set(strike, legs);
+          held.strikes.set(expiry, perExpiry);
+          const list = held.strikeList.get(expiry) ?? [];
+          if (!list.includes(strike)) list.push(strike);
+          held.strikeList.set(expiry, list);
+          fno.set(key, held);
+          continue;
+        }
         if (seg === 'I' && instr === 'INDEX') indices.set(symbol, { id, exch });
         else if (seg === 'E' && instr === 'EQUITY' && exch === 'NSE') equities.set(symbol, id);
         else if (seg === 'D' && symbol.endsWith('-FUT')) {
@@ -1478,9 +1506,9 @@ export function createDhanProvider(universe) {
             underSeg: 'MCX_COMM',
             exchSeg: 'MCX_COMM',
             fut,
-            expiries: [],
-            strikeMap: new Map(),
-            strikeList: new Map(),
+            expiries: [...(grp?.expiries ?? [])].sort(),
+            strikeMap: grp?.strikes ?? new Map(),
+            strikeList: grp?.strikeList ?? new Map(),
             optionStrikes: null,
           });
           continue;
